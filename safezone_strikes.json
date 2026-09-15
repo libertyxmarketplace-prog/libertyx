@@ -1,0 +1,30 @@
+{
+  "susugoated1": {
+    "username": "Susugoated1",
+    "strikes": 3,
+    "lastStrikeTs": 1789444155096,
+    "history": [
+      {
+        "strike": 1,
+        "reason": "Safe Zone Shooting Violation",
+        "victim": "Abdimailk24",
+        "moderator": "Automated Safe Zone Defense",
+        "timestamp": 1789443758
+      },
+      {
+        "strike": 2,
+        "reason": "Safe Zone Shooting Violation",
+        "victim": "Abdimailk24",
+        "moderator": "Automated Safe Zone Defense",
+        "timestamp": 1789443962
+      },
+      {
+        "strike": 3,
+        "reason": "Safe Zone Shooting Violation",
+        "victim": "Abdimailk24",
+        "moderator": "Automated Safe Zone Defense",
+        "timestamp": 1789444155
+      }
+    ]
+  }
+}

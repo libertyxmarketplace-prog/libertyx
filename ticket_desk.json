@@ -1,0 +1,9 @@
+{
+  "status": "online",
+  "categories": {
+    "general": true,
+    "ia": true,
+    "highrank": true,
+    "partnership": true
+  }
+}

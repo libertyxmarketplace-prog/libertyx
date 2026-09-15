@@ -1,0 +1,2 @@
+CRLF count: 0
+has divider-placeholder: false

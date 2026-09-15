@@ -1,0 +1,65 @@
+[
+  {
+    "id": "1",
+    "guildId": "1232495211490443284",
+    "channelId": "1343769737439608853",
+    "messageId": "1549235154000547871",
+    "authorId": "523693281541095424",
+    "text": "testing if this really works",
+    "upvoters": [],
+    "downvoters": [
+      "523693281541095424"
+    ],
+    "createdAt": 1789436845986
+  },
+  {
+    "id": "2",
+    "guildId": "1232495211490443284",
+    "channelId": "1343769737439608853",
+    "messageId": "1549247531169611907",
+    "authorId": "523693281541095424",
+    "text": "testing this suggestion out",
+    "upvoters": [],
+    "downvoters": [],
+    "createdAt": 1789439796918
+  },
+  {
+    "id": "3",
+    "guildId": "1232495211490443284",
+    "channelId": "1343769737439608853",
+    "messageId": "1549257076751077549",
+    "authorId": "523693281541095424",
+    "text": "Testing this out",
+    "upvoters": [
+      "523693281541095424"
+    ],
+    "downvoters": [],
+    "createdAt": 1789442072694
+  },
+  {
+    "id": "4",
+    "guildId": "1232495211490443284",
+    "channelId": "1343769737439608853",
+    "messageId": "1549260987818057830",
+    "authorId": "523693281541095424",
+    "text": "Testing this out",
+    "upvoters": [
+      "523693281541095424"
+    ],
+    "downvoters": [],
+    "createdAt": 1789443005282
+  },
+  {
+    "id": "5",
+    "guildId": "1232495211490443284",
+    "channelId": "1343769737439608853",
+    "messageId": "1549266763433119796",
+    "authorId": "523693281541095424",
+    "text": "Testttt",
+    "upvoters": [
+      "523693281541095424"
+    ],
+    "downvoters": [],
+    "createdAt": 1789444382277
+  }
+]
