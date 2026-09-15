@@ -407,6 +407,9 @@ const erlcCommand = new SlashCommandBuilder()
     sub.setName('status').setDescription('View in-game anti-exploiter and VC enforcement tracker status.')
   )
   .addSubcommand((sub) =>
+    sub.setName('ip').setDescription('View the bot\'s current outbound IP address for ER:LC API allowlisting.')
+  )
+  .addSubcommand((sub) =>
     sub
       .setName('pm')
       .setDescription('Send an in-game private message to a player.')
@@ -2701,7 +2704,18 @@ const ERLC_ENFORCER_CONFIG = {
 };
 
 const inGamePlayerTracker = new Map();
+const allOnlinePlayers = new Set();
 const verifiedInDiscordCache = new Set();
+
+let cachedPublicIp = null;
+async function getOutboundIp() {
+  if (cachedPublicIp) return cachedPublicIp;
+  try {
+    const res = await axios.get('https://api.ipify.org?format=json', { timeout: 4000 });
+    if (res.data?.ip) cachedPublicIp = String(res.data.ip).trim();
+  } catch {}
+  return cachedPublicIp || 'Unknown';
+}
 
 const erlcCommandQueue = [];
 let isProcessingErlcQueue = false;
@@ -2732,6 +2746,11 @@ async function processErlcQueue() {
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       } else {
+        if (errMsg.toLowerCase().includes('allowlist your ip') || errMsg.toLowerCase().includes('not authorized')) {
+          getOutboundIp().then((ip) => {
+            console.error(`[ER:LC API ERROR] Outbound IP (${ip}) is NOT allowlisted on https://api.erlc.gg/server-owners! Commands will fail until this IP is added.`);
+          }).catch(() => {});
+        }
         console.warn(`[ER:LC Command] Failed "${item.command}": ${errMsg}`);
         item.resolve({ ok: false, error: errMsg });
       }
@@ -3363,47 +3382,51 @@ async function checkKillLogsForSafeZone(discordClient) {
 
       // Staff team immunity: staff team role 1341965114101731418 or server admins can kill anyone and won't get warned
       const isStaff = await isStaffKiller(discordClient, killerName);
-      if (isStaff) {
-        console.log(`[Safe Zone] Killer "${killerName}" is a staff member (Immune). Skipping safe zone warning/action.`);
-        continue;
-      }
-
-      console.log(`[Safe Zone Review] Kill incident logged: ${killerName} killed ${victimName}. Posting review alert to staff...`);
       const safeZoneChannelId = '1277704273375002675';
       const targetChannel = await discordClient.channels.fetch(safeZoneChannelId).catch(() => null);
       const primaryGuild = discordClient.guilds.cache.get('1232495211490443284') || discordClient.guilds.cache.first();
 
-      const safeZoneCard = new ContainerBuilder().setAccentColor(0xed4245);
-      safeZoneCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent('## 🚨 In-Game Kill Recorded — Safe Zone Review')
-      );
-      safeZoneCard.addSeparatorComponents(thinLine());
-      safeZoneCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `> **Killer:** \`${killerName}\`\n` +
-          `> **Victim:** \`${victimName}\`\n` +
-          `> **Timestamp:** <t:${k.Timestamp || Math.floor(Date.now() / 1000)}:R>\n` +
-          `> **Protected Safe Zones:** Main Spawn • Springfield Spawn • Sheriff's Office • Police Station\n\n` +
-          `*If this kill occurred inside a designated safe zone box (not on Freedom Ave / roads), click **Issue Safe Zone Strike** below.*`
-        )
-      );
-      const actionRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`sz_flag_${killerName}`).setLabel('Issue Safe Zone Strike').setStyle(ButtonStyle.Danger).setEmoji('🚨'),
-        new ButtonBuilder().setCustomId(`erlc_tp_${killerName}`).setLabel('Teleport to Killer').setStyle(ButtonStyle.Secondary).setEmoji('📍'),
-        new ButtonBuilder().setCustomId(`erlc_bring_${killerName}`).setLabel('Bring Killer').setStyle(ButtonStyle.Secondary).setEmoji('🧲'),
-        new ButtonBuilder().setCustomId(`sz_dismiss_${killerName}`).setLabel('Dismiss (Road / Legal Kill)').setStyle(ButtonStyle.Secondary).setEmoji('✅')
-      );
-      safeZoneCard.addActionRowComponents(actionRow);
+      if (isStaff) {
+        console.log(`[Safe Zone] Killer "${killerName}" is a staff member (Immune). Posting review alert to staff...`);
+        const safeZoneCard = new ContainerBuilder().setAccentColor(0x3498db);
+        safeZoneCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('## 🛡️ In-Game Kill Recorded — Staff Incident')
+        );
+        safeZoneCard.addSeparatorComponents(thinLine());
+        safeZoneCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Killer:** \`${killerName}\` *(Staff Member / Admin)*\n` +
+            `> **Victim:** \`${victimName}\`\n` +
+            `> **Timestamp:** <t:${k.Timestamp || Math.floor(Date.now() / 1000)}:R>\n` +
+            `> **Protected Safe Zones:** Main Spawn • Springfield Spawn • Sheriff's Office • Police Station\n` +
+            `> **Status:** 🛡️ **Staff Immunity Active** (No automated in-game penalty applied)\n\n` +
+            `*To test or manually apply an in-game safe zone strike to this player, click **Apply Strike Anyway** below.*`
+          )
+        );
+        const actionRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`sz_flag_${killerName}`).setLabel('Apply Strike Anyway').setStyle(ButtonStyle.Danger).setEmoji('🚨'),
+          new ButtonBuilder().setCustomId(`erlc_tp_${killerName}`).setLabel('Teleport to Killer').setStyle(ButtonStyle.Secondary).setEmoji('📍'),
+          new ButtonBuilder().setCustomId(`erlc_bring_${killerName}`).setLabel('Bring Killer').setStyle(ButtonStyle.Secondary).setEmoji('🧲'),
+          new ButtonBuilder().setCustomId(`sz_dismiss_${killerName}`).setLabel('Dismiss').setStyle(ButtonStyle.Secondary).setEmoji('✅')
+        );
+        safeZoneCard.addActionRowComponents(actionRow);
 
-      if (targetChannel) {
-        await targetChannel.send({ components: [safeZoneCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        if (targetChannel) {
+          await targetChannel.send({ components: [safeZoneCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch((err) => {
+            console.error(`[Safe Zone] Failed to send staff kill alert to safeZoneChannel:`, err.message);
+          });
+        }
+        if (primaryGuild) {
+          await sendGameLog(primaryGuild, safeZoneCard);
+        }
+        continue;
       }
-      if (primaryGuild) {
-        await sendGameLog(primaryGuild, safeZoneCard);
-      }
+
+      console.log(`[Safe Zone Auto-Enforcer] Kill incident logged: ${killerName} killed ${victimName}. Triggering automatic safe zone strike...`);
+      await handleSafeZoneStrike(discordClient, killerName, null, 'Safe Zone Shooting / Kill Incident', victimName);
     }
-  } catch {
-    // Ignore transient kill logs polling error
+  } catch (err) {
+    console.warn(`[Safe Zone] Kill logs check error: ${err.response?.data?.message || err.message}`);
   }
 }
 
@@ -3438,6 +3461,7 @@ async function runErlcEnforcementScan(discordClient) {
   }
   console.log(`[ER:LC Scan] Inspecting ${playersRaw.length} player(s) in-game...`);
 
+  allOnlinePlayers.clear();
   const activeUsernames = new Set();
   const primaryGuild = discordClient.guilds.cache.get('1232495211490443284') || discordClient.guilds.cache.first();
 
@@ -3463,6 +3487,7 @@ async function runErlcEnforcementScan(discordClient) {
     }
 
     if (!username) continue;
+    allOnlinePlayers.add(username.toLowerCase());
 
     // Skip in-game staff members from all automated warnings / jailing!
     const permLower = (permission || '').toLowerCase();
@@ -3957,6 +3982,21 @@ async function handleErlcCommand(interaction) {
 
   if (!isStaffMember(member)) {
     await interaction.reply({ content: '❌ You must have staff permissions to run ER:LC enforcer tools.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (sub === 'ip') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const pubIp = await getOutboundIp();
+    await interaction.editReply({
+      content:
+        `🌐 **Bot Outbound IP Address:** \`${pubIp}\`\n\n` +
+        `If teleporting or commands fail with an authorization error:\n` +
+        `1. Visit [ER:LC Server Owners](https://api.erlc.gg/server-owners)\n` +
+        `2. Select **${SERVER.name}**\n` +
+        `3. Add \`${pubIp}\` to your **Custom Bot IP Allowlist**\n` +
+        `4. Ensure **Execute Server Commands** is enabled.`
+    });
     return;
   }
 
@@ -5117,6 +5157,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 
   console.log(`Logged in as ${readyClient.user.tag}. Bot is ready.`);
+  getOutboundIp().then((ip) => {
+    console.log(`[ER:LC Bot Outbound IP] ${ip} — Ensure this IP is allowlisted on https://api.erlc.gg/server-owners`);
+  }).catch(() => {});
   startErlcEnforcerLoop(readyClient);
 });
 
@@ -6710,7 +6753,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('erlc_tp_')) {
       const targetUser = interaction.customId.replace('erlc_tp_', '');
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      if (!inGamePlayerTracker.has(targetUser.toLowerCase())) {
+      if (!inGamePlayerTracker.has(targetUser.toLowerCase()) && !allOnlinePlayers.has(targetUser.toLowerCase())) {
         await interaction.editReply({ content: `❌ **${targetUser}** has left the game. Teleport is no longer available.` });
         return;
       }
@@ -6721,7 +6764,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       const res = await sendErlcCommand(`:tp ${staffRoblox} ${targetUser}`);
       if (!res.ok) {
-        await interaction.editReply({ content: `Failed to teleport: ${res.error}` });
+        if (res.error?.includes('allowlist your IP') || res.error?.includes('not authorized')) {
+          const pubIp = await getOutboundIp();
+          await interaction.editReply({
+            content:
+              `❌ **Teleport Failed: Bot Outbound IP Not Allowlisted**\n\n` +
+              `Your bot's current outbound IP is: \`${pubIp}\`\n\n` +
+              `**How to fix:**\n` +
+              `1. Visit [ER:LC Server Owners](https://api.erlc.gg/server-owners)\n` +
+              `2. Select **${SERVER.name}**\n` +
+              `3. Add \`${pubIp}\` to your **Custom Bot IP Allowlist**\n` +
+              `4. Ensure **Execute Server Commands** is enabled.`
+          });
+        } else {
+          await interaction.editReply({ content: `Failed to teleport: ${res.error}` });
+        }
       } else {
         await interaction.editReply({
           content: `Teleporting **${staffRoblox}** to **${targetUser}** in-game!\n-# Command executed: \`:tp ${staffRoblox} ${targetUser}\``
@@ -6733,7 +6790,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('erlc_bring_')) {
       const targetUser = interaction.customId.replace('erlc_bring_', '');
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      if (!inGamePlayerTracker.has(targetUser.toLowerCase())) {
+      if (!inGamePlayerTracker.has(targetUser.toLowerCase()) && !allOnlinePlayers.has(targetUser.toLowerCase())) {
         await interaction.editReply({ content: `❌ **${targetUser}** has left the game. Bring is no longer available.` });
         return;
       }
@@ -6747,7 +6804,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         res = await sendErlcCommand(`:bring ${targetUser}`);
       }
       if (!res.ok) {
-        await interaction.editReply({ content: `Failed to bring player: ${res.error}` });
+        if (res.error?.includes('allowlist your IP') || res.error?.includes('not authorized')) {
+          const pubIp = await getOutboundIp();
+          await interaction.editReply({
+            content:
+              `❌ **Bring Failed: Bot Outbound IP Not Allowlisted**\n\n` +
+              `Your bot's current outbound IP is: \`${pubIp}\`\n\n` +
+              `**How to fix:**\n` +
+              `1. Visit [ER:LC Server Owners](https://api.erlc.gg/server-owners)\n` +
+              `2. Select **${SERVER.name}**\n` +
+              `3. Add \`${pubIp}\` to your **Custom Bot IP Allowlist**\n` +
+              `4. Ensure **Execute Server Commands** is enabled.`
+          });
+        } else {
+          await interaction.editReply({ content: `Failed to bring player: ${res.error}` });
+        }
       } else {
         await interaction.editReply({
           content: `Bringing **${targetUser}** to **${staffRoblox}** in-game!\n-# Command executed: \`:tp ${targetUser} ${staffRoblox}\``
