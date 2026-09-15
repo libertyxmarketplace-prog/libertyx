@@ -2956,17 +2956,17 @@ async function buildStaffAlertCard(username, tracker, isJoined = false, hasLeft 
         ? 'Jailed (`:jail ' + username + '`)'
         : '2-min warning sent';
 
-  const refreshCount = tracker?.refreshCount || 1;
-  const refreshSuffix = isJoined
-    ? ' • *(Verified In Discord)*'
-    : ` • *(Checked ${refreshCount}x)*`;
+  const assignedStaffText = tracker?.assignedStaffId ? `> **Assigned Staff:** <@${tracker.assignedStaffId}>\n` : '';
+  const refreshSuffix = isJoined ? ' • *(Verified In Discord)*' : '';
+  const detectedTs = tracker?.createdTs ? Math.floor(tracker.createdTs / 1000) : Math.floor(Date.now() / 1000);
 
   const infoText =
     `> **Player:** \`${username}\`${robloxId ? ` (Roblox ID: \`${robloxId}\`)` : ''}\n` +
     `> **Status:** ${statusText}\n` +
     `> **In-Game State:** ${inGameState}\n` +
+    assignedStaffText +
     `> **Join Code:** \`ALABAM\`\n` +
-    `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>${refreshSuffix}\n\n` +
+    `> **Detected:** <t:${detectedTs}:R>${refreshSuffix}\n\n` +
     (hasLeft
       ? '*Player has left the game. In-game actions are no longer available.*'
       : isJoined
@@ -3071,10 +3071,9 @@ async function buildOutfitFlagCard(username, robloxId, assetName) {
   return card;
 }
 
-async function sendStaffAlertDMs(discordClient, cardPayload) {
-  // DM alerts send ONLY to staff actively On Duty (Role 1342676208671785050 or On Duty role / test role 1548637141850918993)
+async function getOnDutyStaffMembers(discordClient) {
   const explicitDutyRoleIds = ['1342676208671785050', '1548637141850918993'];
-  const membersToAlert = new Map();
+  const onDutyMembers = new Map();
 
   for (const gid of ['1232495211490443284', '1530147023754367006']) {
     const guild = discordClient.guilds.cache.get(gid);
@@ -3088,31 +3087,74 @@ async function sendStaffAlertDMs(discordClient, cardPayload) {
         if (!isDutyRole) continue;
         for (const member of role.members.values()) {
           if (!member.user.bot) {
-            membersToAlert.set(member.user.id, member);
+            onDutyMembers.set(member.user.id, member);
           }
         }
       }
     } catch (err) {
-      console.warn(`[Staff Alert DM] Member fetch error for guild ${guild.id}: ${err.message}`);
+      console.warn(`[On-Duty Staff] Fetch error for guild ${guild.id}: ${err.message}`);
+    }
+  }
+  return [...onDutyMembers.values()];
+}
+
+function assignPlayerToStaff(onDutyStaff) {
+  if (!onDutyStaff || onDutyStaff.length === 0) return null;
+  if (onDutyStaff.length === 1) return onDutyStaff[0];
+
+  // Distribute players evenly (50/50 for 2 staff, or 1/N for N staff)
+  const staffLoad = new Map();
+  for (const s of onDutyStaff) {
+    staffLoad.set(s.user.id, 0);
+  }
+  for (const t of inGamePlayerTracker.values()) {
+    if (t.assignedStaffId && staffLoad.has(t.assignedStaffId)) {
+      staffLoad.set(t.assignedStaffId, staffLoad.get(t.assignedStaffId) + 1);
     }
   }
 
-  if (membersToAlert.size === 0) {
+  // Pick on-duty staff member with the lowest active workload
+  let bestStaff = onDutyStaff[0];
+  let minLoad = staffLoad.get(bestStaff.user.id) || 0;
+  for (const s of onDutyStaff) {
+    const load = staffLoad.get(s.user.id) || 0;
+    if (load < minLoad) {
+      minLoad = load;
+      bestStaff = s;
+    }
+  }
+  return bestStaff;
+}
+
+async function sendStaffAlertDMs(discordClient, cardPayload, targetStaff = null) {
+  if (targetStaff) {
+    try {
+      const dmMsg = await targetStaff.user.send(cardPayload);
+      console.log(`[Staff Alert DM] Sent targeted alert DM to assigned staff ${targetStaff.user.tag} (${targetStaff.user.id})`);
+      return [{ user: targetStaff.user, msg: dmMsg }];
+    } catch (err) {
+      console.warn(`[Staff Alert DM] Could not DM assigned staff ${targetStaff.user.tag}: ${err.message}`);
+      return [];
+    }
+  }
+
+  const onDutyStaff = await getOnDutyStaffMembers(discordClient);
+  if (!onDutyStaff.length) {
     console.log('[Staff Alert DM] No staff members currently On Duty. Skipping DM alerts.');
     return [];
   }
 
-  const sentList = [];
-  for (const member of membersToAlert.values()) {
-    try {
-      const dmMsg = await member.user.send(cardPayload);
-      sentList.push({ user: member.user, msg: dmMsg });
-      console.log(`[Staff Alert DM] Sent single alert DM to on-duty staff ${member.user.tag} (${member.user.id})`);
-    } catch (err) {
-      console.warn(`[Staff Alert DM] Could not DM on-duty staff ${member.user.tag}: ${err.message}`);
-    }
+  const assigned = assignPlayerToStaff(onDutyStaff);
+  if (!assigned) return [];
+
+  try {
+    const dmMsg = await assigned.user.send(cardPayload);
+    console.log(`[Staff Alert DM] Sent balanced alert DM to assigned staff ${assigned.user.tag} (${assigned.user.id})`);
+    return [{ user: assigned.user, msg: dmMsg }];
+  } catch (err) {
+    console.warn(`[Staff Alert DM] Could not DM assigned staff ${assigned.user.tag}: ${err.message}`);
+    return [];
   }
-  return sentList;
 }
 
 // ═══════════════════════ Safe Zone Violations System ═══════════════════════
@@ -3169,7 +3211,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
 
   if (strikeNum === 1) {
     // Strike 1: Warning PM ONLY (do not jail)
-    const warnPm = `Safe Zone - Please stop shooting in the safe zone. This is your first warning.`;
+    const warnPm = `Safe Zone Warning: Do not attack players in protected safe zones. First warning.`;
     await sendErlcCommand(`:pm ${username} ${warnPm}`);
 
     const card = new ContainerBuilder().setAccentColor(0xf1c40f);
@@ -3203,8 +3245,8 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
     return { ok: true, strike: 1, action: 'warn' };
   } else if (strikeNum === 2) {
     // Strike 2: Jail immediately + Second Warning PM
-    const warnPm2 = `Safe Zone - Stop shooting in the safe zone. This is your second warning.`;
-    const jailPm = `Safe Zone - You have been jailed for shooting in the safe zone.`;
+    const warnPm2 = `Safe Zone Warning: Do not attack players in protected safe zones. Second warning.`;
+    const jailPm = `Safe Zone Violation: Jailed for attacking in protected safe zone.`;
     await sendErlcCommand(`:jail ${username}`);
     await sendErlcCommand(`:pm ${username} ${warnPm2}`);
     await sendErlcCommand(`:pm ${username} ${jailPm}`);
@@ -3243,10 +3285,10 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
     return { ok: true, strike: 2, action: 'warn_jail' };
   } else if (strikeNum === 3) {
     // Strike 3: Notice PM + 3.5s Delay so they can read it + Kick!
-    const removePm = `Safe Zone - You have been removed for repeated shooting in the safe zone.`;
+    const removePm = `Safe Zone Violation: Removed for repeated attacks in protected safe zones.`;
     await sendErlcCommand(`:pm ${username} ${removePm}`);
     await new Promise((resolve) => setTimeout(resolve, 3500));
-    await sendErlcCommand(`:kick ${username} Safe Zone - Repeated shooting in safe zone.`);
+    await sendErlcCommand(`:kick ${username} Safe Zone - Repeated attacks in safe zone.`);
 
     const card = new ContainerBuilder().setAccentColor(0xed4245);
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Safe Zone Violation — Strike 3 (Kicked)'));
@@ -3379,12 +3421,14 @@ async function checkKillLogsForSafeZone(discordClient) {
     if (!Array.isArray(logs) || !logs.length) return;
 
     if (!killLogsInitialized) {
+      const nowSec = Math.floor(Date.now() / 1000);
       for (const k of logs) {
-        if (k.Timestamp) processedKillTimestamps.add(`${k.Killer}:${k.Killed}:${k.Timestamp}`);
+        if (k.Timestamp && (nowSec - k.Timestamp > 20)) {
+          processedKillTimestamps.add(`${k.Killer}:${k.Killed}:${k.Timestamp}`);
+        }
       }
       killLogsInitialized = true;
-      console.log(`[Safe Zone] Initialized with ${processedKillTimestamps.size} existing kill record(s). Watching for new kills...`);
-      return;
+      console.log(`[Safe Zone] Initialized with ${processedKillTimestamps.size} historical kill record(s). Watching for new kills...`);
     }
 
     for (const k of logs) {
@@ -3395,50 +3439,15 @@ async function checkKillLogsForSafeZone(discordClient) {
       const killerName = (k.Killer || '').split(':')[0] || 'Unknown';
       const victimName = (k.Killed || '').split(':')[0] || 'Unknown';
 
-      // Staff team immunity: staff team role 1341965114101731418 or server admins can kill anyone and won't get warned
       const isStaff = await isStaffKiller(discordClient, killerName);
-      const safeZoneChannelId = '1277704273375002675';
-      const targetChannel = await discordClient.channels.fetch(safeZoneChannelId).catch(() => null);
-      const primaryGuild = discordClient.guilds.cache.get('1232495211490443284') || discordClient.guilds.cache.first();
-
-      if (isStaff) {
-        console.log(`[Safe Zone] Killer "${killerName}" is a staff member (Immune). Posting review alert to staff...`);
-        const safeZoneCard = new ContainerBuilder().setAccentColor(0x3498db);
-        safeZoneCard.addTextDisplayComponents(
-          new TextDisplayBuilder().setContent('## 🛡️ In-Game Kill Recorded — Staff Incident')
-        );
-        safeZoneCard.addSeparatorComponents(thinLine());
-        safeZoneCard.addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `> **Killer:** \`${killerName}\` *(Staff Member / Admin)*\n` +
-            `> **Victim:** \`${victimName}\`\n` +
-            `> **Timestamp:** <t:${k.Timestamp || Math.floor(Date.now() / 1000)}:R>\n` +
-            `> **Protected Safe Zones:** Main Spawn • Springfield Spawn • Sheriff's Office • Police Station\n` +
-            `> **Status:** 🛡️ **Staff Immunity Active** (No automated in-game penalty applied)\n\n` +
-            `*To test or manually apply an in-game safe zone strike to this player, click **Apply Strike Anyway** below.*`
-          )
-        );
-        const actionRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`sz_flag_${killerName}`).setLabel('Apply Strike Anyway').setStyle(ButtonStyle.Danger).setEmoji('🚨'),
-          new ButtonBuilder().setCustomId(`erlc_tp_${killerName}`).setLabel('Teleport to Killer').setStyle(ButtonStyle.Secondary).setEmoji('📍'),
-          new ButtonBuilder().setCustomId(`erlc_bring_${killerName}`).setLabel('Bring Killer').setStyle(ButtonStyle.Secondary).setEmoji('🧲'),
-          new ButtonBuilder().setCustomId(`sz_dismiss_${killerName}`).setLabel('Dismiss').setStyle(ButtonStyle.Secondary).setEmoji('✅')
-        );
-        safeZoneCard.addActionRowComponents(actionRow);
-
-        if (targetChannel) {
-          await targetChannel.send({ components: [safeZoneCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch((err) => {
-            console.error(`[Safe Zone] Failed to send staff kill alert to safeZoneChannel:`, err.message);
-          });
-        }
-        if (primaryGuild) {
-          await sendGameLog(primaryGuild, safeZoneCard);
-        }
-        continue;
-      }
-
-      console.log(`[Safe Zone Auto-Enforcer] Kill incident logged: ${killerName} killed ${victimName}. Triggering automatic safe zone strike...`);
-      await handleSafeZoneStrike(discordClient, killerName, null, 'Safe Zone Shooting / Kill Incident', victimName);
+      console.log(`[Safe Zone Auto-Enforcer] Kill incident logged: ${killerName} killed ${victimName}${isStaff ? ' (Staff Member)' : ''}. Triggering safe zone strike & warning...`);
+      await handleSafeZoneStrike(
+        discordClient,
+        killerName,
+        null,
+        isStaff ? 'Safe Zone Kill Incident (Staff Activity)' : 'Safe Zone Shooting / Kill Incident',
+        victimName
+      );
     }
   } catch (err) {
     console.warn(`[Safe Zone] Kill logs check error: ${err.response?.data?.message || err.message}`);
@@ -3519,6 +3528,8 @@ async function runErlcEnforcementScan(discordClient) {
         username,
         robloxId,
         firstSeenTs: now,
+        createdTs: now,
+        assignedStaffId: null,
         warnedOutfit: false,
         warnedOutfitTs: null,
         outfitTimer: null,
@@ -3588,11 +3599,16 @@ async function runErlcEnforcementScan(discordClient) {
           const pmText = `Alabama State Roleplay - Please change your avatar out of the default bacon outfit.`;
           await sendErlcCommand(`:pm ${username} ${pmText}`);
 
-          const outfitCard = await buildOutfitFlagCard(username, tracker.robloxId, assetName);
-          await sendStaffAlertDMs(discordClient, {
-            components: [outfitCard.toJSON()],
-            flags: MessageFlags.IsComponentsV2
-          });
+          const onDutyStaff = await getOnDutyStaffMembers(discordClient);
+          const assigned = assignPlayerToStaff(onDutyStaff);
+          if (assigned) {
+            tracker.assignedStaffId = assigned.user.id;
+            const outfitCard = await buildOutfitFlagCard(username, tracker.robloxId, assetName);
+            await sendStaffAlertDMs(discordClient, {
+              components: [outfitCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            }, assigned);
+          }
 
           if (primaryGuild) {
             const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
@@ -3698,20 +3714,25 @@ async function runErlcEnforcementScan(discordClient) {
       }
       tracker.warnedVc = true;
       tracker.warnedVcTs = now;
-      const warnPm = `VC Only Server - Comms requirement not met - alabam. You will be jailed.`;
+      const warnPm = `Alabama State Roleplay: Please join our community server to play. You will be jailed if unverified.`;
       await sendErlcCommand(`:pm ${username} ${warnPm}`);
 
-      // Send DM alert to testing role 1548637141850918993 ONLY ONCE!
+      // Send DM alert to ONE on-duty staff member (load balanced 50/50, never duplicate)
       if (!tracker.dmAlertSent && !tracker.sendingDm) {
         tracker.dmAlertSent = true;
         tracker.sendingDm = true;
         try {
-          const alertCard = await buildStaffAlertCard(username, tracker, false);
-          const sentList = await sendStaffAlertDMs(discordClient, {
-            components: [alertCard.toJSON()],
-            flags: MessageFlags.IsComponentsV2
-          });
-          tracker.staffDmMessages = sentList;
+          const onDutyStaff = await getOnDutyStaffMembers(discordClient);
+          const assigned = assignPlayerToStaff(onDutyStaff);
+          if (assigned) {
+            tracker.assignedStaffId = assigned.user.id;
+            const alertCard = await buildStaffAlertCard(username, tracker, false);
+            const sentList = await sendStaffAlertDMs(discordClient, {
+              components: [alertCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            }, assigned);
+            tracker.staffDmMessages = sentList;
+          }
         } finally {
           tracker.sendingDm = false;
         }
@@ -3750,7 +3771,7 @@ async function runErlcEnforcementScan(discordClient) {
       tracker.jailed = true;
       tracker.jailedTs = now;
       await sendErlcCommand(`:jail ${username}`);
-      const jailPm = `VC Only Server - Comms requirement not met - alabam. You will be jailed.`;
+      const jailPm = `Alabama State Roleplay: You have been jailed. Please join our community server to be released.`;
       await sendErlcCommand(`:pm ${username} ${jailPm}`);
 
       // Update existing staff DM cards in-place (NEVER send a new message!)
@@ -3793,17 +3814,27 @@ async function runErlcEnforcementScan(discordClient) {
       tracker.kickTimer = setTimeout(async () => {
         const curStatus = await checkPlayerDiscordStatus(discordClient, username);
         if (!curStatus.found && inGamePlayerTracker.has(username.toLowerCase())) {
-          await sendErlcCommand(`:kick ${username} VC Only Server - Failed to join comms - alabam after warning & jail.`);
+          await sendErlcCommand(`:kick ${username} Alabama State Roleplay - Please join our community server before playing.`);
+          
+          // Delete old staff DM alert message immediately so it doesn't linger
+          if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+            for (const item of tracker.staffDmMessages) {
+              try {
+                await item.msg.delete().catch(() => null);
+              } catch { }
+            }
+            tracker.staffDmMessages = [];
+          }
+
           inGamePlayerTracker.delete(username.toLowerCase());
           if (primaryGuild) {
             const kickCard = new ContainerBuilder().setAccentColor(0x2b2d31);
-            kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## VC Only: Player Kicked (Failed to Join Comms)'));
+            kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## VC Only: Player Kicked (Failed to Join Community)'));
             kickCard.addSeparatorComponents(thinLine());
             const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
             const infoText =
               `> **Player:** \`${username}\`\n` +
-              `> **Status:** Failed to join comms - alabam after warning & jail.\n` +
-              `> **Reason / Log:** \`VC Only Server - Failed to join comms - alabam after warning & jail.\`\n` +
+              `> **Status:** Failed to join community after warning & jail.\n` +
               `> **Action:** Kicked from in-game server after 5-minute jail countdown elapsed.\n` +
               `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`;
             if (avatarUrl) {
@@ -3880,6 +3911,20 @@ async function refreshTrackedNonDiscordPlayers(discordClient) {
   }
 
   for (const [uname, tracker] of [...inGamePlayerTracker.entries()]) {
+    // Auto-delete stale alerts older than 7 minutes (lifecycle completed or player handled)
+    if (tracker.createdTs && (Date.now() - tracker.createdTs > 7 * 60 * 1000)) {
+      if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+        for (const item of tracker.staffDmMessages) {
+          try {
+            await item.msg.delete().catch(() => null);
+          } catch { }
+        }
+        tracker.staffDmMessages = [];
+      }
+      inGamePlayerTracker.delete(uname);
+      continue;
+    }
+
     // Check if player disconnected / left game
     if (currentInGame) {
       if (!currentInGame.has(uname)) {
@@ -3909,10 +3954,10 @@ async function refreshTrackedNonDiscordPlayers(discordClient) {
       tracker.refreshCount = (tracker.refreshCount || 1) + 1;
       const status = await checkPlayerDiscordStatus(discordClient, tracker.username);
       if (status.found || status.isStaff) {
-        console.log(`[Auto-Refresh] Player ${tracker.username} joined Discord! Updating staff DMs to green and deleting after 20s...`);
+        console.log(`[Auto-Refresh] Player ${tracker.username} joined Discord! Updating staff DM and cleaning up...`);
         if (tracker.jailed) {
           await sendErlcCommand(`:unjail ${tracker.username}`);
-          const unjailPm = `Verified - comms requirement met - alabam. Welcome to Alabama State Roleplay.`;
+          const unjailPm = `Alabama State Roleplay: Verified. Welcome to the server!`;
           await sendErlcCommand(`:pm ${tracker.username} ${unjailPm}`);
           tracker.jailed = false;
           if (tracker.kickTimer) {
@@ -3933,7 +3978,7 @@ async function refreshTrackedNonDiscordPlayers(discordClient) {
             } catch { }
           }
 
-          // After they join, after 20 seconds delete the whole text like nothing ever happened!
+          // Clean up verified DM after 10 seconds
           const toDelete = [...tracker.staffDmMessages];
           tracker.staffDmMessages = [];
           setTimeout(async () => {
@@ -3942,21 +3987,8 @@ async function refreshTrackedNonDiscordPlayers(discordClient) {
                 await item.msg.delete().catch(() => null);
               } catch { }
             }
-            console.log(`[Auto-Refresh] Cleaned up staff alert DMs for ${tracker.username} 20s after Discord verification.`);
-          }, 20000);
-        }
-      } else {
-        // Still not in Discord: update refresh count on existing staff DM cards via silent in-place edit
-        if (tracker.staffDmMessages && tracker.staffDmMessages.length > 0) {
-          const updatedCard = await buildStaffAlertCard(tracker.username, tracker, false, false);
-          for (const item of tracker.staffDmMessages) {
-            try {
-              await item.msg.edit({
-                components: [updatedCard.toJSON()],
-                flags: MessageFlags.IsComponentsV2
-              });
-            } catch { }
-          }
+            console.log(`[Auto-Refresh] Cleaned up staff alert DM for ${tracker.username} 10s after Discord verification.`);
+          }, 10000);
         }
       }
     }
@@ -6851,7 +6883,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await sendErlcCommand(`:unjail ${targetUser}`);
-      await sendErlcCommand(`:pm ${targetUser} Verified - comms requirement met - alabam. Welcome to Alabama State Roleplay.`);
+      await sendErlcCommand(`:pm ${targetUser} Alabama State Roleplay: Verified. Welcome to the server!`);
 
       const updatedCard = await buildStaffAlertCard(targetUser, tracker, true);
       try {
@@ -6859,6 +6891,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           components: [updatedCard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
+        setTimeout(async () => {
+          try {
+            await interaction.message.delete().catch(() => null);
+          } catch { }
+        }, 10000);
       } catch (editErr) {
         console.warn(`Could not update staff DM card: ${editErr.message}`);
       }
