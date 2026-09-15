@@ -2701,6 +2701,7 @@ const inGamePlayerTracker = new Map();
 const allOnlinePlayers = new Set();
 const verifiedInDiscordCache = new Set();
 const rejoinedBaconOutfitWarned = new Set();
+const rejoinedVcCooldown = new Map(); // username -> expiryTs (15 min cooldown)
 
 const BACON_HAIR_IDS = ['63690008', '1772336109'];
 const BACON_CLOTHING_IDS = [
@@ -2940,21 +2941,22 @@ async function buildStaffAlertCard(username, tracker, isJoined = false, hasLeft 
   const robloxId = tracker?.robloxId || null;
   const avatarUrl = await getRobloxAvatarHeadshotUrl(robloxId);
 
+  const warnCount = tracker?.warnCount || 1;
   const statusText = hasLeft
     ? '**Player Left the Game**'
     : isJoined
       ? '**Joined & Verified in Discord**'
-      : tracker?.jailed
-        ? '**Jailed in-game (Failed to join)**'
-        : '**Not Found in Alabama Discord**';
+      : tracker?.kicked
+        ? '**Kicked from Server (5 Warnings Elapsed)**'
+        : `**Not in Discord (Warning ${warnCount}/5)**`;
 
   const inGameState = hasLeft
     ? 'Player disconnected / left server'
     : isJoined
       ? 'Player unjailed'
-      : tracker?.jailed
-        ? 'Jailed (`:jail ' + username + '`)'
-        : '2-min warning sent';
+      : tracker?.kicked
+        ? 'Kicked from server'
+        : `Warning ${warnCount} of 5 sent`;
 
   const assignedStaffText = tracker?.assignedStaffId ? `> **Assigned Staff:** <@${tracker.assignedStaffId}>\n` : '';
   const refreshSuffix = isJoined ? ' • *(Verified In Discord)*' : '';
@@ -2971,9 +2973,9 @@ async function buildStaffAlertCard(username, tracker, isJoined = false, hasLeft 
       ? '*Player has left the game. In-game actions are no longer available.*'
       : isJoined
         ? '*Member has successfully joined the Discord server and was unjailed.*'
-        : tracker?.jailed
-          ? '*Player failed 2-minute warning and is now jailed. Use controls below to manage.*'
-          : '*Player joined in-game without being in Discord. 2-minute warning active.*');
+        : tracker?.kicked
+          ? '*Player failed 5 warnings across 5 minutes and was kicked from the server.*'
+          : `*Player joined in-game without being in Discord. 5-minute warning countdown active (Warning ${warnCount}/5).*`);
 
   if (avatarUrl) {
     card.addSectionComponents(
@@ -3562,8 +3564,13 @@ async function runErlcEnforcementScan(discordClient) {
         outfitTimer: null,
         warnedVc: false,
         warnedVcTs: null,
+        warnCount: 0,
+        warnedVc1: false,
         warnedVc2: false,
-        warnedVc2Ts: null,
+        warnedVc3: false,
+        warnedVc4: false,
+        warnedVc5: false,
+        kicked: false,
         jailed: false,
         jailedTs: null,
         kickTimer: null,
@@ -3735,18 +3742,60 @@ async function runErlcEnforcementScan(discordClient) {
       continue;
     }
 
+    // Check if player rejoined before their 15-minute rejoin timer expired
+    const uLower = username.toLowerCase();
+    const rejoinCooldownUntil = rejoinedVcCooldown.get(uLower);
+    if (rejoinCooldownUntil && now < rejoinCooldownUntil) {
+      console.log(`[VC Enforcer] Player ${username} rejoined before the rejoin timer expired! Kicking immediately...`);
+      await sendErlcCommand(`:kick ${username} VC Only Server - Rejoined before the rejoin timer expired.`);
+      if (primaryGuild) {
+        const reCard = new ContainerBuilder().setAccentColor(0xed4245);
+        reCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 VC Only: Rejoined Before Timer Expired (Kicked)'));
+        reCard.addSeparatorComponents(thinLine());
+        const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
+        const infoText =
+          `> **Player:** \`${username}\`\n` +
+          `> **Infraction:** Rejoined the server before the rejoin timer expired without joining comms.\n` +
+          `> **Action Taken:** Automatically kicked from in-game server (\`:kick ${username} VC Only Server - Rejoined before the rejoin timer expired.\`).\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`;
+        if (avatarUrl) {
+          reCard.addSectionComponents(
+            new SectionBuilder()
+              .addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText))
+              .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
+          );
+        } else {
+          reCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
+        }
+        await sendGameLog(primaryGuild, reCard);
+        await sendSecurityLog(primaryGuild, reCard);
+      }
+      if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+        for (const item of tracker.staffDmMessages) {
+          try {
+            await item.msg.delete().catch(() => null);
+          } catch { }
+        }
+        tracker.staffDmMessages = [];
+      }
+      inGamePlayerTracker.delete(uLower);
+      continue;
+    }
+
     // Player is NOT in Discord server:
-    // Step A: First warning PM + Alert staff in DM immediately!
-    if (!tracker.warnedVc) {
+    // Step A: First warning PM (0s) + Alert staff in DM immediately!
+    if (!tracker.warnedVc1) {
       if (!activeUsernames.has(username.toLowerCase())) {
         continue;
       }
       tracker.warnedVc = true;
+      tracker.warnedVc1 = true;
       tracker.warnedVcTs = now;
+      tracker.warnCount = 1;
       const warnPm1 = `VC Only Server - Failed to join comms - alabam. First warning.`;
       await sendErlcCommand(`:pm ${username} ${warnPm1}`);
 
-      // Send DM alert to ONE staff member (load balanced 50/50, fallback to general staff/admin)
+      // Send DM alert to ONE staff member (load balanced, fallback to general staff/admin)
       if (!tracker.dmAlertSent && !tracker.sendingDm) {
         tracker.sendingDm = true;
         try {
@@ -3774,7 +3823,7 @@ async function runErlcEnforcementScan(discordClient) {
           `> **Player:** \`${username}\`\n` +
           `> **Status:** Not found in Discord server.\n` +
           `> **Private Message Sent:** \`${warnPm1}\`\n` +
-          `> **Action:** First warning sent & staff alerted in DMs.`;
+          `> **Action:** First warning sent (Warning 1/5). Staff alerted in DMs.`;
         if (avatarUrl) {
           warnCard.addSectionComponents(
             new SectionBuilder()
@@ -3789,22 +3838,22 @@ async function runErlcEnforcementScan(discordClient) {
       continue;
     }
 
-    // Step A2: Second warning (sent 1 minute after first warning)
-    if (tracker.warnedVc && !tracker.warnedVc2 && !tracker.jailed && (now - tracker.warnedVcTs >= 60000)) {
+    // Step A2: Second warning (sent 1 minute / 60s after first warning)
+    if (tracker.warnedVc1 && !tracker.warnedVc2 && !tracker.kicked && (now - tracker.warnedVcTs >= 60000)) {
       if (!activeUsernames.has(username.toLowerCase())) {
         continue;
       }
       tracker.warnedVc2 = true;
-      tracker.warnedVc2Ts = now;
+      tracker.warnCount = 2;
       const warnPm2 = `VC Only Server - Failed to join comms - alabam. Second warning.`;
       await sendErlcCommand(`:pm ${username} ${warnPm2}`);
 
       if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
-        const warnedCard2 = await buildStaffAlertCard(username, tracker, false);
+        const updatedCard = await buildStaffAlertCard(username, tracker, false);
         for (const item of tracker.staffDmMessages) {
           try {
             await item.msg.edit({
-              components: [warnedCard2.toJSON()],
+              components: [updatedCard.toJSON()],
               flags: MessageFlags.IsComponentsV2
             });
           } catch { }
@@ -3812,94 +3861,123 @@ async function runErlcEnforcementScan(discordClient) {
       }
     }
 
-    // Step B: Jail after 2 minutes & Update Active Staff DM
-    if (tracker.warnedVc && !tracker.jailed && (now - tracker.warnedVcTs >= ERLC_ENFORCER_CONFIG.vcJailDelayMs)) {
+    // Step A3: Third warning (sent 2 minutes / 120s after first warning)
+    if (tracker.warnedVc2 && !tracker.warnedVc3 && !tracker.kicked && (now - tracker.warnedVcTs >= 120000)) {
       if (!activeUsernames.has(username.toLowerCase())) {
         continue;
       }
-      tracker.jailed = true;
-      tracker.jailedTs = now;
-      await sendErlcCommand(`:jail ${username}`);
-      const jailPm = `VC Only Server - Jailed for not being in comms - alabam. Join now to be unjailed.`;
-      await sendErlcCommand(`:pm ${username} ${jailPm}`);
+      tracker.warnedVc3 = true;
+      tracker.warnCount = 3;
+      const warnPm3 = `VC Only Server - Failed to join comms - alabam. Third warning.`;
+      await sendErlcCommand(`:pm ${username} ${warnPm3}`);
 
-      // Update existing staff DM cards in-place (NEVER send a new message!)
       if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
-        const jailedCard = await buildStaffAlertCard(username, tracker, false);
+        const updatedCard = await buildStaffAlertCard(username, tracker, false);
         for (const item of tracker.staffDmMessages) {
           try {
             await item.msg.edit({
-              components: [jailedCard.toJSON()],
+              components: [updatedCard.toJSON()],
               flags: MessageFlags.IsComponentsV2
             });
-          } catch {
-            // Ignore if DM cannot be edited
-          }
+          } catch { }
         }
       }
+    }
 
+    // Step A4: Fourth warning (sent 3 minutes / 180s after first warning)
+    if (tracker.warnedVc3 && !tracker.warnedVc4 && !tracker.kicked && (now - tracker.warnedVcTs >= 180000)) {
+      if (!activeUsernames.has(username.toLowerCase())) {
+        continue;
+      }
+      tracker.warnedVc4 = true;
+      tracker.warnCount = 4;
+      const warnPm4 = `VC Only Server - Failed to join comms - alabam. Fourth warning.`;
+      await sendErlcCommand(`:pm ${username} ${warnPm4}`);
+
+      if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+        const updatedCard = await buildStaffAlertCard(username, tracker, false);
+        for (const item of tracker.staffDmMessages) {
+          try {
+            await item.msg.edit({
+              components: [updatedCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch { }
+        }
+      }
+    }
+
+    // Step A5: Fifth warning (sent 4 minutes / 240s after first warning)
+    if (tracker.warnedVc4 && !tracker.warnedVc5 && !tracker.kicked && (now - tracker.warnedVcTs >= 240000)) {
+      if (!activeUsernames.has(username.toLowerCase())) {
+        continue;
+      }
+      tracker.warnedVc5 = true;
+      tracker.warnCount = 5;
+      const warnPm5 = `VC Only Server - Failed to join comms - alabam. Fifth warning.`;
+      await sendErlcCommand(`:pm ${username} ${warnPm5}`);
+
+      if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+        const updatedCard = await buildStaffAlertCard(username, tracker, false);
+        for (const item of tracker.staffDmMessages) {
+          try {
+            await item.msg.edit({
+              components: [updatedCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch { }
+        }
+      }
+    }
+
+    // Step B: Kick after 5 minutes (300s) of warnings
+    if (tracker.warnedVc1 && !tracker.kicked && (now - tracker.warnedVcTs >= 300000)) {
+      if (!activeUsernames.has(username.toLowerCase())) {
+        continue;
+      }
+      tracker.kicked = true;
+
+      const kickReason = `VC Only Server - Failed to join comms - alabam. Rejoined before the rejoin timer expired.`;
+      console.log(`[VC Enforcer] 5 minutes of warnings elapsed for ${username}. Kicking from server...`);
+      await sendErlcCommand(`:kick ${username} ${kickReason}`);
+
+      // Set 15-minute rejoin cooldown: rejoining before timer expires kicks immediately!
+      rejoinedVcCooldown.set(username.toLowerCase(), Date.now() + 15 * 60 * 1000);
+
+      // Delete staff DM alert message immediately so it doesn't linger
+      if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
+        for (const item of tracker.staffDmMessages) {
+          try {
+            await item.msg.delete().catch(() => null);
+          } catch { }
+        }
+        tracker.staffDmMessages = [];
+      }
+
+      inGamePlayerTracker.delete(username.toLowerCase());
       if (primaryGuild) {
-        const jailCard = new ContainerBuilder().setAccentColor(0x2b2d31);
-        jailCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Non-Discord Player Jailed'));
-        jailCard.addSeparatorComponents(thinLine());
+        const kickCard = new ContainerBuilder().setAccentColor(0xed4245);
+        kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 VC Only: Player Kicked (5 Warnings Elapsed)'));
+        kickCard.addSeparatorComponents(thinLine());
         const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
         const infoText =
           `> **Player:** \`${username}\`\n` +
-          `> **Private Message Sent:** \`${jailPm}\`\n` +
-          `> **Action:** Jailed for failing to join Discord within 2 minutes. Staff alerted in DMs. 5-minute kick countdown active.`;
+          `> **Infraction:** Failed to join comms after 5 consecutive warnings across 5 minutes.\n` +
+          `> **Action Taken:** Kicked from in-game server (\`:kick ${username} ${kickReason}\`).\n` +
+          `> **Rejoin Policy:** 15-minute cooldown active. Rejoining before timer expires triggers immediate kick.\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`;
         if (avatarUrl) {
-          jailCard.addSectionComponents(
+          kickCard.addSectionComponents(
             new SectionBuilder()
               .addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText))
               .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
           );
         } else {
-          jailCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
+          kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
         }
-        await sendGameLog(primaryGuild, jailCard);
+        await sendGameLog(primaryGuild, kickCard);
+        await sendSecurityLog(primaryGuild, kickCard);
       }
-
-      tracker.kickTimer = setTimeout(async () => {
-        const curStatus = await checkPlayerDiscordStatus(discordClient, username);
-        if (!curStatus.found && inGamePlayerTracker.has(username.toLowerCase())) {
-          const kickReason = `VC Only Server - Failed to join comms - alabam after warning & jail. Removed.`;
-          await sendErlcCommand(`:kick ${username} ${kickReason}`);
-          
-          // Delete old staff DM alert message immediately so it doesn't linger
-          if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
-            for (const item of tracker.staffDmMessages) {
-              try {
-                await item.msg.delete().catch(() => null);
-              } catch { }
-            }
-            tracker.staffDmMessages = [];
-          }
-
-          inGamePlayerTracker.delete(username.toLowerCase());
-          if (primaryGuild) {
-            const kickCard = new ContainerBuilder().setAccentColor(0x2b2d31);
-            kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## VC Only: Player Kicked (Failed to Join Comms)'));
-            kickCard.addSeparatorComponents(thinLine());
-            const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
-            const infoText =
-              `> **Player:** \`${username}\`\n` +
-              `> **Status:** Failed to join comms - alabam after warning & jail.\n` +
-              `> **Action:** Kicked from in-game server after 5-minute jail countdown elapsed.\n` +
-              `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`;
-            if (avatarUrl) {
-              kickCard.addSectionComponents(
-                new SectionBuilder()
-                  .addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText))
-                  .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
-              );
-            } else {
-              kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
-            }
-            await sendGameLog(primaryGuild, kickCard);
-            await sendSecurityLog(primaryGuild, kickCard);
-          }
-        }
-      }, ERLC_ENFORCER_CONFIG.vcKickDelayMs);
     }
   }
 
@@ -7555,9 +7633,11 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
     isProcessingErlcQueue = false; // Release lock if stuck
     killLogsInitialized = false; // Reset safe zone kill log cache so new kills are caught immediately
     processedKillTimestamps.clear();
+    rejoinedVcCooldown.clear();
+    rejoinedBaconOutfitWarned.clear();
     cachedPublicIp = null;
     startErlcEnforcerLoop(interaction.client);
-    logs.push(`✅ ER:LC enforcer loop, safe zone kill watcher & command queues rebooted cleanly.`);
+    logs.push(`✅ ER:LC enforcer loop, safe zone kill watcher, rejoin cooldowns & command queues rebooted cleanly.`);
   } catch (erlcErr) {
     logs.push(`⚠️ Enforcer loop notice: ${erlcErr.message}`);
   }
