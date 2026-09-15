@@ -407,9 +407,6 @@ const erlcCommand = new SlashCommandBuilder()
     sub.setName('status').setDescription('View in-game anti-exploiter and VC enforcement tracker status.')
   )
   .addSubcommand((sub) =>
-    sub.setName('ip').setDescription('View the bot\'s current outbound IP address for ER:LC API allowlisting.')
-  )
-  .addSubcommand((sub) =>
     sub
       .setName('pm')
       .setDescription('Send an in-game private message to a player.')
@@ -1017,9 +1014,8 @@ function buildContainer(stats, opts = {}) {
 }
 
 // Refresh every 30s so "Last updated" + counts stay fresh without
-// hammering the ERLC rate limit (1s is what got the key 403'd).
+// hammering the ERLC rate limit.
 const REFRESH_EVERY_MS = 30_000;
-const REFRESH_MAX_RUNS = 360; // ~3h of live updates, then the timer stops itself
 const liveSessions = new Map();
 // Remembers the newest panel per guild:channel so a fresh /session panel
 // replaces (deletes) the previous one instead of piling up dead cards.
@@ -1050,15 +1046,14 @@ function stopLive(key) {
 
 // Edits the actual posted MESSAGE (not the interaction reply, which
 // expires after ~15 min). Stops retrying once the message is deleted.
+// Runs continuously 24/7 so the timestamp and counts never freeze.
 function startLiveRefresh(key, message, channelId) {
   stopLive(key);
   let busy = false;
-  let runs = 0;
   const timer = setInterval(async () => {
     if (busy) return;
     busy = true;
     try {
-      runs += 1;
       const fresh = await fetchServerStats();
       const parts = key.split(':');
       const gid = parts[0];
@@ -1076,7 +1071,6 @@ function startLiveRefresh(key, message, channelId) {
         ],
         flags: MessageFlags.IsComponentsV2
       });
-      if (runs >= REFRESH_MAX_RUNS) stopLive(key);
     } catch (err) {
       // Unknown Message (10008) = card was deleted → stop the timer.
       if (err?.code === 10008) stopLive(key);
@@ -2706,6 +2700,19 @@ const ERLC_ENFORCER_CONFIG = {
 const inGamePlayerTracker = new Map();
 const allOnlinePlayers = new Set();
 const verifiedInDiscordCache = new Set();
+const rejoinedBaconOutfitWarned = new Set();
+
+const BACON_HAIR_IDS = ['63690008', '1772336109'];
+const BACON_CLOTHING_IDS = [
+  '144076358', // Blue and Black Motorcycle Shirt
+  '144076760', // Dark Green Jeans
+  '144076433', // I <3 Pizza Shirt
+  '144076512', // Pink Jeans
+  '382537085', // Roblox Classic Shirt
+  '382538059', // Roblox Classic Pants
+  '144076250',
+  '144076302'
+];
 
 let cachedPublicIp = null;
 async function getOutboundIp() {
@@ -3016,10 +3023,10 @@ async function buildOutfitFlagCard(username, robloxId, assetName) {
   const avatarUrl = await getRobloxAvatarHeadshotUrl(robloxId);
   const infoText =
     `> **Player:** \`${username}\`${robloxId ? ` (Roblox ID: \`${robloxId}\`)` : ''}\n` +
-    `> **Flagged Asset:** \`${assetName}\`\n` +
-    `> **Status:** Flagged for suspicious outfit / potential exploiter\n` +
-    `> **In-Game Warning Sent:** \`:pm ${username} Suspicious avatar - removal pending - alabam\`\n` +
-    `> **Action Active:** Countdown started until ban (\`:ban ${username}\`).\n` +
+    `> **Flagged Outfit:** \`${assetName}\`\n` +
+    `> **Status:** Prohibited starter bacon outfit detected\n` +
+    `> **Private Message Sent:** \`:pm ${username} Alabama State Roleplay - Please change your avatar out of the default bacon outfit.\`\n` +
+    `> **Policy:** Warned. If player rejoins with this outfit, they will be automatically banned.\n` +
     `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
     `*Staff moderation controls for this player:*`;
 
@@ -3038,15 +3045,23 @@ async function buildOutfitFlagCard(username, robloxId, assetName) {
     new ButtonBuilder()
       .setCustomId(`erlc_tp_${username}`)
       .setLabel('Teleport to Player')
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('📍'),
     new ButtonBuilder()
       .setCustomId(`erlc_bring_${username}`)
-      .setLabel('Bring Player to You')
-      .setStyle(ButtonStyle.Secondary),
+      .setLabel('Bring Player')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('🧲'),
+    new ButtonBuilder()
+      .setCustomId(`erlc_instant_kick_${username}`)
+      .setLabel('Kick Player')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('👢'),
     new ButtonBuilder()
       .setCustomId(`erlc_instant_ban_${username}`)
-      .setLabel('Ban Player Now')
+      .setLabel('Ban Player')
       .setStyle(ButtonStyle.Danger)
+      .setEmoji('🔨')
   );
 
   card.addActionRowComponents(row);
@@ -3526,81 +3541,82 @@ async function runErlcEnforcementScan(discordClient) {
       tracker.robloxId = robloxId;
     }
 
-    // ── 1. Suspicious Outfit Check ──
-    if (tracker.robloxId && !tracker.warnedOutfit) {
+    // ── 1. Prohibited Bacon Outfit Check ──
+    // If wearing bacon hair alone, it is fine. If wearing full bacon outfit (hair + starter clothes), warn them. If they rejoin still wearing it, ban for 24h!
+    if (tracker.robloxId) {
       const assetIds = await getRobloxCurrentlyWearing(tracker.robloxId);
-      const matchedAsset = ERLC_ENFORCER_CONFIG.suspiciousAssets.find((id) => assetIds.includes(id));
-      if (matchedAsset) {
-        tracker.warnedOutfit = true;
-        tracker.warnedOutfitTs = Date.now();
+      const hasBaconHair = assetIds.some((id) => BACON_HAIR_IDS.includes(id));
+      const hasBaconClothing = assetIds.some((id) => BACON_CLOTHING_IDS.includes(id));
+      const isFullBaconOutfit = hasBaconHair && hasBaconClothing;
 
-        const assetName =
-          matchedAsset === '63690008'
-            ? 'Bacon Hair (63690008)'
-            : matchedAsset === '1772336109'
-              ? 'Down to Earth Hair (1772336109)'
-              : `Flagged Asset (${matchedAsset})`;
-
-        const pmText = `Suspicious avatar - removal pending - alabam`;
-        await sendErlcCommand(`:pm ${username} ${pmText}`);
-
-        // Immediately send DM alert to testing role 1548637141850918993 with all details & controls
-        const outfitCard = await buildOutfitFlagCard(username, tracker.robloxId, assetName);
-        await sendStaffAlertDMs(discordClient, {
-          components: [outfitCard.toJSON()],
-          flags: MessageFlags.IsComponentsV2
-        });
-
-        if (primaryGuild) {
-          const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
-          logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Suspicious Avatar Flagged In-Game'));
-          logCard.addSeparatorComponents(thinLine());
-          const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
-          if (avatarUrl) {
-            logCard.addMediaGalleryComponents(
-              new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(avatarUrl))
-            );
-            logCard.addSeparatorComponents(thinLine());
-          }
-          logCard.addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
+      if (isFullBaconOutfit) {
+        // Rejoin penalty: If previously warned/kicked and rejoined wearing the outfit -> 24h BAN!
+        if (rejoinedBaconOutfitWarned.has(username.toLowerCase()) && !tracker.bannedRejoin) {
+          tracker.bannedRejoin = true;
+          console.log(`[Flagged Avatar] Player "${username}" rejoined wearing the prohibited bacon outfit! Issuing 24h ban...`);
+          await sendErlcCommand(`:ban ${username} 24h Flagged Avatar - Rejoined with prohibited bacon outfit`);
+          if (primaryGuild) {
+            const banCard = new ContainerBuilder().setAccentColor(0xed4245);
+            banCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Flagged Avatar: Rejoined With Prohibited Outfit (Banned)'));
+            banCard.addSeparatorComponents(thinLine());
+            const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
+            const infoText =
               `> **Player:** \`${username}\` (Roblox ID: \`${tracker.robloxId}\`)\n` +
-              `> **Flagged Asset:** \`${assetName}\`\n` +
-              `> **Private Message Sent:** \`${pmText}\`\n` +
-              `> **Action:** In-game PM warning sent. Banning unless verified in comms - alabam.\n` +
-              `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`
-            )
-          );
-          // Only send to game logs channel 1232495213986058287 (removed from security logs per request)
-          await sendGameLog(primaryGuild, logCard);
+              `> **Infraction:** Rejoined the server wearing the prohibited bacon outfit after previous warning.\n` +
+              `> **Action Taken:** Automatically banned for 24 hours (\`:ban ${username} 24h ...\`).\n` +
+              `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`;
+            if (avatarUrl) {
+              banCard.addSectionComponents(
+                new SectionBuilder()
+                  .addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText))
+                  .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
+              );
+            } else {
+              banCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
+            }
+            await sendGameLog(primaryGuild, banCard);
+          }
+          continue;
         }
 
-        tracker.outfitTimer = setTimeout(async () => {
-          if (inGamePlayerTracker.has(username.toLowerCase())) {
-            await sendErlcCommand(`:ban ${username} Suspicious avatar - failed to join comms - alabam`);
-            if (primaryGuild) {
-              const banCard = new ContainerBuilder().setAccentColor(0x2b2d31);
-              banCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Potential Exploiter Banned'));
-              banCard.addSeparatorComponents(thinLine());
-              const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
-              if (avatarUrl) {
-                banCard.addMediaGalleryComponents(
-                  new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(avatarUrl))
-                );
-                banCard.addSeparatorComponents(thinLine());
-              }
-              banCard.addTextDisplayComponents(
-                new TextDisplayBuilder().setContent(
-                  `> **Player:** \`${username}\`\n` +
-                  `> **Reason:** Failed suspicious outfit verification after 2 minutes (Code: \`ALABAM\`).\n` +
-                  `> **Duration:** 24h in-game ban issued.`
-                )
+        if (!tracker.warnedOutfit) {
+          tracker.warnedOutfit = true;
+          tracker.warnedOutfitTs = Date.now();
+          rejoinedBaconOutfitWarned.add(username.toLowerCase());
+
+          const assetName = 'Default Bacon Outfit (Starter Clothes + Hair)';
+          const pmText = `Alabama State Roleplay - Please change your avatar out of the default bacon outfit.`;
+          await sendErlcCommand(`:pm ${username} ${pmText}`);
+
+          const outfitCard = await buildOutfitFlagCard(username, tracker.robloxId, assetName);
+          await sendStaffAlertDMs(discordClient, {
+            components: [outfitCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+
+          if (primaryGuild) {
+            const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+            logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Prohibited Bacon Outfit Flagged In-Game'));
+            logCard.addSeparatorComponents(thinLine());
+            const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
+            if (avatarUrl) {
+              logCard.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(avatarUrl))
               );
-              // Only send to game logs channel 1232495213986058287
-              await sendGameLog(primaryGuild, banCard);
+              logCard.addSeparatorComponents(thinLine());
             }
+            logCard.addTextDisplayComponents(
+              new TextDisplayBuilder().setContent(
+                `> **Player:** \`${username}\` (Roblox ID: \`${tracker.robloxId}\`)\n` +
+                `> **Flagged Outfit:** \`${assetName}\`\n` +
+                `> **Private Message Sent:** \`${pmText}\`\n` +
+                `> **Policy:** Warning sent & staff alerted. If the player rejoins wearing this outfit, they will be banned for 24h.\n` +
+                `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`
+              )
+            );
+            await sendGameLog(primaryGuild, logCard);
           }
-        }, ERLC_ENFORCER_CONFIG.outfitBanDelayMs);
+        }
       }
     }
 
@@ -3982,21 +3998,6 @@ async function handleErlcCommand(interaction) {
 
   if (!isStaffMember(member)) {
     await interaction.reply({ content: '❌ You must have staff permissions to run ER:LC enforcer tools.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-
-  if (sub === 'ip') {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const pubIp = await getOutboundIp();
-    await interaction.editReply({
-      content:
-        `🌐 **Bot Outbound IP Address:** \`${pubIp}\`\n\n` +
-        `If teleporting or commands fail with an authorization error:\n` +
-        `1. Visit [ER:LC Server Owners](https://api.erlc.gg/server-owners)\n` +
-        `2. Select **${SERVER.name}**\n` +
-        `3. Add \`${pubIp}\` to your **Custom Bot IP Allowlist**\n` +
-        `4. Ensure **Execute Server Commands** is enabled.`
-    });
     return;
   }
 
@@ -6955,6 +6956,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
+
+    if (interaction.isButton() && interaction.customId.startsWith('erlc_instant_kick_')) {
+      const username = interaction.customId.replace('erlc_instant_kick_', '');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      rejoinedBaconOutfitWarned.add(username.toLowerCase());
+      const res = await sendErlcCommand(`:kick ${username} Alabama State Roleplay - Please change your avatar out of the default bacon outfit.`);
+      if (!res.ok) {
+        await interaction.editReply({ content: `❌ Failed to kick \`${username}\`: ${res.error}` });
+      } else {
+        await interaction.editReply({ content: `👢 Kicked \`${username}\` from the server! (If they rejoin with the default outfit, they will be automatically banned for 24h).` });
+      }
+      return;
+    }
   } catch (error) {
     console.error(`Failed to handle an interaction (${error.message}).`);
     if (!interaction.replied && !interaction.deferred) {
@@ -7454,8 +7468,11 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
   try {
     erlcCommandQueue.length = 0; // Clear any stalled queue items
     isProcessingErlcQueue = false; // Release lock if stuck
+    killLogsInitialized = false; // Reset safe zone kill log cache so new kills are caught immediately
+    processedKillTimestamps.clear();
+    cachedPublicIp = null;
     startErlcEnforcerLoop(interaction.client);
-    logs.push(`✅ ER:LC enforcer loop & command queues rebooted cleanly.`);
+    logs.push(`✅ ER:LC enforcer loop, safe zone kill watcher & command queues rebooted cleanly.`);
   } catch (erlcErr) {
     logs.push(`⚠️ Enforcer loop notice: ${erlcErr.message}`);
   }
