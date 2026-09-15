@@ -89,25 +89,26 @@ const SERVER = {
  * Only DISCORD_TOKEN, CLIENT_ID and GUILD_ID are required.
  * SESSION_CHANNEL_ID and the ERLC_* variables are optional.
  */
+function cleanEnv(val, fallback = '') {
+  if (!val) return fallback;
+  return String(val).trim().replace(/[\r\n\t\s]+/g, '');
+}
+
 const config = {
-  token: process.env.DISCORD_TOKEN,
-  clientId: process.env.CLIENT_ID,
-  guildId: process.env.GUILD_ID,
-  sessionChannelId: process.env.SESSION_CHANNEL_ID || '',
-  apiKey: process.env.ERLC_API_KEY || '',
-  // Full server endpoint override, e.g. https://api.erlc.dev/v1/server
-  // (your .env already has this - we derive the base from it).
-  apiUrl: process.env.ERLC_API_URL || '',
-  // Env overrides - defaults fall back to the hardcoded SERVER block below,
-  // so your Rose / ALABAM texts stay unless you explicitly override them.
-  serverCode: process.env.ERLC_SERVER_CODE || '',
-  bannerUrl: process.env.SESSION_BANNER_URL || '',
-  voteBannerUrl: process.env.VOTE_BANNER_URL || '',
-  pingRoleId: process.env.SESSION_PING_ROLE_ID || ''
+  token: cleanEnv(process.env.DISCORD_TOKEN),
+  clientId: cleanEnv(process.env.CLIENT_ID) === 'CLIENT_ID' || !cleanEnv(process.env.CLIENT_ID) ? '1402908543488626729' : cleanEnv(process.env.CLIENT_ID),
+  guildId: cleanEnv(process.env.GUILD_ID) === 'GUILD_ID' || !cleanEnv(process.env.GUILD_ID) ? '1232495211490443284' : cleanEnv(process.env.GUILD_ID),
+  sessionChannelId: cleanEnv(process.env.SESSION_CHANNEL_ID),
+  apiKey: cleanEnv(process.env.ERLC_API_KEY),
+  apiUrl: (process.env.ERLC_API_URL || '').trim().replace(/[\r\n\t\s]+/g, ''),
+  serverCode: (process.env.ERLC_SERVER_CODE || '').trim(),
+  bannerUrl: (process.env.SESSION_BANNER_URL || '').trim(),
+  voteBannerUrl: (process.env.VOTE_BANNER_URL || '').trim(),
+  pingRoleId: cleanEnv(process.env.SESSION_PING_ROLE_ID)
 };
 
-const requiredSecrets = ['DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID'];
-const missingSecrets = requiredSecrets.filter((name) => !process.env[name]);
+const requiredSecrets = ['DISCORD_TOKEN'];
+const missingSecrets = requiredSecrets.filter((name) => !config.token);
 if (missingSecrets.length) {
   throw new Error(`Missing environment variables: ${missingSecrets.join(', ')}`);
 }
