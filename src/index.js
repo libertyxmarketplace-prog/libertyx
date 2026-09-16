@@ -6442,6 +6442,58 @@ async function closeTicketChannel(client, channel, ticket, closedByTag, closedBy
   }, waitMs);
 }
 
+function getActiveTicket(channel) {
+  if (!channel) return null;
+  const channelId = typeof channel === 'string' ? channel : channel.id;
+  let ticket = activeTickets.get(channelId);
+  if (ticket) return ticket;
+
+  // Auto-recovery: If bot restarted and memory/file desynced, or channel is inside a known ticket category
+  if (typeof channel === 'object' && channel.guild) {
+    const parentId = channel.parentId;
+    let matchedCatKey = null;
+    for (const [k, cat] of Object.entries(TICKET_CONFIG.categories)) {
+      if (cat.categoryId === parentId) {
+        matchedCatKey = k;
+        break;
+      }
+    }
+
+    const isTicketNamed = channel.name && (
+      channel.name.startsWith('🔴・') ||
+      channel.name.startsWith('🟢・') ||
+      channel.name.startsWith('🔵・') ||
+      channel.name.startsWith('ticket-') ||
+      matchedCatKey !== null
+    );
+
+    if (isTicketNamed) {
+      const catKey = matchedCatKey || 'general';
+      const cat = TICKET_CONFIG.categories[catKey] || TICKET_CONFIG.categories.general;
+      const cleanUsername = channel.name.replace(/^[🔴🟢🔵]・/, '').replace(/^ticket-/, '');
+      ticket = {
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        authorId: channel.topic?.match(/\d{17,20}/)?.[0] || channel.client?.user?.id || 'Unknown',
+        authorTag: cleanUsername || 'Community Member',
+        authorUsername: cleanUsername || 'member',
+        categoryKey: catKey,
+        categoryName: cat.name,
+        reason: 'Restored ticket session',
+        createdAt: Math.floor((channel.createdTimestamp || Date.now()) / 1000),
+        claimedBy: null,
+        controlMessageId: null
+      };
+      activeTickets.set(channel.id, ticket);
+      saveTickets();
+      console.log(`[Auto-Recovery] Recovered active ticket session for channel #${channel.name} (${channel.id}).`);
+      return ticket;
+    }
+  }
+
+  return null;
+}
+
 const SHR_LOGS_CHANNEL_ID = '1549597951611899954';
 
 function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
@@ -8051,7 +8103,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ─────────────── Ticket Control: Claim ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_claim') {
-      const ticket = activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel);
       if (!ticket) {
         await interaction.reply({ content: 'This channel is not an active ticket in my database.', flags: MessageFlags.Ephemeral });
         return;
@@ -8089,7 +8141,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ─────────────── Ticket Control: Unclaim ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_unclaim') {
-      const ticket = activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel);
       if (!ticket) {
         await interaction.reply({ content: 'This channel is not an active ticket in my database.', flags: MessageFlags.Ephemeral });
         return;
@@ -8136,7 +8188,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ─────────────── Ticket Control: Close Prompt ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_close') {
-      const ticket = activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel);
       if (!ticket) {
         await interaction.reply({ content: 'This channel is not an active ticket in my database.', flags: MessageFlags.Ephemeral });
         return;
@@ -8154,7 +8206,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ─────────────── Ticket Control: Confirm Close ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_close_confirm') {
-      const ticket = activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel);
       await interaction.update({
         content: '🔒 Archiving transcript and closing ticket in **5 seconds**...',
         components: []
@@ -9308,11 +9360,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
   } catch (error) {
-    console.error(`Failed to handle an interaction (${error.message}).`);
+    console.error(`Failed to handle an interaction (${error.message}) [type=${interaction.type}, id=${interaction.customId || interaction.commandName}]:`, error.stack || error);
     if (!interaction.replied && !interaction.deferred) {
       try {
         await interaction.reply({
-          content: 'Something went wrong while running that. Check the bot logs.',
+          content: `❌ Something went wrong: ${error.message}`,
           flags: MessageFlags.Ephemeral
         });
       } catch {
@@ -9322,7 +9374,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // We deferred but never finished - try to clean up the "thinking..." state.
       try {
         await interaction.editReply({
-          content: 'Something went wrong while running that.',
+          content: `❌ Something went wrong: ${error.message}`,
           flags: MessageFlags.Ephemeral
         });
       } catch {
