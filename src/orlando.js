@@ -44,6 +44,80 @@ const WELCOME_CHANNEL_ID = '1549635572698447932';
 
 const orlandoTickets = new Map();
 
+const ORLANDO_DESK_FILE = path.join(__dirname, '..', 'orlando_desk_state.json');
+let orlandoDeskState = {
+  status: 'online',
+  categories: {
+    general: true,
+    ia: true,
+    highrank: true,
+    partnership: true,
+    staff_partnership: true
+  }
+};
+
+function loadOrlandoDeskState() {
+  try {
+    if (fs.existsSync(ORLANDO_DESK_FILE)) {
+      orlandoDeskState = JSON.parse(fs.readFileSync(ORLANDO_DESK_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.warn('[Orlando] Could not read desk state:', err.message);
+  }
+}
+
+function saveOrlandoDeskState() {
+  try {
+    fs.writeFileSync(ORLANDO_DESK_FILE, JSON.stringify(orlandoDeskState, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Orlando] Could not save desk state:', err.message);
+  }
+}
+
+const ORLANDO_PANELS_FILE = path.join(__dirname, '..', 'orlando_panels.json');
+const orlandoPanels = new Map();
+
+function loadOrlandoPanels() {
+  try {
+    if (fs.existsSync(ORLANDO_PANELS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(ORLANDO_PANELS_FILE, 'utf8'));
+      for (const [k, v] of Object.entries(data)) orlandoPanels.set(k, v);
+    }
+  } catch (err) {
+    console.warn('[Orlando] Could not read panels file:', err.message);
+  }
+}
+
+function saveOrlandoPanels() {
+  try {
+    const flat = {};
+    for (const [k, v] of orlandoPanels) flat[k] = v;
+    fs.writeFileSync(ORLANDO_PANELS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Orlando] Could not save panels file:', err.message);
+  }
+}
+
+async function refreshOrlandoPanels() {
+  for (const [chanKey, msgId] of [...orlandoPanels]) {
+    const parts = chanKey.split(':');
+    if (parts.length !== 2) continue;
+    const channelId = parts[1];
+    try {
+      const ch = await client.channels.fetch(channelId).catch(() => null);
+      if (!ch) continue;
+      const msg = await ch.messages.fetch(msgId).catch(() => null);
+      if (msg) {
+        const container = buildOrlandoSupportPanel();
+        await msg.edit({
+          components: [container.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        }).catch(() => null);
+      }
+    } catch {}
+  }
+}
+
 function loadOrlandoTickets() {
   try {
     if (fs.existsSync(ORLANDO_TICKETS_FILE)) {
@@ -230,24 +304,34 @@ function buildOrlandoSupportPanel() {
 
   container.addSeparatorComponents(thinLine());
 
+  const generalOpen = orlandoDeskState.status !== 'closed' && (orlandoDeskState.categories.general !== false);
+  const iaOpen = orlandoDeskState.status !== 'closed' && (orlandoDeskState.categories.ia !== false);
+  const hrOpen = orlandoDeskState.status !== 'closed' && (orlandoDeskState.categories.highrank !== false);
+  const partnershipOpen = orlandoDeskState.status !== 'closed' && (orlandoDeskState.categories.partnership !== false);
+  const staffPartnershipOpen = orlandoDeskState.status !== 'closed' && (orlandoDeskState.categories.staff_partnership !== false);
+
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `**General Support** — Community questions, inquiries, and general server assistance.\n` +
-      `**Internal Affairs** — Staff reports, member misconduct, and supervisory review.\n` +
-      `**High Rank Support** — Executive matters, affiliations, and administrative inquiries.\n` +
-      `**Partnership Operations** — Server partnerships, mutual promotions, and affiliations.`
+      `**General Support** — ${generalOpen ? 'Community inquiries, questions, and server assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Internal Affairs** — ${iaOpen ? 'Staff reports, member misconduct, and supervisory review.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**High Rank Support** — ${hrOpen ? 'Executive matters, affiliations, and administrative inquiries.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Partnership Operations** — ${partnershipOpen ? 'Server partnerships, mutual promotions, and affiliations.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Staff Partnership** — ${staffPartnershipOpen ? 'Partner server staff transfers and reciprocal rank requests.' : '[Closed by staff] Currently unavailable.'}`
     )
   );
 
   container.addSeparatorComponents(thinLine());
 
+  const deskCircle = orlandoDeskState.status === 'online' ? '🟢' : (orlandoDeskState.status === 'busy' ? '🟡' : '🔴');
+  const deskStyle = orlandoDeskState.status === 'online' ? ButtonStyle.Success : (orlandoDeskState.status === 'busy' ? ButtonStyle.Secondary : ButtonStyle.Danger);
+
   container.addSectionComponents(
     sectionRow(
       'Support Desk',
       'Staff availability to assist community members.',
-      '🟢',
+      deskCircle,
       'orlando_desk_status',
-      ButtonStyle.Success
+      deskStyle
     )
   );
 
@@ -259,20 +343,24 @@ function buildOrlandoSupportPanel() {
     .addOptions(
       new StringSelectMenuOptionBuilder()
         .setLabel('General Support')
-        .setDescription('Community inquiries, questions, and server assistance')
+        .setDescription(generalOpen ? 'Community inquiries, questions, and server assistance' : '[Closed by staff] Currently unavailable')
         .setValue('general'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Internal Affairs')
-        .setDescription('Staff reports, member misconduct, and supervisor review')
+        .setDescription(iaOpen ? 'Staff reports, member misconduct, and supervisor review' : '[Closed by staff] Currently unavailable')
         .setValue('ia'),
       new StringSelectMenuOptionBuilder()
         .setLabel('High Rank Support')
-        .setDescription('Executive matters, administrative inquiries, and affiliations')
+        .setDescription(hrOpen ? 'Executive matters, administrative inquiries, and affiliations' : '[Closed by staff] Currently unavailable')
         .setValue('highrank'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Partnership Operations')
-        .setDescription('Community partnerships, mutual advertising, and affiliations')
-        .setValue('partnership')
+        .setDescription(partnershipOpen ? 'Server partnerships, mutual advertising, and affiliations' : '[Closed by staff] Currently unavailable')
+        .setValue('partnership'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Staff Partnership')
+        .setDescription(staffPartnershipOpen ? 'Partner server staff transfers and rank requests' : '[Closed by staff] Currently unavailable')
+        .setValue('staff_partnership')
     );
 
   const menuRow = new ActionRowBuilder().addComponents(selectMenu);
@@ -326,9 +414,18 @@ function buildOrlandoWelcomeCard(member) {
 
 // ─────────────── Pinned Ticket Control Card (Alabama-Style) ───────────────
 function buildOrlandoTicketControlCard(ticket) {
+  const isAiClaimed = ticket.category === 'partnership';
   const isClaimed = !!ticket.claimedBy;
-  const accentColor = isClaimed ? 0x57f287 : 0xd35400;
+  const accentColor = isAiClaimed ? 0x3498db : (isClaimed ? 0x57f287 : 0xd35400);
   const container = new ContainerBuilder().setAccentColor(accentColor);
+
+  if (fs.existsSync(BANNER_PATH)) {
+    container.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL('attachment://orlando_support.png')
+      )
+    );
+  }
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(`## ${ticket.categoryName}`)
@@ -336,7 +433,10 @@ function buildOrlandoTicketControlCard(ticket) {
 
   container.addSeparatorComponents(thinLine());
 
-  const handlerText = isClaimed ? `<@${ticket.claimedBy}>` : '*None (Awaiting Staff)*';
+  const handlerText = isAiClaimed
+    ? `<@${client.user?.id || 'bot'}> (Automated AI Assistant)`
+    : (isClaimed ? `<@${ticket.claimedBy}>` : '*None (Awaiting Staff)*');
+
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `> **Opened By:** <@${ticket.authorId}>\n` +
@@ -344,15 +444,19 @@ function buildOrlandoTicketControlCard(ticket) {
     )
   );
 
+  const circleLabel = isAiClaimed ? '🔵' : (isClaimed ? '🟢' : '🔴');
+  const circleStyle = isAiClaimed ? ButtonStyle.Primary : (isClaimed ? ButtonStyle.Success : ButtonStyle.Danger);
+  const statusDesc = isAiClaimed
+    ? 'Claimed and automated by AI Assistant.'
+    : (isClaimed ? `Claimed and handled by <@${ticket.claimedBy}>.` : 'Awaiting an available staff member to claim.');
+
   container.addSectionComponents(
     sectionRow(
       'Status',
-      isClaimed
-        ? `Claimed and handled by <@${ticket.claimedBy}>.`
-        : 'Awaiting an available staff member to claim.',
-      isClaimed ? '🟢 Claimed' : '🔴 Unclaimed',
+      statusDesc,
+      circleLabel,
       'orlando_info_status',
-      isClaimed ? ButtonStyle.Success : ButtonStyle.Danger
+      circleStyle
     )
   );
 
@@ -366,20 +470,22 @@ function buildOrlandoTicketControlCard(ticket) {
   container.addSeparatorComponents(thinLine());
 
   const buttons = [];
-  if (isClaimed) {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(`orlando_unclaim_${ticket.channelId}`)
-        .setLabel('Unclaim Ticket')
-        .setStyle(ButtonStyle.Secondary)
-    );
-  } else {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(`orlando_claim_${ticket.channelId}`)
-        .setLabel('Claim Ticket')
-        .setStyle(ButtonStyle.Success)
-    );
+  if (!isAiClaimed) {
+    if (isClaimed) {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`orlando_unclaim_${ticket.channelId}`)
+          .setLabel('Unclaim Ticket')
+          .setStyle(ButtonStyle.Secondary)
+      );
+    } else {
+      buttons.push(
+        new ButtonBuilder()
+          .setCustomId(`orlando_claim_${ticket.channelId}`)
+          .setLabel('Claim Ticket')
+          .setStyle(ButtonStyle.Success)
+      );
+    }
   }
 
   buttons.push(
@@ -389,7 +495,72 @@ function buildOrlandoTicketControlCard(ticket) {
       .setStyle(ButtonStyle.Danger)
   );
 
+  if (ticket.category === 'partnership' || ticket.category === 'staff_partnership') {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`orlando_part_guide_${ticket.channelId}`)
+        .setLabel('Partnership Requirements & Application')
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+
   container.addActionRowComponents(new ActionRowBuilder().addComponents(...buttons));
+
+  return container;
+}
+
+// ─────────────── Partnership Guide Container ───────────────
+function buildPartnershipGuideContainer() {
+  const container = new ContainerBuilder().setAccentColor(0x3498db);
+
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Requirements & Application'));
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      '> Thank you for your interest in partnering with **Orlando Roleplay**. Please ensure your community satisfies our official requirements below prior to submitting your application.'
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Partnership Requirements\n\n` +
+      `**1. Minimum Members**\n` +
+      `Your server must have active community members, excluding bot accounts.\n\n` +
+      `**2. Active Community**\n` +
+      `Your server must maintain an active, respectful atmosphere.\n\n` +
+      `**3. No NSFW Content**\n` +
+      `NSFW content or promotions are strictly prohibited.\n\n` +
+      `**4. Community Rules**\n` +
+      `Your server must follow Discord Terms of Service and community standards.`
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Partnership Form\n` +
+      `Please copy, complete, and submit this form using \`-partnership\` in this ticket:\n\n` +
+      `\`\`\`\n` +
+      `Username:\n` +
+      `Server Name:\n` +
+      `Member Count:\n` +
+      `Server Description:\n` +
+      `Server Link:\n` +
+      `\`\`\``
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **How to Apply:** Send \`-partnership\` followed by your completed form and advertisement in this ticket.\n` +
+      `> Once verified, run \`/proof screenshot:<file>\` or \`-proof\` with a screenshot proving our advertisement is posted in your server.\n` +
+      `-# If proof is not uploaded, the partnership will be revoked.`
+    )
+  );
 
   return container;
 }
@@ -400,8 +571,8 @@ function buildOrlandoCommandsList() {
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## 📋 Orlando Support — Command Reference\n` +
-      `Here is a complete list of commands and features available for Orlando Support and ticket management.`
+      `## Orlando Support — Operations Manual\n` +
+      `Official command and department management manual for Orlando Support.`
     )
   );
 
@@ -409,29 +580,33 @@ function buildOrlandoCommandsList() {
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `### 🎫 Support Panel Deployment\n` +
-      `> • \`-panel\` or \`!panel\` — Post the official Orlando Support panel with banner and category menu.\n` +
-      `> • \`-support panel\` or \`-staff panel\` — Alternative aliases to post the panel.\n` +
-      `> • \`/support panel [channel]\` — Slash command to deploy the panel to any selected channel.\n\n` +
-      `### 🛠️ In-Ticket Management\n` +
-      `> • \`Claim Ticket\` button or \`-claim\` — Claim ticket (switches channel name to 🟢・ and status to 🟢 Claimed).\n` +
-      `> • \`Unclaim Ticket\` button or \`-unclaim\` — Release ticket back to queue (🔴・ and 🔴 Unclaimed).\n` +
-      `> • \`Close Ticket\` button or \`-close [reason]\` — Close and delete ticket.\n` +
-      `> • \`-add @user\` or \`/add target:@user\` — Add a member to the private ticket channel.\n` +
-      `> • \`-unadd @user\` or \`/unadd target:@user\` — Remove a member from the active ticket channel.\n\n` +
-      `### 🤝 Partnership Operations\n` +
-      `> • \`-partnership [ad text]\` — Submit your server advertisement for review.\n` +
-      `> • \`/proof screenshot:<file>\` or \`-proof\` — Submit proof screenshot to approve partnership.\n\n` +
-      `### 👋 Welcome & Community\n` +
-      `> • \`-welcome test\` or \`/welcome test\` — Send a test welcome card to <#${WELCOME_CHANNEL_ID}>.\n` +
-      `> • \`!list\` or \`-list\` — Show this command reference guide.`
+      `### Panel Deployment\n` +
+      `> • -panel or -support panel — Post the official Orlando Support ticket panel.\n` +
+      `> • /support panel [channel] — Deploy panel to any selected channel.\n\n` +
+      `### Department Controls\n` +
+      `> • -close [category] — Lock a category (e.g. -close staff partnership, -close general).\n` +
+      `> • -open [category] — Unlock a category (e.g. -open staff partnership, -open general).\n` +
+      `> • -close all — Close support desk and lock all categories.\n` +
+      `> • -open all — Reopen support desk and unlock all categories.\n\n` +
+      `### In-Ticket Management\n` +
+      `> • Claim Ticket button or -claim — Claim ticket (updates channel to green circle).\n` +
+      `> • Unclaim Ticket button or -unclaim — Release ticket (updates channel to red circle).\n` +
+      `> • Close Ticket button or -close [reason] — Close ticket with 5-second countdown.\n` +
+      `> • -add @user or /add target:@user — Add user to private ticket.\n` +
+      `> • -unadd @user or /unadd target:@user — Remove user from ticket.\n\n` +
+      `### Partnership Operations\n` +
+      `> • -partnership [ad text] — Submit community description and ad.\n` +
+      `> • /proof screenshot:[file] or -proof — Submit reciprocal ad proof screenshot.\n\n` +
+      `### General & Welcome\n` +
+      `> • -welcome test or /welcome test — Test welcome arrival message.\n` +
+      `> • !list or -list — Display this manual.`
     )
   );
 
   container.addSeparatorComponents(thinLine());
 
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent('-# Orlando Roleplay • Support Operations & Command Guide')
+    new TextDisplayBuilder().setContent('-# Orlando Roleplay • Support Operations Manual')
   );
 
   return container;
@@ -564,6 +739,8 @@ client.once(Events.ClientReady, async () => {
   });
 
   loadOrlandoTickets();
+  loadOrlandoDeskState();
+  loadOrlandoPanels();
   await registerCommands();
 });
 
@@ -639,17 +816,31 @@ client.on(Events.MessageCreate, async (message) => {
         files.push(new AttachmentBuilder(BANNER_PATH, { name: 'orlando_support.png' }));
       }
 
-      await message.channel.send({
+      const panelMsg = await message.channel.send({
         files,
         components: [container.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
+
+      const chanKey = `${message.guild.id}:${message.channel.id}`;
+      orlandoPanels.set(chanKey, panelMsg.id);
+      saveOrlandoPanels();
 
       const confirm = await message.reply('✅ Orlando Support panel posted successfully.');
       setTimeout(() => {
         confirm.delete().catch(() => null);
         message.delete().catch(() => null);
       }, 5000);
+      return;
+    }
+
+    if (raw === '-busy' || raw === 'busy') {
+      const isStaff = await getIsStaff();
+      if (!isStaff) return;
+      orlandoDeskState.status = 'busy';
+      saveOrlandoDeskState();
+      await refreshOrlandoPanels();
+      await message.reply('🟡 Support desk status set to **Busy** (panel updated to yellow).');
       return;
     }
 
@@ -707,7 +898,62 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (raw === '-close' || raw === '-ticket close') {
+    // Flexible -close <category> or ticket close
+    if (raw.startsWith('-close') || raw.startsWith('close')) {
+      const target = raw.replace(/^-?close\s*/, '').trim();
+      const isStaff = await getIsStaff();
+
+      if (isStaff && target) {
+        if (/^all$/i.test(target)) {
+          orlandoDeskState.status = 'closed';
+          orlandoDeskState.categories.general = false;
+          orlandoDeskState.categories.ia = false;
+          orlandoDeskState.categories.highrank = false;
+          orlandoDeskState.categories.partnership = false;
+          orlandoDeskState.categories.staff_partnership = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔴 Orlando Support desk is now Closed (all categories locked).');
+          return;
+        }
+        if (/^staff\s*partner(ship)?$/i.test(target)) {
+          orlandoDeskState.categories.staff_partnership = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔒 Staff Partnership is now closed.');
+          return;
+        }
+        if (/^partner(ship)?(\s*operations)?$/i.test(target)) {
+          orlandoDeskState.categories.partnership = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔒 Partnership Operations is now closed.');
+          return;
+        }
+        if (/^general(\s*support)?$/i.test(target)) {
+          orlandoDeskState.categories.general = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔒 General Support is now closed.');
+          return;
+        }
+        if (/^(internal(\s*affairs)?|internals|ia)$/i.test(target)) {
+          orlandoDeskState.categories.ia = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔒 Internal Affairs Support is now closed.');
+          return;
+        }
+        if (/^(high\s*rank(\s*support)?|highrank|hr)$/i.test(target)) {
+          orlandoDeskState.categories.highrank = false;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔒 High Rank Support is now closed.');
+          return;
+        }
+      }
+
+      // If no category matched and channel is an active ticket, close this ticket
       const ticket = orlandoTickets.get(message.channel.id);
       if (ticket) {
         await message.reply('🔒 Closing this ticket in 5 seconds...');
@@ -717,6 +963,61 @@ client.on(Events.MessageCreate, async (message) => {
           await message.channel.delete().catch(() => null);
         }, 5000);
         return;
+      }
+    }
+
+    // Flexible -open <category>
+    if (raw.startsWith('-open') || raw.startsWith('open')) {
+      const target = raw.replace(/^-?open\s*/, '').trim();
+      const isStaff = await getIsStaff();
+      if (isStaff && target) {
+        if (/^all$/i.test(target)) {
+          orlandoDeskState.status = 'online';
+          orlandoDeskState.categories.general = true;
+          orlandoDeskState.categories.ia = true;
+          orlandoDeskState.categories.highrank = true;
+          orlandoDeskState.categories.partnership = true;
+          orlandoDeskState.categories.staff_partnership = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 Orlando Support desk is now Open (all categories online).');
+          return;
+        }
+        if (/^staff\s*partner(ship)?$/i.test(target)) {
+          orlandoDeskState.categories.staff_partnership = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 Staff Partnership is now open.');
+          return;
+        }
+        if (/^partner(ship)?(\s*operations)?$/i.test(target)) {
+          orlandoDeskState.categories.partnership = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 Partnership Operations is now open.');
+          return;
+        }
+        if (/^general(\s*support)?$/i.test(target)) {
+          orlandoDeskState.categories.general = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 General Support is now open.');
+          return;
+        }
+        if (/^(internal(\s*affairs)?|internals|ia)$/i.test(target)) {
+          orlandoDeskState.categories.ia = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 Internal Affairs Support is now open.');
+          return;
+        }
+        if (/^(high\s*rank(\s*support)?|highrank|hr)$/i.test(target)) {
+          orlandoDeskState.categories.highrank = true;
+          saveOrlandoDeskState();
+          await refreshOrlandoPanels();
+          await message.reply('🔓 High Rank Support is now open.');
+          return;
+        }
       }
     }
 
@@ -765,10 +1066,18 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (raw.startsWith('-partnership ')) {
+    if (raw === '-partnership' || raw.startsWith('-partnership')) {
       const ticket = orlandoTickets.get(message.channel.id);
       if (!ticket) return;
-      const ad = message.content.slice(13).trim();
+      const ad = message.content.slice(12).trim();
+      if (!ad || ad.length < 5) {
+        await message.reply(
+          `ℹ️ **How to Apply:**\n` +
+          `Type \`-partnership\` followed by your completed server form and advertisement.\n` +
+          `You can click the **Partnership Requirements & Application** button on the control card above to copy the form template!`
+        );
+        return;
+      }
       ticket.partnerAd = ad;
       saveOrlandoTickets();
       await message.reply('✅ Partner advertisement recorded! Now please post our advertisement in your community and run `/proof <screenshot>` or `-proof` (with screenshot attachment).');
@@ -808,11 +1117,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
             files.push(new AttachmentBuilder(BANNER_PATH, { name: 'orlando_support.png' }));
           }
 
-          await targetChannel.send({
+          const panelMsg = await targetChannel.send({
             files,
             components: [container.toJSON()],
             flags: MessageFlags.IsComponentsV2
           });
+
+          const chanKey = `${targetChannel.guild.id}:${targetChannel.id}`;
+          orlandoPanels.set(chanKey, panelMsg.id);
+          saveOrlandoPanels();
 
           await interaction.editReply({
             content: `✅ Orlando Support panel posted in <#${targetChannel.id}>.`
@@ -988,7 +1301,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         general: 'General Support',
         ia: 'Internal Affairs',
         highrank: 'High Rank Support',
-        partnership: 'Partnership Operations'
+        partnership: 'Partnership Operations',
+        staff_partnership: 'Staff Partnership'
       };
 
       const modal = new ModalBuilder()
@@ -1022,12 +1336,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         general: 'General Support',
         ia: 'Internal Affairs',
         highrank: 'High Rank Support',
-        partnership: 'Partnership Operations'
+        partnership: 'Partnership Operations',
+        staff_partnership: 'Staff Partnership'
       };
       const catName = catNames[cat] || 'Support';
+      const isPartnership = cat === 'partnership';
+      const isStaffPartnership = cat === 'staff_partnership';
       const cleanName = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
       const chanBase = `${cat}-${cleanName}`;
-      const chanName = `🔴・${chanBase}`;
+      const chanPrefix = isPartnership ? '🔵・' : '🔴・';
+      const chanName = `${chanPrefix}${chanBase}`;
 
       // Search for specific or matching category
       await interaction.guild.channels.fetch().catch(() => null);
@@ -1045,7 +1363,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         targetCategory = interaction.guild.channels.cache.find(
           (c) => c.type === ChannelType.GuildCategory && /high\s*rank/i.test(c.name)
         );
-      } else if (cat === 'partnership') {
+      } else if (cat === 'partnership' || cat === 'staff_partnership') {
         targetCategory = interaction.guild.channels.cache.find(
           (c) => c.type === ChannelType.GuildCategory && /partner/i.test(c.name)
         );
@@ -1061,7 +1379,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const deptPattern =
         cat === 'ia'
           ? /(internal|\bia\b|supervisor)/i
-          : (cat === 'highrank' || cat === 'partnership')
+          : (cat === 'highrank' || cat === 'partnership' || cat === 'staff_partnership')
             ? /(super\s*high|high\s*rank|\bshr\b|\bhr\b|management|executive|director|partner)/i
             : /(support|staff|moderator|mod|admin|supervisor)/i;
 
@@ -1137,7 +1455,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         chanBase,
         reason,
         openedAt: Date.now(),
-        claimedBy: null
+        claimedBy: isPartnership ? client.user.id : null,
+        isStaffPartnership
       };
 
       orlandoTickets.set(ticketChannel.id, ticketData);
@@ -1146,15 +1465,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // 1. Top welcome ping
       await ticketChannel.send({
         content: `<@${interaction.user.id}>\n` +
-          (cat === 'partnership'
+          (isPartnership
             ? 'Welcome to your partnership ticket! Please select what type of partnership you are opening below.'
-            : 'Welcome to your assistance ticket. Staff will assist you shortly!'),
+            : isStaffPartnership
+              ? 'Welcome to your staff partnership and rank transfer ticket! Please read the requirements below.'
+              : 'Welcome to your assistance ticket. Staff will assist you shortly!'),
         allowedMentions: { users: [interaction.user.id] }
       });
 
-      // 2. Pinned control card
+      // 2. Pinned control card with file attachment so banner displays inside ticket
       const controlCard = buildOrlandoTicketControlCard(ticketData);
+      const files = [];
+      if (fs.existsSync(BANNER_PATH)) {
+        files.push(new AttachmentBuilder(BANNER_PATH, { name: 'orlando_support.png' }));
+      }
       const ctrlMsg = await ticketChannel.send({
+        files,
         components: [controlCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
@@ -1166,7 +1492,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch {}
 
       // 3. If partnership ticket, post the interactive selector
-      if (cat === 'partnership') {
+      if (isPartnership) {
         const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
         selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
         selectTypeCard.addSeparatorComponents(thinLine());
@@ -1200,6 +1526,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await ticketChannel.send({
           components: [selectTypeCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+      }
+
+      // 4. If staff partnership ticket, post staff transfer orientation
+      if (isStaffPartnership) {
+        const staffPartCard = new ContainerBuilder().setAccentColor(0x3498db);
+        staffPartCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `## Staff Partnership & Rank Transfer Department\n` +
+            `Welcome <@${interaction.user.id}> to your official staff partnership and rank transfer ticket.\n\n` +
+            `### When Requesting Roles & Transfers\n` +
+            `> When submitting a role request for yourself or server representatives:\n` +
+            `> • **Matching Rank:** Please only request roles that correlate directly with your current position or rank in the partner community (Lower Rank, Supervisor, High Rank).\n` +
+            `> • **Dividers Included:** Make sure to include all roles you are eligible for, including required divider roles.\n` +
+            `> • **Applicability:** These requirements apply to all departments and divisions within Orlando Roleplay.\n\n` +
+            `> You may use \`-add @user\` to add partner server representatives to this ticket.`
+          )
+        );
+        staffPartCard.addSeparatorComponents(thinLine());
+        const staffPartRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`orlando_part_guide_${ticketChannel.id}`)
+            .setLabel('Partnership Requirements & Application')
+            .setStyle(ButtonStyle.Secondary)
+        );
+        staffPartCard.addActionRowComponents(staffPartRow);
+
+        await ticketChannel.send({
+          components: [staffPartCard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
       }
@@ -1366,22 +1722,40 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // Partnership Requirements & Application button
+    if (interaction.isButton() && interaction.customId.startsWith('orlando_part_guide_')) {
+      await interaction.reply({
+        components: [buildPartnershipGuideContainer().toJSON()],
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     // Status pill buttons
     if (interaction.isButton() && interaction.customId === 'orlando_info_status') {
       const ticket = orlandoTickets.get(interaction.channelId);
+      const isAiClaimed = ticket?.category === 'partnership';
       const isClaimed = !!ticket?.claimedBy;
       await interaction.reply({
-        content: isClaimed
-          ? `🟢 This ticket is currently claimed and being handled by <@${ticket.claimedBy}>.`
-          : '🔴 This ticket is currently open and awaiting an available staff member to claim.',
+        content: isAiClaimed
+          ? '🔵 This ticket is automated and managed by the Automated AI Assistant.'
+          : (isClaimed
+            ? `🟢 This ticket is currently claimed and being handled by <@${ticket.claimedBy}>.`
+            : '🔴 This ticket is currently open and awaiting an available staff member to claim.'),
         flags: MessageFlags.Ephemeral
       });
       return;
     }
 
     if (interaction.isButton() && interaction.customId === 'orlando_desk_status') {
+      const statusText =
+        orlandoDeskState.status === 'online'
+          ? '🟢 Orlando Support Desk is currently online and accepting inquiries.'
+          : orlandoDeskState.status === 'busy'
+            ? '🟡 Orlando Support Desk is currently busy; staff are assisting with active inquiries.'
+            : '🔴 Orlando Support Desk is currently closed.';
       await interaction.reply({
-        content: '🟢 Orlando Support Desk is currently online and accepting inquiries.',
+        content: statusText,
         flags: MessageFlags.Ephemeral
       });
       return;
