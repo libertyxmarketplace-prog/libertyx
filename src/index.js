@@ -2702,6 +2702,19 @@ const allOnlinePlayers = new Set();
 const verifiedInDiscordCache = new Set();
 const rejoinedBaconOutfitWarned = new Set();
 const rejoinedVcCooldown = new Map(); // username -> expiryTs (15 min cooldown)
+const staffUnbannedExemptions = new Set(); // usernames/IDs unbanned by staff: immune to automated enforcement bans & kicks
+
+function clearAllPlayerPenalties(usernameOrId) {
+  if (!usernameOrId) return;
+  const key = usernameOrId.toString().toLowerCase().trim();
+  rejoinedBaconOutfitWarned.delete(key);
+  rejoinedVcCooldown.delete(key);
+  safeZoneStrikes.delete(key);
+  saveSafeZoneStrikes();
+  inGamePlayerTracker.delete(key);
+  staffUnbannedExemptions.add(key);
+  console.log(`[Staff Unban Exemption] Cleared all penalties, strikes, rejoin cooldowns & trackers for: ${key}`);
+}
 
 const BACON_HAIR_IDS = ['63690008', '1772336109'];
 const BACON_CLOTHING_IDS = [
@@ -3598,7 +3611,7 @@ async function runErlcEnforcementScan(discordClient) {
 
       if (isFullBaconOutfit) {
         // Rejoin penalty: If previously warned/kicked and rejoined wearing the outfit -> 24h BAN!
-        if (rejoinedBaconOutfitWarned.has(username.toLowerCase()) && !tracker.bannedRejoin) {
+        if (!staffUnbannedExemptions.has(username.toLowerCase()) && rejoinedBaconOutfitWarned.has(username.toLowerCase()) && !tracker.bannedRejoin) {
           tracker.bannedRejoin = true;
           console.log(`[Flagged Avatar] Player "${username}" rejoined wearing the prohibited bacon outfit! Issuing 24h ban...`);
           await sendErlcCommand(`:ban ${username} 24h Flagged Avatar - Rejoined with prohibited bacon outfit`);
@@ -3745,7 +3758,7 @@ async function runErlcEnforcementScan(discordClient) {
     // Check if player rejoined before their 15-minute rejoin timer expired
     const uLower = username.toLowerCase();
     const rejoinCooldownUntil = rejoinedVcCooldown.get(uLower);
-    if (rejoinCooldownUntil && now < rejoinCooldownUntil) {
+    if (!staffUnbannedExemptions.has(uLower) && rejoinCooldownUntil && now < rejoinCooldownUntil) {
       console.log(`[VC Enforcer] Player ${username} rejoined before the rejoin timer expired! Kicking immediately...`);
       await sendErlcCommand(`:kick ${username} VC Only Server - Rejoined before the rejoin timer expired.`);
       if (primaryGuild) {
@@ -4322,6 +4335,7 @@ async function handleErlcCommand(interaction) {
   if (sub === 'unban') {
     const target = interaction.options.getString('player', true).trim();
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    clearAllPlayerPenalties(target);
     const res = await sendErlcCommand(`:unban ${target}`);
     if (!res.ok) {
       await interaction.editReply({ content: `❌ Failed to unban \`${target}\`: ${res.error}` });
@@ -4462,6 +4476,7 @@ async function handleUnbanCommand(interaction) {
   const target = interaction.options.getString('target', true).trim();
   const reason = interaction.options.getString('reason')?.trim() || 'Staff Unban';
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  clearAllPlayerPenalties(target);
 
   let discordUnbanned = false;
   let inGameUnbanned = false;
@@ -5470,6 +5485,63 @@ client.on(Events.GuildBanAdd, async (ban) => {
     }, 600);
   } catch (err) {
     console.error('GuildBanAdd listener error:', err.message);
+  }
+});
+
+client.on(Events.GuildBanRemove, async (ban) => {
+  try {
+    if (!ban.guild) return;
+    setTimeout(async () => {
+      try {
+        const auditLogs = await ban.guild.fetchAuditLogs({
+          limit: 6,
+          type: AuditLogEvent.MemberBanRemove
+        });
+        const entry = auditLogs.entries.find(
+          (e) => e.targetId === ban.user?.id || (Date.now() - e.createdTimestamp < 15000)
+        );
+
+        const executor = entry?.executor;
+        const reason = entry?.reason || 'Staff Unban';
+
+        // Clear all automated enforcer penalties and add to exemptions
+        if (ban.user?.id) clearAllPlayerPenalties(ban.user.id);
+        if (ban.user?.username) clearAllPlayerPenalties(ban.user.username);
+
+        console.log(`[Discord Unban] User ${ban.user?.tag || ban.user?.id} was unbanned by ${executor?.tag || 'Staff'}. All penalties cleared.`);
+
+        const logCard = new ContainerBuilder().setAccentColor(0x57f287);
+        logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Member Unbanned'));
+        logCard.addSeparatorComponents(thinLine());
+        logCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Target Member:** <@${ban.user?.id}> (\`${ban.user?.tag || ban.user?.username || ban.user?.id}\`)\n` +
+            `> **Moderator:** ${executor ? `<@${executor.id}> (${executor.tag})` : 'Staff Moderation'}\n` +
+            `> **Reason:** ${reason}\n` +
+            `> **Enforcement Status:** Cleared from auto-bans, bacon penalties, and rejoin cooldowns.\n` +
+            `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`
+          )
+        );
+
+        await sendSecurityLog(ban.guild, logCard);
+
+        // Also post to Discord-Logs (1232495213986058286)
+        try {
+          const discordLogsChan = ban.guild.channels.cache.get('1232495213986058286') ||
+            (await ban.guild.channels.fetch('1232495213986058286').catch(() => null));
+          if (discordLogsChan) {
+            await discordLogsChan.send({
+              components: [logCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+          }
+        } catch { }
+      } catch (err) {
+        console.warn(`GuildBanRemove audit log check failed: ${err.message}`);
+      }
+    }, 600);
+  } catch (err) {
+    console.error('GuildBanRemove listener error:', err.message);
   }
 });
 
@@ -8339,6 +8411,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, '❌ Usage: `-unban <roblox_username | discord_user_id>`', 30000);
           return;
         }
+        clearAllPlayerPenalties(target);
         let discordUnbanned = false;
         let inGameUnbanned = false;
         const details = [];
