@@ -174,7 +174,19 @@ const commands = [
       sub
         .setName('test')
         .setDescription('Send a test welcome message in the welcome channel.')
-    )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('list')
+    .setDescription('Display what the Orlando Support ticket system can do.'),
+
+  new SlashCommandBuilder()
+    .setName('claim')
+    .setDescription('Claim the active ticket channel.'),
+
+  new SlashCommandBuilder()
+    .setName('unclaim')
+    .setDescription('Unclaim the active ticket channel.')
 ];
 
 async function registerCommands() {
@@ -226,7 +238,7 @@ function buildOrlandoSupportPanel() {
     sectionRow(
       'Support Desk',
       'Staff availability to assist community members.',
-      '🟢 Online',
+      '🟢',
       'orlando_desk_status',
       ButtonStyle.Success
     )
@@ -240,28 +252,28 @@ function buildOrlandoSupportPanel() {
     .addOptions(
       new StringSelectMenuOptionBuilder()
         .setLabel('General Support')
-        .setDescription('Community questions, general inquiries, and server assistance')
-        .setValue('general')
-        .setEmoji('💬'),
+        .setDescription('Community inquiries, questions, and server assistance')
+        .setValue('general'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Internal Affairs')
-        .setDescription('Staff reports, community misconduct, and supervisor review')
-        .setValue('ia')
-        .setEmoji('🛡️'),
+        .setDescription('Staff reports, member misconduct, and supervisor review')
+        .setValue('ia'),
       new StringSelectMenuOptionBuilder()
         .setLabel('High Rank Support')
-        .setDescription('Executive inquiries, administrative matters, and affiliations')
-        .setValue('highrank')
-        .setEmoji('⭐'),
+        .setDescription('Executive matters, administrative inquiries, and affiliations')
+        .setValue('highrank'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Partnership Operations')
-        .setDescription('Community partnerships and mutual advertisement')
+        .setDescription('Community partnerships, mutual advertising, and affiliations')
         .setValue('partnership')
-        .setEmoji('🤝')
     );
 
   const menuRow = new ActionRowBuilder().addComponents(selectMenu);
   container.addActionRowComponents(menuRow);
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Orlando Roleplay • Select a category above to open a ticket')
+  );
 
   return container;
 }
@@ -305,35 +317,112 @@ function buildOrlandoWelcomeCard(member) {
   return container;
 }
 
-// ─────────────── Pinned Ticket Control Card ───────────────
+// ─────────────── Pinned Ticket Control Card (Alabama-Style) ───────────────
 function buildOrlandoTicketControlCard(ticket) {
-  const container = new ContainerBuilder().setAccentColor(0x0080ff);
+  const isClaimed = !!ticket.claimedBy;
+  const accentColor = isClaimed ? 0x57f287 : 0xd35400;
+  const container = new ContainerBuilder().setAccentColor(accentColor);
 
   container.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `## ${ticket.categoryName}\n` +
-      `Welcome <@${ticket.authorId}>! Our staff team has been alerted.\n\n` +
-      `> **Reason:** ${ticket.reason}\n` +
-      `> **Status:** ${ticket.claimedBy ? `Claimed by <@${ticket.claimedBy}>` : 'Waiting for Staff'}\n` +
-      `> **Opened:** <t:${Math.floor(ticket.openedAt / 1000)}:R>`
-    )
+    new TextDisplayBuilder().setContent(`## ${ticket.categoryName}`)
   );
 
   container.addSeparatorComponents(thinLine());
 
-  const actRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`orlando_claim_${ticket.channelId}`)
-      .setLabel(ticket.claimedBy ? 'Claimed' : 'Claim Ticket')
-      .setStyle(ticket.claimedBy ? ButtonStyle.Secondary : ButtonStyle.Primary)
-      .setDisabled(!!ticket.claimedBy),
+  const handlerText = isClaimed ? `<@${ticket.claimedBy}>` : '*None (Awaiting Staff)*';
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **Opened By:** <@${ticket.authorId}>\n` +
+      `> **Assigned Handler:** ${handlerText}`
+    )
+  );
+
+  container.addSectionComponents(
+    sectionRow(
+      'Status',
+      isClaimed
+        ? `Claimed and handled by <@${ticket.claimedBy}>.`
+        : 'Awaiting an available staff member to claim.',
+      isClaimed ? '🟢 Claimed' : '🔴 Unclaimed',
+      'orlando_info_status',
+      isClaimed ? ButtonStyle.Success : ButtonStyle.Danger
+    )
+  );
+
+  if (ticket.reason) {
+    container.addSeparatorComponents(thinLine());
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`> **Reason for Opening:** ${ticket.reason}`)
+    );
+  }
+
+  container.addSeparatorComponents(thinLine());
+
+  const buttons = [];
+  if (isClaimed) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`orlando_unclaim_${ticket.channelId}`)
+        .setLabel('Unclaim Ticket')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  } else {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`orlando_claim_${ticket.channelId}`)
+        .setLabel('Claim Ticket')
+        .setStyle(ButtonStyle.Success)
+    );
+  }
+
+  buttons.push(
     new ButtonBuilder()
       .setCustomId(`orlando_close_${ticket.channelId}`)
       .setLabel('Close Ticket')
       .setStyle(ButtonStyle.Danger)
   );
 
-  container.addActionRowComponents(actRow);
+  container.addActionRowComponents(new ActionRowBuilder().addComponents(...buttons));
+
+  return container;
+}
+
+// ─────────────── Command Reference List (!list) ───────────────
+function buildOrlandoCommandsList() {
+  const container = new ContainerBuilder().setAccentColor(0x0080ff);
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## 📋 Orlando Support — Command Reference\n` +
+      `Here is a complete list of commands and features available for Orlando Support and ticket management.`
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### 🎫 Support Panel Deployment\n` +
+      `> • \`-panel\` or \`!panel\` — Post the official Orlando Support panel with banner and category menu.\n` +
+      `> • \`-support panel\` or \`-staff panel\` — Alternative aliases to post the panel.\n` +
+      `> • \`/support panel [channel]\` — Slash command to deploy the panel to any selected channel.\n\n` +
+      `### 🛠️ In-Ticket Management\n` +
+      `> • \`Claim Ticket\` button or \`-claim\` — Claim the active ticket channel (switches status to 🟢 Claimed).\n` +
+      `> • \`Unclaim Ticket\` button or \`-unclaim\` — Release the ticket back to the staff queue (🔴 Unclaimed).\n` +
+      `> • \`Close Ticket\` button or \`-close [reason]\` — Close and delete the ticket with a 5-second countdown.\n` +
+      `> • \`-add @user\` or \`/add target:@user\` — Add a member to the private ticket channel.\n` +
+      `> • \`-unadd @user\` or \`/unadd target:@user\` — Remove a member from the active ticket channel.\n\n` +
+      `### 👋 Welcome & Community\n` +
+      `> • \`-welcome test\` or \`/welcome test\` — Send a test welcome card to <#${WELCOME_CHANNEL_ID}>.\n` +
+      `> • \`!list\` or \`-list\` — Show this command reference guide.`
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Orlando Roleplay • Support Operations & Command Guide')
+  );
 
   return container;
 }
@@ -507,6 +596,49 @@ client.on(Events.MessageCreate, async (message) => {
         return;
       }
     }
+
+    if (raw === '!list' || raw === '-list' || raw === '!help' || raw === '-help') {
+      const listContainer = buildOrlandoCommandsList();
+      await message.reply({
+        components: [listContainer.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (raw === '-claim' || raw === '-ticket claim') {
+      const ticket = orlandoTickets.get(message.channel.id);
+      if (!ticket) return;
+      const isStaff = await getIsStaff();
+      if (!isStaff) return;
+      ticket.claimedBy = message.author.id;
+      saveOrlandoTickets();
+      const updatedCard = buildOrlandoTicketControlCard(ticket);
+      const pinned = await message.channel.messages.fetchPinned().catch(() => null);
+      const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
+      if (ctrlMsg) {
+        await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+      }
+      await message.reply(`👋 <@${message.author.id}> has claimed this ticket.`);
+      return;
+    }
+
+    if (raw === '-unclaim' || raw === '-ticket unclaim') {
+      const ticket = orlandoTickets.get(message.channel.id);
+      if (!ticket) return;
+      const isStaff = await getIsStaff();
+      if (!isStaff) return;
+      ticket.claimedBy = null;
+      saveOrlandoTickets();
+      const updatedCard = buildOrlandoTicketControlCard(ticket);
+      const pinned = await message.channel.messages.fetchPinned().catch(() => null);
+      const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
+      if (ctrlMsg) {
+        await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+      }
+      await message.reply(`🔄 <@${message.author.id}> has unclaimed this ticket.`);
+      return;
+    }
   } catch (err) {
     console.error('[Orlando] Error handling prefix message:', err);
   }
@@ -637,6 +769,61 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({
           content: `✅ Removed <@${target.id}> from this ticket.`
         });
+        return;
+      }
+
+      if (interaction.commandName === 'list') {
+        const listContainer = buildOrlandoCommandsList();
+        await interaction.reply({
+          components: [listContainer.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (interaction.commandName === 'claim') {
+        const ticket = orlandoTickets.get(interaction.channelId);
+        if (!ticket) {
+          await interaction.reply({
+            content: '❌ This channel is not an active Orlando Support ticket.',
+            flags: MessageFlags.Ephemeral
+          });
+          return;
+        }
+        ticket.claimedBy = interaction.user.id;
+        saveOrlandoTickets();
+        const updatedCard = buildOrlandoTicketControlCard(ticket);
+        await interaction.reply({
+          content: `👋 <@${interaction.user.id}> has claimed this ticket.`
+        });
+        const pinned = await interaction.channel.messages.fetchPinned().catch(() => null);
+        const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
+        if (ctrlMsg) {
+          await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        }
+        return;
+      }
+
+      if (interaction.commandName === 'unclaim') {
+        const ticket = orlandoTickets.get(interaction.channelId);
+        if (!ticket) {
+          await interaction.reply({
+            content: '❌ This channel is not an active Orlando Support ticket.',
+            flags: MessageFlags.Ephemeral
+          });
+          return;
+        }
+        ticket.claimedBy = null;
+        saveOrlandoTickets();
+        const updatedCard = buildOrlandoTicketControlCard(ticket);
+        await interaction.reply({
+          content: `🔄 <@${interaction.user.id}> has unclaimed this ticket.`
+        });
+        const pinned = await interaction.channel.messages.fetchPinned().catch(() => null);
+        const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
+        if (ctrlMsg) {
+          await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        }
         return;
       }
     }
@@ -840,6 +1027,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith('orlando_unclaim_')) {
+      const channelId = interaction.customId.replace('orlando_unclaim_', '');
+      const ticket = orlandoTickets.get(channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      ticket.claimedBy = null;
+      saveOrlandoTickets();
+
+      const updatedCard = buildOrlandoTicketControlCard(ticket);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      await interaction.channel.send({
+        content: `🔄 <@${interaction.user.id}> has unclaimed this ticket. It is now open for any staff member.`
+      });
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId.startsWith('orlando_close_')) {
       const channelId = interaction.customId.replace('orlando_close_', '');
       const ticket = orlandoTickets.get(channelId);
@@ -860,7 +1068,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Status pill button
+    // Status pill buttons
+    if (interaction.isButton() && interaction.customId === 'orlando_info_status') {
+      const ticket = orlandoTickets.get(interaction.channelId);
+      const isClaimed = !!ticket?.claimedBy;
+      await interaction.reply({
+        content: isClaimed
+          ? `🟢 This ticket is currently claimed and being handled by <@${ticket.claimedBy}>.`
+          : '🔴 This ticket is currently open and awaiting an available staff member to claim.',
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     if (interaction.isButton() && interaction.customId === 'orlando_desk_status') {
       await interaction.reply({
         content: '🟢 Orlando Support Desk is currently online and accepting inquiries.',
