@@ -272,18 +272,6 @@ const staffCommand = new SlashCommandBuilder()
       )
   );
 
-const applicationCommand = new SlashCommandBuilder()
-  .setName('application')
-  .setDescription('Staff application desk.')
-  .addSubcommand((sub) =>
-    sub
-      .setName('panel')
-      .setDescription('Post the staff application desk panel.')
-      .addChannelOption((opt) =>
-        opt.setName('channel').setDescription('Channel to post panel into (defaults to #applications)').setRequired(false)
-      )
-  );
-
 const suggestionCommand = new SlashCommandBuilder()
   .setName('suggestion')
   .setDescription('Alabama State Roleplay community suggestion tools.')
@@ -4939,7 +4927,7 @@ const APP_PANEL_CHANNEL_ID = '1539681421306896476';
 const APP_REVIEWER_ROLE_ID = '1548637141850918993';
 
 function buildStaffApplicationPanelCard() {
-  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  const card = new ContainerBuilder();
   card.addMediaGalleryComponents(
     new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PANEL_BANNER_URL))
   );
@@ -4948,61 +4936,87 @@ function buildStaffApplicationPanelCard() {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      'Interested in becoming part of the Alabama State Roleplay Staff Team or Discord Staff? We are looking for mature, active, and dedicated members who are willing to help build a professional and enjoyable roleplay community.\n\n' +
-      '### IN-GAME REQUIREMENTS\n' +
-      '• 14+ years of age\n' +
-      '• Must be active within the server\n' +
-      '• Must have a working microphone\n' +
-      '• Must be respectful, mature, and professional\n' +
-      '• Must understand and follow the server rules\n' +
-      '• Must be willing to attend required staff trainings and meetings\n' +
-      '• Must be able to communicate effectively with members and staff\n' +
-      '• Must be willing to enforce rules fairly and without favoritism\n' +
-      '• Must be able to work as part of a team\n' +
-      '• Prior staff experience is preferred, but not required\n\n' +
-      '### DISCORD STAFF REQUIREMENTS\n' +
-      '• 14+ years of age\n' +
-      '• Must be active within the Discord server\n' +
-      '• Must have a working microphone\n' +
-      '• Must be respectful, mature, and professional\n' +
-      '• Must understand and follow all server rules\n' +
-      '• Must be able to communicate effectively with members and staff\n' +
-      '• Must be willing to enforce Discord rules fairly and without favoritism\n' +
-      '• Must be able to handle tickets, questions, and member concerns\n' +
-      '• Must be willing to attend required staff trainings and meetings\n' +
-      '• Must be able to work effectively as part of a team\n' +
-      '• Prior Discord staff experience is preferred, but not required\n\n' +
-      '### IMPORTANT\n' +
-      'Submitting an application does not guarantee acceptance. Applications are reviewed based on maturity, activity, effort, experience, and overall suitability for the position.\n\n' +
-      'Please be honest and thorough when completing your application. Providing false information may result in an immediate denial or removal from the staff team. Do not contact High Ranks regarding application status. AI usage is strictly prohibited.\n\n' +
-      'Click a button below to begin your application in your Direct Messages.'
+      '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n' +
+      '> \n' +
+      '> **Notice:** Submitting an application does not guarantee acceptance. Applications are thoroughly reviewed based on maturity, activity, effort, and situational judgment. AI-generated answers and false information are strictly prohibited.\n' +
+      '> \n' +
+      '> Select the position you wish to apply for from the menu below to receive your application in your Direct Messages.'
     )
   );
 
   card.addSeparatorComponents(thinLine());
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('app_start_ingame')
-      .setLabel('In-Game Staff Application')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('app_start_discord')
-      .setLabel('Discord Staff Application')
-      .setStyle(ButtonStyle.Secondary)
-  );
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('app_select_position')
+    .setPlaceholder('Select an application position...')
+    .addOptions(
+      {
+        label: 'In-Game Staff Application',
+        value: 'app_start_ingame',
+        description: 'Apply to join the Alabama State Roleplay in-game staff team.'
+      },
+      {
+        label: 'Discord Staff Application',
+        value: 'app_start_discord',
+        description: 'Apply to join the Discord moderation and ticket support team.'
+      }
+    );
+  const row = new ActionRowBuilder().addComponents(selectMenu);
   card.addActionRowComponents(row);
 
   return card;
 }
 
 function buildApplicantDashboard(appData) {
-  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## Alabama State Roleplay Staff Application\n` +
       `> **Position:** **${appData.appType}**\n` +
-      `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
-      `Complete each of the numbered steps below in order. Buttons will turn green as you complete each section. When all three steps are green, click **Submit Application**.`
+      `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  if (appData.appType === 'In-Game Staff') {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### IN-GAME REQUIREMENTS\n` +
+        `> • 14+ years of age\n` +
+        `> • Must be active within the server\n` +
+        `> • Must have a working microphone\n` +
+        `> • Must be respectful, mature, and professional\n` +
+        `> • Must understand and follow the server rules\n` +
+        `> • Must be willing to attend required staff trainings and meetings\n` +
+        `> • Must be able to communicate effectively with members and staff\n` +
+        `> • Must be willing to enforce rules fairly and without favoritism\n` +
+        `> • Must be able to work as part of a team\n` +
+        `> • Prior staff experience is preferred, but not required`
+      )
+    );
+  } else {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### DISCORD STAFF REQUIREMENTS\n` +
+        `> • 14+ years of age\n` +
+        `> • Must be active within the Discord server\n` +
+        `> • Must have a working microphone\n` +
+        `> • Must be respectful, mature, and professional\n` +
+        `> • Must understand and follow all server rules\n` +
+        `> • Must be able to communicate effectively with members and staff\n` +
+        `> • Must be willing to enforce Discord rules fairly and without favoritism\n` +
+        `> • Must be able to handle tickets, questions, and member concerns\n` +
+        `> • Must be willing to attend required staff trainings and meetings\n` +
+        `> • Must be able to work effectively as part of a team\n` +
+        `> • Prior Discord staff experience is preferred, but not required`
+      )
+    );
+  }
+
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> Please complete each of the three numbered steps below in order.\n` +
+      `> Buttons will turn green as you finish each section. Once all three steps are completed, click **Submit Application**.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -5046,7 +5060,7 @@ function buildApplicantDashboard(appData) {
 }
 
 function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
-  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  const card = new ContainerBuilder();
   const gen = appData.generalInfo || {};
   const ans = appData.scenarioAnswers || {};
 
@@ -5221,7 +5235,7 @@ async function sendNextReviewInquiry(client, appData) {
     return sendNextReviewInquiry(client, appData);
   }
 
-  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## 📋 Staff Application Review Request\n` +
@@ -5609,8 +5623,7 @@ function getSlashPayload() {
     jailCommand.toJSON(),
     unjailCommand.toJSON(),
     unbanCommand.toJSON(),
-    safezoneCommand.toJSON(),
-    applicationCommand.toJSON()
+    safezoneCommand.toJSON()
   ];
 }
 
@@ -6671,7 +6684,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (logChannel) {
           await logChannel.send({
-            content: `🎉 Congratulations <@${appData.applicantId}>! Your staff application has been approved.`,
+            content: `🎉 Congratulations <@${appData.applicantId}>! Your staff application has been approved.`
+          }).catch(console.error);
+          await logChannel.send({
             components: [passedCard.toJSON()],
             flags: MessageFlags.IsComponentsV2
           }).catch(console.error);
@@ -6706,7 +6721,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         if (logChannel) {
           await logChannel.send({
-            content: `<@${appData.applicantId}> Your staff application decision has been recorded.`,
+            content: `<@${appData.applicantId}> Your staff application decision has been recorded.`
+          }).catch(console.error);
+          await logChannel.send({
             components: [failedCard.toJSON()],
             files: [attachment],
             flags: MessageFlags.IsComponentsV2
@@ -6985,9 +7002,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await handleStaffFeedbackCommand(interaction);
           return;
         }
-      } else if (interaction.commandName === 'application') {
-        await handleStaffApplicationPanelCommand(interaction);
-        return;
       } else if (interaction.commandName === 'suggestion' || interaction.commandName === 'suggest') {
         await handleSuggestionCommand(interaction);
         return;
@@ -7610,25 +7624,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // ─────────────── Staff Application: Start Application Buttons ───────────────
-    if (interaction.isButton() && (interaction.customId === 'app_start_ingame' || interaction.customId === 'app_start_discord')) {
-      const existing = activeApplications.get(interaction.user.id);
+    // ─────────────── Staff Application: Start Application (Select Menu & Buttons) ───────────────
+    async function startStaffApplication(startInteraction, chosenOption) {
+      const existing = activeApplications.get(startInteraction.user.id);
       if (existing) {
-        await interaction.reply({
+        await startInteraction.reply({
           content: '⚠️ You already have an active application in progress. Please check your Direct Messages with me to complete it.',
           flags: MessageFlags.Ephemeral
         });
         return;
       }
 
-      const isIngame = interaction.customId === 'app_start_ingame';
+      const isIngame = chosenOption === 'app_start_ingame';
       const appType = isIngame ? 'In-Game Staff' : 'Discord Staff';
-      const appId = `${Date.now().toString(36)}_${interaction.user.id.slice(-4)}`;
+      const appId = `${Date.now().toString(36)}_${startInteraction.user.id.slice(-4)}`;
 
       const newApp = {
         id: appId,
-        applicantId: interaction.user.id,
-        applicantTag: interaction.user.tag,
+        applicantId: startInteraction.user.id,
+        applicantTag: startInteraction.user.tag,
         appType,
         step1Done: false,
         step2Done: false,
@@ -7641,25 +7655,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const dashboard = buildApplicantDashboard(newApp);
-        const dmMsg = await interaction.user.send({
-          content: `**Alabama State Roleplay Staff Application Portal**\nPosition: **${appType}**\nPlease complete the 3 steps below:`,
+        // NOTE: In Components V2, do NOT pass legacy 'content' field
+        const dmMsg = await startInteraction.user.send({
           components: [dashboard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
         newApp.dmMessageId = dmMsg.id;
-        activeApplications.set(interaction.user.id, newApp);
+        activeApplications.set(startInteraction.user.id, newApp);
         saveApplications();
 
-        await interaction.reply({
-          content: `✅ I have opened your **${appType}** application in your DMs! Please check your direct messages to begin.`,
+        await startInteraction.reply({
+          content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
           flags: MessageFlags.Ephemeral
         });
       } catch (err) {
-        await interaction.reply({
+        console.error('Failed to send application DM:', err);
+        await startInteraction.reply({
           content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
           flags: MessageFlags.Ephemeral
         });
       }
+    }
+
+    if (startStaffApplication && interaction.isStringSelectMenu() && interaction.customId === 'app_select_position') {
+      const selected = interaction.values?.[0];
+      await startStaffApplication(interaction, selected);
+      return;
+    }
+
+    if (interaction.isButton() && (interaction.customId === 'app_start_ingame' || interaction.customId === 'app_start_discord')) {
+      await startStaffApplication(interaction, interaction.customId);
       return;
     }
 
@@ -7843,7 +7868,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
 
       await interaction.update({
-        content: 'Your application has been received!',
         components: [submittedCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
@@ -7873,7 +7897,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const reviewCard = buildApplicationReviewReaderCard(appData, 0);
       await interaction.update({
-        content: `📖 **Application Review Active** (Applicant: <@${appData.applicantId}>)`,
         components: [reviewCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
@@ -8987,8 +9010,8 @@ client.on(Events.MessageCreate, async (message) => {
           )
         );
 
-        await message.reply({
-          content: `<@${ticket.authorId}> Payment verified!`,
+        await message.channel.send({ content: `<@${ticket.authorId}> Payment verified!` });
+        await message.channel.send({
           components: [verifiedCard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
@@ -9042,8 +9065,8 @@ client.on(Events.MessageCreate, async (message) => {
               .setStyle(ButtonStyle.Success)
           );
 
-          await message.reply({
-            content: `<@&1341965114101731418> New paid partnership payment proof uploaded!`,
+          await message.channel.send({ content: `<@&1341965114101731418> New paid partnership payment proof uploaded!` });
+          await message.channel.send({
             components: [pendingCard.toJSON(), confirmRow],
             flags: MessageFlags.IsComponentsV2
           });
@@ -9097,8 +9120,8 @@ client.on(Events.MessageCreate, async (message) => {
               .setStyle(ButtonStyle.Success)
           );
 
-          await message.reply({
-            content: `<@&1341965114101731418> New paid partnership payment proof uploaded!`,
+          await message.channel.send({ content: `<@&1341965114101731418> New paid partnership payment proof uploaded!` });
+          await message.channel.send({
             components: [pendingCard.toJSON(), confirmRow],
             flags: MessageFlags.IsComponentsV2
           });
