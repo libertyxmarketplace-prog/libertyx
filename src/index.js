@@ -556,9 +556,19 @@ const commandsCommand = new SlashCommandBuilder()
   .setName('commands')
   .setDescription('Display the complete, beautifully organized guide of all bot commands.');
 
-const helpCommand = new SlashCommandBuilder()
-  .setName('help')
-  .setDescription('Display the complete, beautifully organized guide of all bot commands.');
+const addCommand = new SlashCommandBuilder()
+  .setName('add')
+  .setDescription('Add a user to the current ticket.')
+  .addUserOption((opt) =>
+    opt.setName('user').setDescription('The user to add to this ticket').setRequired(true)
+  );
+
+const unaddCommand = new SlashCommandBuilder()
+  .setName('unadd')
+  .setDescription('Remove a user from the current ticket.')
+  .addUserOption((opt) =>
+    opt.setName('user').setDescription('The user to remove from this ticket').setRequired(true)
+  );
 
 const STAFF_CONFIG = {
   color: 0xd69a5c,
@@ -602,6 +612,13 @@ const TICKET_CONFIG = {
       shortName: 'Partnership',
       categoryId: '1548838707530833970',
       desc: 'Server partnerships, mutual advertising, and community affiliations.'
+    },
+    staff_partnership: {
+      id: 'staff_partnership',
+      name: 'Alabama Staff Partnership & Transfers',
+      shortName: 'Staff Partnership',
+      categoryId: '1548838707530833970',
+      desc: 'Partner server staff transfers, reciprocal rank requests, and mergers.'
     }
   }
 };
@@ -2552,7 +2569,7 @@ async function handleTimeoutCommand(interaction) {
   try {
     await targetMember.timeout(durationMs, `${reason} (Issued by ${interaction.user.tag})`);
     const card = new ContainerBuilder().setAccentColor(0x2b2d31);
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⏳ Member Timed Out'));
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Member Timed Out'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
@@ -4648,7 +4665,8 @@ let ticketDeskState = {
     general: true,
     ia: true,
     highrank: true,
-    partnership: true
+    partnership: true,
+    staff_partnership: true
   }
 };
 
@@ -4674,12 +4692,14 @@ function saveTicketDeskState() {
   }
 }
 
+const activeTicketPanels = new Map(); // chanKey -> messageId
+
 function loadTicketPanels() {
   try {
     if (!fs.existsSync(TICKET_PANELS_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(TICKET_PANELS_FILE, 'utf8'));
-    for (const [key, msgId] of Object.entries(raw)) lastTicketPanelByChannel.set(key, msgId);
-    console.log(`Restored ${lastTicketPanelByChannel.size} ticket panel(s) from ticket_panels.json.`);
+    for (const [k, v] of Object.entries(raw)) lastTicketPanelByChannel.set(k, v);
+    console.log(`Restored ${lastTicketPanelByChannel.size} ticket panel location(s).`);
   } catch (err) {
     console.error('Failed to load ticket_panels.json:', err.message);
   }
@@ -4688,7 +4708,7 @@ function loadTicketPanels() {
 function saveTicketPanels() {
   try {
     const flat = {};
-    for (const [key, msgId] of lastTicketPanelByChannel) flat[key] = msgId;
+    for (const [k, v] of lastTicketPanelByChannel) flat[k] = v;
     fs.writeFileSync(TICKET_PANELS_FILE, JSON.stringify(flat, null, 2), 'utf8');
   } catch (err) {
     console.error('Failed to save ticket_panels.json:', err.message);
@@ -4738,7 +4758,14 @@ function saveTickets() {
 }
 
 function buildTicketPanelContainer() {
-  const container = new ContainerBuilder().setAccentColor(0xd35400);
+  const accentColor =
+    ticketDeskState.status === 'online'
+      ? 0x57f287
+      : ticketDeskState.status === 'busy'
+        ? 0xfee75c
+        : 0xed4245;
+
+  const container = new ContainerBuilder().setAccentColor(accentColor);
   if (TICKET_CONFIG.bannerUrl) {
     container.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(TICKET_CONFIG.bannerUrl))
@@ -4756,13 +4783,15 @@ function buildTicketPanelContainer() {
   const iaOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.ia;
   const hrOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.highrank;
   const partnershipOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.partnership !== false);
+  const staffPartnershipOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `**General Support** — Community questions, general inquiries, and store assistance.\n` +
-      `**Internal Affairs** — Staff reports, community concerns, and supervisor review.\n` +
-      `**High Rank Support** — Executive matters, IA+ reports, and administrative management.\n` +
-      `**Partnership** — Community partnerships, mutual advertising, and affiliations.`
+      `**General Support** — ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Internal Affairs** — ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**High Rank Support** — ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Partnership** — ${partnershipOpen ? 'Community partnerships, mutual advertising, and affiliations.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Staff Partnership** — ${staffPartnershipOpen ? 'Partner server staff transfers and reciprocal rank requests.' : '[Closed by staff] Currently unavailable.'}`
     )
   );
 
@@ -4770,10 +4799,17 @@ function buildTicketPanelContainer() {
 
   const deskLabel =
     ticketDeskState.status === 'online'
-      ? '🟢'
+      ? 'Online'
       : ticketDeskState.status === 'busy'
-        ? '🟠'
-        : '🔴';
+        ? 'Busy'
+        : 'Closed';
+
+  const pillStyle =
+    ticketDeskState.status === 'online'
+      ? ButtonStyle.Success
+      : ticketDeskState.status === 'busy'
+        ? ButtonStyle.Secondary
+        : ButtonStyle.Danger;
 
   container.addSectionComponents(
     sectionRow(
@@ -4781,7 +4817,7 @@ function buildTicketPanelContainer() {
       'Staff availability to assist community members.',
       deskLabel,
       'desk_status_pill',
-      ButtonStyle.Secondary
+      pillStyle
     )
   );
 
@@ -4806,7 +4842,11 @@ function buildTicketPanelContainer() {
       new StringSelectMenuOptionBuilder()
         .setLabel('Partnership')
         .setValue('partnership')
-        .setDescription(partnershipOpen ? 'Server partnerships, mutual advertising, and affiliations' : '[Closed by staff] Currently unavailable')
+        .setDescription(partnershipOpen ? 'Server partnerships, mutual advertising, and affiliations' : '[Closed by staff] Currently unavailable'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Staff Partnership')
+        .setValue('staff_partnership')
+        .setDescription(staffPartnershipOpen ? 'Partner server staff transfers and reciprocal rank requests' : '[Closed by staff] Currently unavailable')
     );
 
   container.addActionRowComponents(new ActionRowBuilder().addComponents(selectMenu));
@@ -5697,7 +5737,7 @@ async function handlePostponeModal(client, interaction) {
   }
   const endTs = applyPostpone(client, vote, minutes * 60_000);
   await interaction.reply({
-    content: `⏳ Postponed by **${minutes} min** - vote now ends <t:${Math.floor(endTs / 1000)}:R>.`,
+    content: `Postponed by **${minutes} min** - vote now ends <t:${Math.floor(endTs / 1000)}:R>.`,
     flags: MessageFlags.Ephemeral
   });
 }
@@ -5720,7 +5760,6 @@ function toggleVoter(vote, userId) {
 function getSlashPayload() {
   return [
     commandsCommand.toJSON(),
-    helpCommand.toJSON(),
     retriggerCommand.toJSON(),
     sessionCommand.toJSON(),
     ticketCommand.toJSON(),
@@ -5739,7 +5778,9 @@ function getSlashPayload() {
     unjailCommand.toJSON(),
     unbanCommand.toJSON(),
     safezoneCommand.toJSON(),
-    appealCommand.toJSON()
+    appealCommand.toJSON(),
+    addCommand.toJSON(),
+    unaddCommand.toJSON()
   ];
 }
 
@@ -6401,6 +6442,100 @@ async function closeTicketChannel(client, channel, ticket, closedByTag, closedBy
   }, waitMs);
 }
 
+const SHR_LOGS_CHANNEL_ID = '1549597951611899954';
+
+function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
+  const reqs = ticket.staffRequests || [];
+  const total = reqs.length;
+  const page = Math.max(0, Math.min(total - 1, pageIndex));
+  const card = new ContainerBuilder().setAccentColor(0x3498db);
+
+  if (total === 0) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Staff Partnership & Rank Transfer Batch\n` +
+        `> **Ticket Channel:** <#${ticket.channelId}>\n` +
+        `> **Representative:** <@${ticket.authorId}>\n\n` +
+        `*No transfer requests have been submitted in this ticket yet.*`
+      )
+    );
+    return card;
+  }
+
+  const item = reqs[page];
+  const verdictStatus = item.status === 'accepted'
+    ? 'Passed / Accepted'
+    : item.status === 'denied'
+      ? 'Denied / Rejected'
+      : 'Pending Review';
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Staff Partnership & Rank Transfer Request\n` +
+      `*Member ${page + 1} of ${total} • Ticket <#${ticket.channelId}>*\n\n` +
+      `> **Target Member:** <@${item.userId}> (\`${item.userTag}\` • \`${item.userId}\`)\n` +
+      `> **Roblox Username:** \`${item.robloxUser}\`\n` +
+      `> **Role(s) Requested:** ${item.rolesRequested}\n` +
+      `> **Origin Server & Reason:** ${item.reason}\n` +
+      `> **Proof / Evidence:** ${item.proof}\n` +
+      `> **Status:** **${verdictStatus}**` +
+      (item.reviewerId ? ` by <@${item.reviewerId}>` : '') +
+      (item.verdictReason ? `\n> **Reviewer Notes:** ${item.verdictReason}` : '')
+    )
+  );
+
+  card.addSeparatorComponents(thinLine());
+
+  // Row 1: Decision buttons
+  const decisionRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`part_staff_verdict_accept_${ticket.channelId}_${page}`)
+      .setLabel('Accept Member')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(item.status === 'accepted'),
+    new ButtonBuilder()
+      .setCustomId(`part_staff_verdict_deny_${ticket.channelId}_${page}`)
+      .setLabel('Deny Member')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(item.status === 'denied')
+  );
+  card.addActionRowComponents(decisionRow);
+
+  // Row 2: Pagination buttons if multiple members
+  if (total > 1) {
+    const leftBtn = new ButtonBuilder()
+      .setCustomId(`part_staff_page_${ticket.channelId}_${page - 1}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page <= 0);
+    try {
+      leftBtn.setEmoji({ id: '1549583273519489089', name: 'arrow_left' });
+    } catch {
+      leftBtn.setLabel('Previous');
+    }
+
+    const indicatorBtn = new ButtonBuilder()
+      .setCustomId('part_staff_indicator')
+      .setLabel(`Member ${page + 1} / ${total}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true);
+
+    const rightBtn = new ButtonBuilder()
+      .setCustomId(`part_staff_page_${ticket.channelId}_${page + 1}`)
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(page >= total - 1);
+    try {
+      rightBtn.setEmoji({ id: '1549583002676236308', name: 'Right_arrow' });
+    } catch {
+      rightBtn.setLabel('Next');
+    }
+
+    const pageRow = new ActionRowBuilder().addComponents(leftBtn, indicatorBtn, rightBtn);
+    card.addActionRowComponents(pageRow);
+  }
+
+  return card;
+}
+
 async function createTicketForUser(client, interaction, catKey, reason) {
   const cat = TICKET_CONFIG.categories[catKey];
   if (!cat) {
@@ -6527,22 +6662,28 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       controlMessageId: null
     };
 
-    // Top ping for department role & user
+    // Top ping for department role & user (partnership and staff_partnership NEVER ping staff roles)
     let deptPingRoleId = null;
     if (catKey === 'ia') deptPingRoleId = '1341932342343897269';
     else if (catKey === 'general') deptPingRoleId = '1236052056201105418';
     else if (catKey === 'highrank') deptPingRoleId = '1341932333741244476';
-    else if (catKey === 'partnership') deptPingRoleId = '1341965114101731418';
 
     const topPingContent = deptPingRoleId
       ? `<@&${deptPingRoleId}> <@${interaction.user.id}>`
       : `<@${interaction.user.id}>`;
 
+    const isStaffPartnership = catKey === 'staff_partnership';
     await ticketChannel.send({
       content: `${topPingContent}\n` +
         (isPartnership
-          ? `Welcome to your partnership ticket! Please select what type of partnership you are opening below.`
-          : `Welcome to your assistance ticket. Staff will assist you shortly!`)
+          ? 'Welcome to your partnership ticket! Please select what type of partnership you are opening below.'
+          : isStaffPartnership
+            ? 'Welcome to your staff partnership and rank transfer ticket! Please read the requirements below.'
+            : 'Welcome to your assistance ticket. Staff will assist you shortly!'),
+      allowedMentions: {
+        users: [interaction.user.id],
+        roles: deptPingRoleId ? [deptPingRoleId] : []
+      }
     });
 
     if (catKey === 'partnership') {
@@ -6569,8 +6710,8 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       selectTypeCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `Welcome <@${interaction.user.id}>! Please choose which partnership path you would like to pursue:\n\n` +
-          `• **Regular Partnership**: Mutual advertisement exchange for communities meeting our member requirement.\n` +
-          `• **Paid Partnership**: Direct promotion for communities under the member limit or seeking an @here / @everyone ping.`
+          `• **Regular Partnership**: Mutual advertisement exchange for communities meeting our 120+ member requirement.\n` +
+          `• **Paid Partnership**: Direct promotion for communities under the member limit or seeking a here / everyone ping tier.`
         )
       );
       selectTypeCard.addSeparatorComponents(thinLine());
@@ -6578,16 +6719,48 @@ async function createTicketForUser(client, interaction, catKey, reason) {
         new ButtonBuilder()
           .setCustomId(`part_type_regular_${ticketChannel.id}`)
           .setLabel('Regular Partnership')
-          .setStyle(ButtonStyle.Secondary),
+          .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`part_type_paid_${ticketChannel.id}`)
           .setLabel('Paid Partnership')
-          .setStyle(ButtonStyle.Primary)
+          .setStyle(ButtonStyle.Secondary)
       );
       selectTypeCard.addActionRowComponents(selectTypeRow);
 
       await ticketChannel.send({
         components: [selectTypeCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    }
+
+    // If staff partnership ticket, post the staff rank transfer submission card
+    if (isStaffPartnership) {
+      ticketData.staffRequests = [];
+      const staffPartCard = new ContainerBuilder().setAccentColor(0x3498db);
+      staffPartCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## Staff Partnership & Rank Transfer Department\n` +
+          `Welcome <@${interaction.user.id}> to your official staff partnership and rank transfer ticket.\n\n` +
+          `### When Requesting Roles & Transfers\n` +
+          `When submitting a role request for yourself or server representatives:\n` +
+          `• Please only request roles that apply to your current position or rank in the partner community. For example, if you are a Lower Rank, only request Lower Rank roles. The same applies to Supervisors and High Ranks.\n` +
+          `• Make sure to include all roles eligible for, including any required divider roles.\n` +
+          `• These requirements apply to all departments and jobs within Alabama State Roleplay.\n\n` +
+          `You may use \`/add <user>\` to add partner server representatives to this ticket.\n` +
+          `Click **Submit Transfer Request** below to add a member to the review batch.`
+        )
+      );
+      staffPartCard.addSeparatorComponents(thinLine());
+      const staffPartRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`part_staff_add_${ticketChannel.id}`)
+          .setLabel('Submit Transfer Request')
+          .setStyle(ButtonStyle.Primary)
+      );
+      staffPartCard.addActionRowComponents(staffPartRow);
+
+      await ticketChannel.send({
+        components: [staffPartCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
     }
@@ -6691,6 +6864,172 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.reply({
         content: `✅ Updated transcript reason to: **"${newReason}"**`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    // ─────────────── Staff Partnership: Transfer Request Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('part_staff_modal_')) {
+      const channelId = interaction.customId.replace('part_staff_modal_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: '❌ Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const targetUserInput = interaction.fields.getTextInputValue('target_user')?.trim() || '';
+      const robloxUser = interaction.fields.getTextInputValue('roblox_user')?.trim() || 'N/A';
+      const rolesRequested = interaction.fields.getTextInputValue('roles_requested')?.trim() || 'N/A';
+      const reason = interaction.fields.getTextInputValue('transfer_reason')?.trim() || 'N/A';
+      const proof = interaction.fields.getTextInputValue('proof_link')?.trim() || 'None provided';
+
+      const matchId = targetUserInput.match(/\d{17,20}/)?.[0] || targetUserInput;
+      let targetUserObj = null;
+      if (matchId) {
+        targetUserObj = await interaction.client.users.fetch(matchId).catch(() => null);
+      }
+      const userId = targetUserObj ? targetUserObj.id : interaction.user.id;
+      const userTag = targetUserObj ? (targetUserObj.tag || targetUserObj.username) : interaction.user.tag;
+
+      if (!Array.isArray(ticket.staffRequests)) {
+        ticket.staffRequests = [];
+      }
+
+      ticket.staffRequests.push({
+        userId,
+        userTag,
+        robloxUser,
+        rolesRequested,
+        reason,
+        proof,
+        status: 'pending',
+        submittedAt: Date.now()
+      });
+      saveTickets();
+
+      const itemCard = new ContainerBuilder().setAccentColor(0x3498db);
+      itemCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## Staff Transfer Request Added\n` +
+          `> **Member:** <@${userId}> (\`${userTag}\`)\n` +
+          `> **Roblox Username:** \`${robloxUser}\`\n` +
+          `> **Roles Requested:** ${rolesRequested}\n` +
+          `> **Server & Reason:** ${reason}\n` +
+          `> **Proof:** ${proof}\n\n` +
+          `Total members in batch: **${ticket.staffRequests.length}**.`
+        )
+      );
+      itemCard.addSeparatorComponents(thinLine());
+
+      const manageRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`part_staff_add_${channelId}`)
+          .setLabel('Add Another Member')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`part_staff_submit_shr_${channelId}`)
+          .setLabel(`Submit Batch to SHR (${ticket.staffRequests.length})`)
+          .setStyle(ButtonStyle.Success)
+      );
+      itemCard.addActionRowComponents(manageRow);
+
+      await interaction.reply({
+        components: [itemCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Partnership: SHR Review Verdict Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('part_staff_verdict_modal_')) {
+      // e.g. part_staff_verdict_modal_accept_channelId_page or deny_...
+      const withoutPrefix = interaction.customId.replace('part_staff_verdict_modal_', '');
+      const isAccept = withoutPrefix.startsWith('accept_');
+      const remainder = withoutPrefix.replace(isAccept ? 'accept_' : 'deny_', '');
+      const lastUnderscore = remainder.lastIndexOf('_');
+      const channelId = remainder.substring(0, lastUnderscore);
+      const pageIndex = parseInt(remainder.substring(lastUnderscore + 1), 10) || 0;
+
+      const ticket = activeTickets.get(channelId);
+      if (!ticket || !Array.isArray(ticket.staffRequests) || !ticket.staffRequests[pageIndex]) {
+        await interaction.reply({ content: '❌ Transfer request record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const verdictReason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || 'No reason provided';
+      const item = ticket.staffRequests[pageIndex];
+      item.status = isAccept ? 'accepted' : 'denied';
+      item.reviewerId = interaction.user.id;
+      item.reviewerTag = interaction.user.tag || interaction.user.username;
+      item.verdictReason = verdictReason;
+      item.reviewedAt = Date.now();
+      saveTickets();
+
+      // Update SHR log message
+      if (interaction.message) {
+        try {
+          const updatedShrCard = buildStaffTransferReviewCard(ticket, pageIndex);
+          await interaction.message.edit({
+            components: [updatedShrCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        } catch (editErr) {
+          console.warn('Failed to edit SHR transfer review message:', editErr.message);
+        }
+      }
+
+      // Notify ticket channel
+      try {
+        const ticketChan = await interaction.client.channels.fetch(channelId).catch(() => null);
+        if (ticketChan) {
+          const noticeCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          noticeCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## Staff Transfer Verdict — ${isAccept ? 'Accepted' : 'Denied'}\n` +
+              `> **Member:** <@${item.userId}> (\`${item.userTag}\`)\n` +
+              `> **Roblox:** \`${item.robloxUser}\`\n` +
+              `> **Roles Requested:** ${item.rolesRequested}\n` +
+              `> **Reviewed By:** <@${interaction.user.id}>\n` +
+              `> **Decision:** **${isAccept ? 'ACCEPTED' : 'DENIED'}**\n` +
+              `> **Notes / Reason:** ${verdictReason}`
+            )
+          );
+          await ticketChan.send({
+            components: [noticeCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+      } catch (postErr) {
+        console.warn('Failed to notify ticket channel of SHR transfer decision:', postErr.message);
+      }
+
+      // DM transferring member
+      try {
+        const targetMemberUser = await interaction.client.users.fetch(item.userId).catch(() => null);
+        if (targetMemberUser) {
+          const dmCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          dmCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## Staff Partnership Rank Transfer Decision\n` +
+              `Hello <@${item.userId}>,\n\n` +
+              `Your rank transfer request for Alabama State Roleplay has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by <@${interaction.user.id}>.\n\n` +
+              `> **Roles Requested:** ${item.rolesRequested}\n` +
+              `> **Reviewer Notes:** ${verdictReason}\n\n` +
+              (isAccept
+                ? 'Please check in with our leadership team in your ticket channel for role assignment.'
+                : 'Thank you for your interest. If you have questions, please speak with your server representative.')
+            )
+          );
+          await targetMemberUser.send({
+            components: [dmCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+      } catch {}
+
+      await interaction.reply({
+        content: `✅ Member transfer request (${isAccept ? 'ACCEPTED' : 'DENIED'}) recorded. Ticket channel and user have been notified.`,
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -6893,7 +7232,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               `> **Verdict:** **${isPassed ? 'PASSED' : 'DENIED'}**\n` +
               `> **Reviewer:** <@${interaction.user.id}>\n` +
               `> **Notes / Reason:** ${reason}\n\n` +
-              `-# ⏳ This review session message will automatically delete in 5 minutes.`
+              `-# This review session message will automatically delete in 5 minutes.`
             )
           );
           await interaction.message.edit({
@@ -7080,7 +7419,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               `> **Verdict:** **${isAccept ? 'ACCEPTED' : 'DENIED'}**\n` +
               `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag || interaction.user.username})\n` +
               `> **Staff Reason:** ${reason}\n\n` +
-              `-# ⏳ This message will automatically delete in 5 minutes.`
+              `-# This message will automatically delete in 5 minutes.`
             )
           );
           await interaction.message.edit({
@@ -7403,8 +7742,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else if (interaction.commandName === 'retrigger') {
         await handleRetriggerCommand(interaction, true);
         return;
-      } else if (interaction.commandName === 'commands' || interaction.commandName === 'help') {
-        await handleCommandsGuideCommand(interaction, true);
+      } else if (interaction.commandName === 'add') {
+        await handleTicketAddMember(interaction, true);
+        return;
+      } else if (interaction.commandName === 'unadd') {
+        await handleTicketUnaddMember(interaction, true);
+        return;
+      } else if (interaction.commandName === 'commands') {
+        await handleCommandsGuideCommand(interaction, true, 0);
         return;
       }
     }
@@ -7620,7 +7965,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       const endTs = applyPostpone(client, vote, ms);
       await interaction.update({
-        content: `⏳ Postponed - vote now ends <t:${Math.floor(endTs / 1000)}:R>. I'll DM you again when the timer runs out.`,
+        content: `Postponed - vote now ends <t:${Math.floor(endTs / 1000)}:R>. I'll DM you again when the timer runs out.`,
         components: []
       });
       return;
@@ -7911,20 +8256,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       saveTickets();
 
       const paidCard = new ContainerBuilder().setAccentColor(0xfee75c);
-      paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💎 Paid Partnership Game Passes'));
+      paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Paid Partnership Game Passes'));
       paidCard.addSeparatorComponents(thinLine());
       paidCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `Please purchase one of our official game passes below to proceed with your paid partnership:\n\n` +
           `• [**Paid Partnership Fee (100 R$)**](https://www.roblox.com/game-pass/1941739587/Alabama-State-Roleplay-Partnership-Fee-100)\n` +
-          `> Promote your server to our community and help potential members discover and join faster. The partnership fee will only be for communities under the required member count.\n\n` +
-          `• [**Paid Partnership @here ping (200 R$)**](https://www.roblox.com/game-pass/1941619662/Alabama-Paid-Partnership-here-ping-200)\n` +
-          `> Get your advertisement promoted with an @here ping for additional exposure.\n\n` +
-          `• [**Paid Partnership @everyone ping (300 R$)**](https://www.roblox.com/game-pass/1944102339/Alabama-Paid-Partnership-everyone-ping-300)\n` +
-          `> Get maximum exposure with an @everyone ping, helping your server reach the entire community faster.\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `📸 **Payment Proof Required:** After purchasing, upload a screenshot of your purchase confirmation or transaction inventory into this channel (or reply with the image).\n` +
-          `Once uploaded, staff (<@&1341965114101731418>) will verify your payment and confirm it so you can submit your advertisement!`
+          `> Promote your server to our community. The partnership fee applies to communities under the 120 member threshold.\n\n` +
+          `• [**Paid Partnership Here Ping Tier (200 R$)**](https://www.roblox.com/game-pass/1941619662/Alabama-Paid-Partnership-here-ping-200)\n` +
+          `> Get your advertisement promoted with a here ping tier for additional exposure.\n\n` +
+          `• [**Paid Partnership Everyone Ping Tier (300 R$)**](https://www.roblox.com/game-pass/1944102339/Alabama-Paid-Partnership-everyone-ping-300)\n` +
+          `> Get maximum exposure with an everyone ping tier, reaching the entire community.\n\n` +
+          `**Payment Proof Required:** After purchasing, upload a screenshot of your purchase confirmation into this channel (or run \`/proof partnership\`).\n` +
+          `Once uploaded, the partnership team will verify your payment so you can submit your server advertisement.`
         )
       );
 
@@ -7975,6 +8319,188 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.update({
         components: [confirmedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Partnership: Open Transfer Request Modal ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('part_staff_add_')) {
+      const channelId = interaction.customId.replace('part_staff_add_', '');
+      const modal = new ModalBuilder()
+        .setCustomId(`part_staff_modal_${channelId}`)
+        .setTitle('Staff Rank Transfer Request')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('target_user')
+              .setLabel('Discord Username / Tag / User ID')
+              .setPlaceholder('e.g. @Member or 123456789012345678')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('roblox_user')
+              .setLabel('Roblox Username')
+              .setPlaceholder('e.g. OfficerJohn')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('roles_requested')
+              .setLabel('Role(s) Requested (matching tier)')
+              .setPlaceholder('e.g. Senior Moderator + Staff Divider')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('transfer_reason')
+              .setLabel('Current Rank in Partner Server & Reason')
+              .setPlaceholder('e.g. Server merge / partner representative, Head Admin in...')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('proof_link')
+              .setLabel('Proof / Screenshot Link')
+              .setPlaceholder('Image URL or screenshot reference link showing position')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(false)
+          )
+        );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ─────────────── Staff Partnership: Submit Batch to SHR ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('part_staff_submit_shr_')) {
+      const channelId = interaction.customId.replace('part_staff_submit_shr_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket || !Array.isArray(ticket.staffRequests) || ticket.staffRequests.length === 0) {
+        await interaction.reply({
+          content: '❌ No transfer requests found in this batch to submit.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const shrChan = await interaction.client.channels.fetch(SHR_LOGS_CHANNEL_ID).catch(() => null);
+      if (!shrChan) {
+        await interaction.editReply({
+          content: `❌ Could not find SHR logs channel (<#${SHR_LOGS_CHANNEL_ID}>). Ensure I have channel access.`
+        });
+        return;
+      }
+
+      const reviewCard = buildStaffTransferReviewCard(ticket, 0);
+      const shrMsg = await shrChan.send({
+        components: [reviewCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      ticket.shrMessageId = shrMsg.id;
+      ticket.batchSubmitted = true;
+      saveTickets();
+
+      const batchNotif = new ContainerBuilder().setAccentColor(0x57f287);
+      batchNotif.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## Batch Submitted for Super High Rank Review\n` +
+          `> **Total Requests:** **${ticket.staffRequests.length}**\n` +
+          `> **Submitted by:** <@${interaction.user.id}>\n` +
+          `> **Log Channel:** <#${SHR_LOGS_CHANNEL_ID}>\n\n` +
+          `The Super High Rank administration will review each candidate. You will receive updates directly in this ticket channel.`
+        )
+      );
+
+      await interaction.channel.send({
+        components: [batchNotif.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+
+      await interaction.editReply({
+        content: `✅ Batch forwarded to Super High Rank logs channel (<#${SHR_LOGS_CHANNEL_ID}>).`
+      });
+      return;
+    }
+
+    // ─────────────── Staff Partnership: SHR Review Pagination ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('part_staff_page_')) {
+      // e.g. part_staff_page_channelId_page
+      const parts = interaction.customId.split('_');
+      const pageIndex = parseInt(parts.pop(), 10) || 0;
+      const channelId = parts.slice(3).join('_');
+
+      const ticket = activeTickets.get(channelId);
+      if (!ticket) {
+        await interaction.reply({ content: '❌ Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const updatedCard = buildStaffTransferReviewCard(ticket, pageIndex);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Partnership: SHR Accept / Deny Verdict Click ───────────────
+    if (interaction.isButton() && (interaction.customId.startsWith('part_staff_verdict_accept_') || interaction.customId.startsWith('part_staff_verdict_deny_'))) {
+      const isAccept = interaction.customId.startsWith('part_staff_verdict_accept_');
+      const prefix = isAccept ? 'part_staff_verdict_accept_' : 'part_staff_verdict_deny_';
+      const remainder = interaction.customId.replace(prefix, '');
+      const lastUnderscore = remainder.lastIndexOf('_');
+      const channelId = remainder.substring(0, lastUnderscore);
+      const pageIndex = parseInt(remainder.substring(lastUnderscore + 1), 10) || 0;
+
+      const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      const canReview = member && (
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.roles?.cache?.some((r) => /(super\s*high\s*rank|shr|executive|director|owner|co-owner|management)/i.test(r.name))
+      );
+
+      if (!canReview) {
+        await interaction.reply({
+          content: '❌ You must be a Super High Rank / Executive to review staff transfer requests.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`part_staff_verdict_modal_${isAccept ? 'accept' : 'deny'}_${channelId}_${pageIndex}`)
+        .setTitle(isAccept ? 'Accept Member Transfer' : 'Deny Member Transfer')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('verdict_reason')
+              .setLabel(isAccept ? 'Role Assignment Notes & Instructions' : 'Reason for Denial')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+              .setMinLength(2)
+              .setMaxLength(1000)
+              .setPlaceholder(isAccept ? 'e.g. Approved for Senior Moderator; assigning roles.' : 'e.g. Insufficient proof or mismatched rank.')
+          )
+        );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ─────────────── /commands Multi-Page Interactive Reader ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('cmds_page_')) {
+      const parts = interaction.customId.split('_');
+      const pageIndex = parseInt(parts.pop(), 10) || 0;
+      const card = buildCommandsGuidePage(pageIndex);
+      await interaction.update({
+        components: [card.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
       return;
@@ -9033,87 +9559,290 @@ async function handleProofPartnershipCommand(interaction) {
   });
 }
 
-function buildCommandsGuideCard() {
+async function handleTicketAddMember(interaction, isSlash = true, targetUser = null) {
+  const ticket = activeTickets.get(interaction.channelId);
+  if (!ticket) {
+    const msg = '❌ This command can only be used inside an active ticket channel.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const allowedCategories = ['partnership', 'staff_partnership', 'ia', 'general', 'highrank'];
+  if (!allowedCategories.includes(ticket.categoryKey)) {
+    const msg = '❌ Member management is not available in this category.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user?.id || interaction.author?.id).catch(() => null));
+  const isStaff =
+    member &&
+    (member.permissions.has(PermissionFlagsBits.Administrator) ||
+      member.permissions.has(PermissionFlagsBits.ManageChannels) ||
+      member.roles?.cache?.some((r) =>
+        /(moderator|mod|admin|owner|supervisor|high\s*rank|staff|partnership)/i.test(r.name)
+      ));
+
+  if (!isStaff && ticket.authorId !== (interaction.user?.id || interaction.author?.id)) {
+    const msg = '❌ You do not have permission to add members to this ticket.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const target = targetUser || (isSlash ? interaction.options.getUser('user', true) : null);
+  if (!target) {
+    const msg = '❌ Please mention a valid user to add.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  try {
+    await interaction.channel.permissionOverwrites.edit(target.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true,
+      AttachFiles: true,
+      EmbedLinks: true
+    });
+
+    const addCard = new ContainerBuilder().setAccentColor(0x57f287);
+    addCard.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Member Added to Ticket\n` +
+        `> **User:** <@${target.id}> (\`${target.tag || target.username}\`)\n` +
+        `> **Added by:** <@${interaction.user?.id || interaction.author?.id}>`
+      )
+    );
+
+    if (isSlash) {
+      await interaction.reply({
+        components: [addCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } else {
+      await interaction.channel.send({
+        components: [addCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    }
+  } catch (err) {
+    const errMsg = `❌ Failed to add user: ${err.message}`;
+    if (isSlash) return interaction.reply({ content: errMsg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, errMsg, 15000);
+  }
+}
+
+async function handleTicketUnaddMember(interaction, isSlash = true, targetUser = null) {
+  const ticket = activeTickets.get(interaction.channelId);
+  if (!ticket) {
+    const msg = '❌ This command can only be used inside an active ticket channel.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const allowedCategories = ['partnership', 'staff_partnership', 'ia', 'general', 'highrank'];
+  if (!allowedCategories.includes(ticket.categoryKey)) {
+    const msg = '❌ Member management is not available in this category.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user?.id || interaction.author?.id).catch(() => null));
+  const isStaff =
+    member &&
+    (member.permissions.has(PermissionFlagsBits.Administrator) ||
+      member.permissions.has(PermissionFlagsBits.ManageChannels) ||
+      member.roles?.cache?.some((r) =>
+        /(moderator|mod|admin|owner|supervisor|high\s*rank|staff|partnership)/i.test(r.name)
+      ));
+
+  if (!isStaff && ticket.authorId !== (interaction.user?.id || interaction.author?.id)) {
+    const msg = '❌ You do not have permission to remove members from this ticket.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  const target = targetUser || (isSlash ? interaction.options.getUser('user', true) : null);
+  if (!target) {
+    const msg = '❌ Please mention a valid user to remove.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  if (target.id === ticket.authorId) {
+    const msg = '❌ You cannot remove the ticket creator from their own ticket.';
+    if (isSlash) return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, msg, 15000);
+  }
+
+  try {
+    await interaction.channel.permissionOverwrites.delete(target.id);
+
+    const unaddCard = new ContainerBuilder().setAccentColor(0xed4245);
+    unaddCard.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Member Removed from Ticket\n` +
+        `> **User:** <@${target.id}> (\`${target.tag || target.username}\`)\n` +
+        `> **Removed by:** <@${interaction.user?.id || interaction.author?.id}>`
+      )
+    );
+
+    if (isSlash) {
+      await interaction.reply({
+        components: [unaddCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } else {
+      await interaction.channel.send({
+        components: [unaddCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    }
+  } catch (err) {
+    const errMsg = `❌ Failed to remove user: ${err.message}`;
+    if (isSlash) return interaction.reply({ content: errMsg, flags: MessageFlags.Ephemeral });
+    return autoDeleteReply(interaction, errMsg, 15000);
+  }
+}
+
+function buildCommandsGuidePage(pageIndex = 0) {
   const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const totalPages = 6;
+  const page = Math.max(0, Math.min(totalPages - 1, pageIndex));
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '## 📖 Alabama State Roleplay — Command Directory\n' +
-      '*Complete reference guide for all server, moderation, and session commands.*'
-    )
-  );
+  if (page === 0) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Session & Server Operations\n` +
+        `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
+        `• \`/session panel [ping_role]\`\n` +
+        `> Post the live session panel with real-time in-game player counts and direct join buttons.\n\n` +
+        `• \`/session vote <required> <duration> [ping_role]\`\n` +
+        `> Open an interactive community vote for a new session with customizable vote targets.\n\n` +
+        `• \`/session shutdown\`\n` +
+        `> Safely shut down the active session, update panel status to closed, and alert voters via DM.`
+      )
+    );
+  } else if (page === 1) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Staff & Management\n` +
+        `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
+        `• \`/staff panel [ping_role]\`\n` +
+        `> Post the live staff control and session management panel.\n\n` +
+        `• \`/staff promotion <user> <new_rank> <prev_rank> [roles] [reason]\`\n` +
+        `> Post an official staff promotion notice and update member roles.\n\n` +
+        `• \`/staff derank <user> <remove_role> <new_rank> <reason>\`\n` +
+        `> Demote a staff member and remove old staff roles.\n\n` +
+        `• \`/staff feedback <staff> <rating> <comments> [anonymous]\`\n` +
+        `> Submit a 1 to 5 star rating and feedback review for a staff member.\n\n` +
+        `• \`/staff application panel [channel]\`\n` +
+        `> Post the interactive staff application desk panel.`
+      )
+    );
+  } else if (page === 2) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Moderation & Server Security\n` +
+        `*Page 3 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
+        `• \`/ban <target> [reason] [delete_days]\` — Ban a user from the Discord server.\n` +
+        `• \`/kick <target> [reason]\` — Kick a member from the Discord server.\n` +
+        `• \`/timeout <target> <duration> [reason]\` — Mute/timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n` +
+        `• \`/unban <target> [reason]\` — Unban a user from the Discord server or in-game ER:LC server.\n` +
+        `• \`/purge <amount> [user]\` — Bulk-delete 1 to 100 recent messages in the current channel.\n` +
+        `• \`/antinuke status\` — View anti-nuke defense status, thresholds, and recent incident logs.\n` +
+        `• \`/antinuke snapshot\` — Save an instant backup snapshot of all channels and roles.\n` +
+        `• \`/antinuke restore <channels|roles>\` — Instantly recreate deleted channels or roles.`
+      )
+    );
+  } else if (page === 3) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
+        `*Page 4 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
+        `• \`/erlc scan\` — Scan in-game players for default avatar outfits and Discord VC compliance.\n` +
+        `• \`/erlc status\` — View live in-game enforcer tracking statistics and non-Discord players.\n` +
+        `• \`/erlc pm <player> <message>\` — Send a private in-game message to a player.\n` +
+        `• \`/erlc jail <player>\` / \`/erlc unjail <player>\` — Jail or unjail a player in the ER:LC private server.\n` +
+        `• \`/erlc kick <player>\` / \`/erlc ban <player>\` — Kick or ban a player from the private server.\n` +
+        `• \`/erlc message <msg>\` / \`/erlc hint <msg>\` — Broadcast a server announcement (:m) or top hint (:h).\n` +
+        `• \`/safezone strike|status|clear\` — Manage Safe Zone shooting strikes and auto-escalations.`
+      )
+    );
+  } else if (page === 4) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Tickets, Roblox & Community\n` +
+        `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
+        `• \`/ticket panel\` — Post the interactive assistance ticket desk panel for support requests.\n` +
+        `• \`/add <user>\` — Add a member to the current ticket channel.\n` +
+        `• \`/unadd <user>\` — Remove a member from the current ticket channel.\n` +
+        `• \`/verify panel\` — Post the official Roblox account verification panel.\n` +
+        `• \`/proof partnership <screenshot>\` — Submit screenshot proof of our server advertisement.\n` +
+        `• \`/suggest <suggestion>\` — Submit a community suggestion for public voting.\n\n` +
+        `### Ticket Desk Prefix Commands (-)\n` +
+        `• \`-busy\` — Set ticket desk to Busy (panel turns yellow).\n` +
+        `• \`-open\` or \`-open all\` — Set ticket desk to Online and open all departments (panel turns green).\n` +
+        `• \`-close all\` — Close ticket desk and lock all categories (panel turns red).\n` +
+        `• \`-close <dept>\` / \`-open <dept>\` — Lock / unlock specific departments (general, ia, high rank, partnership, staff partnership).\n` +
+        `• \`-add @user\` / \`-unadd @user\` — Add or remove a member from the current ticket.\n` +
+        `• \`-partnership <text>\` — Submit partnership application & ad inside ticket.\n` +
+        `• \`-confirm\` — Staff verification for paid partnership payments.\n` +
+        `• \`-status\` — Display current operational availability of the ticket desk.`
+      )
+    );
+  } else {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Emergency Controls & Appeals\n` +
+        `*Page 6 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
+        `• \`/appeal\`\n` +
+        `> Open an official in-game ban appeal form for staff review.\n\n` +
+        `• \`/retrigger\`\n` +
+        `> Emergency reboot & re-sync: re-registers slash commands with Discord API, restarts frozen live panel refresh timers ("Last Updated"), reboots in-game enforcer loops, and unblocks stuck buttons.\n\n` +
+        `• \`/commands\`\n` +
+        `> Display this interactive multi-page command directory.`
+      )
+    );
+  }
 
   card.addSeparatorComponents(thinLine());
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '### 🎮 Session & Server Operations\n' +
-      '• `/session panel [ping_role]` — Post the live session panel with real-time in-game player counts and direct join buttons.\n' +
-      '• `/session vote <required> <duration> <ping_role>` — Open an interactive community vote for a new session with vote targets.\n' +
-      '• `/session shutdown` — Safely shut down the active session, turn the panel red, and alert voters in DM.\n\n' +
-      '### 👥 Staff & Management\n' +
-      '• `/staff panel [ping_role]` — Post the live staff control and session management panel.\n' +
-      '• `/staff promotion <user> <new_rank> <prev_rank> [roles] [reason]` — Post an official staff promotion notice and update member roles.\n' +
-      '• `/staff derank <user> <remove_role> <new_rank> <reason>` — Demote a staff member and remove old staff roles.\n' +
-      '• `/staff feedback <staff> <rating> <comments>` — Submit a 1–5 star rating and feedback review for a staff member.'
-    )
-  );
+  // Navigation row: Left arrow, Page indicator, Right arrow
+  const leftBtn = new ButtonBuilder()
+    .setCustomId(`cmds_page_${page - 1}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page <= 0);
+  try {
+    leftBtn.setEmoji({ id: '1549583273519489089', name: 'arrow_left' });
+  } catch {
+    leftBtn.setLabel('Previous');
+  }
 
-  card.addSeparatorComponents(thinLine());
+  const indicatorBtn = new ButtonBuilder()
+    .setCustomId('cmds_page_indicator')
+    .setLabel(`Page ${page + 1} / ${totalPages}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(true);
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '### 🛡️ Moderation & Server Security\n' +
-      '• `/ban <target> [reason] [delete_days]` — Ban a rule-breaking user from the Discord server.\n' +
-      '• `/kick <target> [reason]` — Kick a member from the Discord server.\n' +
-      '• `/timeout <target> <duration> [reason]` — Mute/timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n' +
-      '• `/purge <amount> [user]` — Bulk-delete 1–100 recent messages in the current channel.\n' +
-      '• `/antinuke status` — View anti-nuke defense status, thresholds, and recent incident logs.\n' +
-      '• `/antinuke snapshot` — Save an instant backup snapshot of all channels and roles.\n' +
-      '• `/antinuke restore <channels|roles>` — Instantly recreate deleted channels or roles.'
-    )
-  );
+  const rightBtn = new ButtonBuilder()
+    .setCustomId(`cmds_page_${page + 1}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page >= totalPages - 1);
+  try {
+    rightBtn.setEmoji({ id: '1549583002676236308', name: 'Right_arrow' });
+  } catch {
+    rightBtn.setLabel('Next');
+  }
 
-  card.addSeparatorComponents(thinLine());
-
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '### 🚔 ER:LC In-Game Moderation & Enforcer\n' +
-      '• `/erlc scan` — Scan in-game players for suspicious outfits/exploits and Discord VC compliance.\n' +
-      '• `/erlc status` — View live in-game enforcer tracking statistics and non-Discord players.\n' +
-      '• `/erlc pm <player> <message>` — Send a private in-game message to a player.\n' +
-      '• `/erlc jail <player>` / `/erlc unjail <player>` — Jail or unjail a player in the ER:LC private server.\n' +
-      '• `/erlc kick <player>` / `/erlc ban <player>` — Kick or ban a player from the private server.\n' +
-      '• `/erlc message <msg>` / `/erlc hint <msg>` — Broadcast a server announcement (:m) or top hint (:h).\n' +
-      '• `/safezone strike|status|clear` — Manage Safe Zone shooting strikes and auto-escalations.'
-    )
-  );
-
-  card.addSeparatorComponents(thinLine());
-
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '### 🎫 Tickets, Roblox & Community\n' +
-      '• `/ticket panel` — Post the interactive assistance ticket desk panel for support requests.\n' +
-      '• `/verify panel` — Post the official Roblox account verification panel.\n' +
-      '• `/proof partnership <screenshot>` — Submit screenshot proof of our server advertisement.\n' +
-      '• `/suggest <suggestion>` — Submit a community suggestion for public voting.\n\n' +
-      '### ⚡ Emergency System Controls\n' +
-      '• `/retrigger` — Emergency reboot: re-registers all slash commands with Discord API, restarts frozen live panel refresh timers ("Last Updated"), reboots in-game enforcer loops, and unblocks stuck buttons.\n' +
-      '• `/commands` or `/help` — Display this command reference guide.'
-    )
-  );
-
-  card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent('-# Alabama State Roleplay Utilities • Type / to select and view command options')
-  );
+  const navRow = new ActionRowBuilder().addComponents(leftBtn, indicatorBtn, rightBtn);
+  card.addActionRowComponents(navRow);
 
   return card;
 }
 
-async function handleCommandsGuideCommand(interaction, isSlash = true) {
-  const card = buildCommandsGuideCard();
+async function handleCommandsGuideCommand(interaction, isSlash = true, pageIndex = 0) {
+  const card = buildCommandsGuidePage(pageIndex);
   if (isSlash) {
     await interaction.reply({
       components: [card.toJSON()],
@@ -9634,6 +10363,30 @@ client.on(Events.MessageCreate, async (message) => {
     if (!message.content?.startsWith('-')) return;
 
     const raw = message.content.slice(1).trim().toLowerCase();
+
+    // ── Ticket Channel Member Management (-add, -unadd) ──
+    if (raw.startsWith('add ') || raw.startsWith('unadd ')) {
+      const isAdd = raw.startsWith('add ');
+      const targetUser = message.mentions.users.first();
+      if (!targetUser) {
+        const parts = message.content.slice(1).trim().split(/\s+/);
+        const uid = parts[1];
+        const fetchedUser = uid && /^\d{17,20}$/.test(uid) ? await client.users.fetch(uid).catch(() => null) : null;
+        if (isAdd) {
+          await handleTicketAddMember(message, false, fetchedUser);
+        } else {
+          await handleTicketUnaddMember(message, false, fetchedUser);
+        }
+      } else {
+        if (isAdd) {
+          await handleTicketAddMember(message, false, targetUser);
+        } else {
+          await handleTicketUnaddMember(message, false, targetUser);
+        }
+      }
+      return;
+    }
+
     const isKnownCmd =
       raw === 'busy' ||
       raw === 'open' ||
@@ -9676,7 +10429,7 @@ client.on(Events.MessageCreate, async (message) => {
       ticketDeskState.status = 'busy';
       saveTicketDeskState();
       await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🟠 Support desk status set to **Busy** (panel updated).', 30000);
+      await autoDeleteReply(message, '🟠 Support desk status set to **Busy** (panel updated to yellow).', 30000);
       return;
     }
 
@@ -9686,9 +10439,10 @@ client.on(Events.MessageCreate, async (message) => {
       ticketDeskState.categories.ia = true;
       ticketDeskState.categories.highrank = true;
       ticketDeskState.categories.partnership = true;
+      ticketDeskState.categories.staff_partnership = true;
       saveTicketDeskState();
       await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🟢 Support desk is now **Online** and all categories are open.', 30000);
+      await autoDeleteReply(message, '🟢 Support desk is now **Online** and all categories are open (panel updated to green).', 30000);
       return;
     }
 
@@ -9698,78 +10452,96 @@ client.on(Events.MessageCreate, async (message) => {
       ticketDeskState.categories.ia = false;
       ticketDeskState.categories.highrank = false;
       ticketDeskState.categories.partnership = false;
+      ticketDeskState.categories.staff_partnership = false;
       saveTicketDeskState();
       await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔴 Support desk is now **Closed** (all ticket categories locked).', 30000);
+      await autoDeleteReply(message, '🔴 Support desk is now **Closed** (all ticket categories locked, panel updated to red).', 30000);
       return;
     }
 
-    if (raw === 'close general') {
-      ticketDeskState.categories.general = false;
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔒 **General Support** is now closed.', 30000);
-      return;
+    // Flexible -close <department>
+    if (raw.startsWith('close ')) {
+      const target = raw.slice(6).trim();
+      if (/^general(\s*support)?$/i.test(target)) {
+        ticketDeskState.categories.general = false;
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔒 **General Support** is now closed.', 30000);
+        return;
+      }
+      if (/^(internal(\s*affairs)?|internals|ia)$/i.test(target)) {
+        ticketDeskState.categories.ia = false;
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔒 **Internal Affairs Support** is now closed.', 30000);
+        return;
+      }
+      if (/^(high\s*rank(\s*support)?|highrank|hr)$/i.test(target)) {
+        ticketDeskState.categories.highrank = false;
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔒 **High Rank Support** is now closed.', 30000);
+        return;
+      }
+      if (/^staff\s*partner(ship)?$/i.test(target)) {
+        ticketDeskState.categories.staff_partnership = false;
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔒 **Staff Partnership** is now closed.', 30000);
+        return;
+      }
+      if (/^partner(ship)?(\s*operations)?$/i.test(target)) {
+        ticketDeskState.categories.partnership = false;
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔒 **Partnership Operations** is now closed.', 30000);
+        return;
+      }
     }
 
-    if (raw === 'open general') {
-      ticketDeskState.categories.general = true;
-      if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔓 **General Support** is now open.', 30000);
-      return;
-    }
-
-    if (raw === 'close internal' || raw === 'close internals' || raw === 'close ia') {
-      ticketDeskState.categories.ia = false;
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔒 **Internal Affairs Support** is now closed.', 30000);
-      return;
-    }
-
-    if (raw === 'open internal' || raw === 'open internals' || raw === 'open ia') {
-      ticketDeskState.categories.ia = true;
-      if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔓 **Internal Affairs Support** is now open.', 30000);
-      return;
-    }
-
-    if (raw === 'close high rank' || raw === 'close highrank' || raw === 'close hr') {
-      ticketDeskState.categories.highrank = false;
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔒 **High Rank Support** is now closed.', 30000);
-      return;
-    }
-
-    if (raw === 'open high rank' || raw === 'open highrank' || raw === 'open hr') {
-      ticketDeskState.categories.highrank = true;
-      if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔓 **High Rank Support** is now open.', 30000);
-      return;
-    }
-
-    if (raw === 'close partnership' || raw === 'close partner') {
-      ticketDeskState.categories.partnership = false;
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔒 **Partnership Operations** is now closed.', 30000);
-      return;
-    }
-
-    if (raw === 'open partnership' || raw === 'open partner') {
-      ticketDeskState.categories.partnership = true;
-      if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
-      saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🔓 **Partnership Operations** is now open.', 30000);
-      return;
+    // Flexible -open <department>
+    if (raw.startsWith('open ')) {
+      const target = raw.slice(5).trim();
+      if (/^general(\s*support)?$/i.test(target)) {
+        ticketDeskState.categories.general = true;
+        if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔓 **General Support** is now open.', 30000);
+        return;
+      }
+      if (/^(internal(\s*affairs)?|internals|ia)$/i.test(target)) {
+        ticketDeskState.categories.ia = true;
+        if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔓 **Internal Affairs Support** is now open.', 30000);
+        return;
+      }
+      if (/^(high\s*rank(\s*support)?|highrank|hr)$/i.test(target)) {
+        ticketDeskState.categories.highrank = true;
+        if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔓 **High Rank Support** is now open.', 30000);
+        return;
+      }
+      if (/^staff\s*partner(ship)?$/i.test(target)) {
+        ticketDeskState.categories.staff_partnership = true;
+        if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔓 **Staff Partnership** is now open.', 30000);
+        return;
+      }
+      if (/^partner(ship)?(\s*operations)?$/i.test(target)) {
+        ticketDeskState.categories.partnership = true;
+        if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
+        saveTicketDeskState();
+        await refreshAllTicketPanels(client);
+        await autoDeleteReply(message, '🔓 **Partnership Operations** is now open.', 30000);
+        return;
+      }
     }
 
     if (raw === 'status' || raw === 'ticket status' || raw === 'desk status') {
@@ -9791,7 +10563,8 @@ client.on(Events.MessageCreate, async (message) => {
           `> • **General Support:** ${ticketDeskState.categories.general ? '🟢 Open' : '🔴 Closed'}\n` +
           `> • **Internal Affairs:** ${ticketDeskState.categories.ia ? '🟢 Open' : '🔴 Closed'}\n` +
           `> • **High Rank Support:** ${ticketDeskState.categories.highrank ? '🟢 Open' : '🔴 Closed'}\n` +
-          `> • **Partnership:** ${ticketDeskState.categories.partnership !== false ? '🟢 Open' : '🔴 Closed'}`
+          `> • **Partnership:** ${ticketDeskState.categories.partnership !== false ? '🟢 Open' : '🔴 Closed'}\n` +
+          `> • **Staff Partnership:** ${ticketDeskState.categories.staff_partnership !== false ? '🟢 Open' : '🔴 Closed'}`
         )
       );
       statusCard.addSeparatorComponents(thinLine());
@@ -9826,13 +10599,15 @@ client.on(Events.MessageCreate, async (message) => {
       helpCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `> Manage the ticket desk and department availability in real-time. Changes update the public panel immediately.\n\n` +
-          `• \`-busy\` — Set desk status to **Busy** (🟠 Busy)\n` +
-          `• \`-open\` or \`-open all\` — Set desk to **Online** and open all departments\n` +
-          `• \`-close all\` — Close desk and lock all departments (🔴 Closed)\n` +
+          `• \`-busy\` — Set desk status to **Busy** (panel turns yellow)\n` +
+          `• \`-open\` or \`-open all\` — Set desk to **Online** and open all departments (panel turns green)\n` +
+          `• \`-close all\` — Close desk and lock all departments (panel turns red)\n` +
           `• \`-close general\` / \`-open general\` — Lock / unlock General Support\n` +
           `• \`-close internal\` / \`-open internal\` — Lock / unlock Internal Affairs\n` +
           `• \`-close high rank\` / \`-open high rank\` — Lock / unlock High Rank\n` +
           `• \`-close partnership\` / \`-open partnership\` — Lock / unlock Partnership\n` +
+          `• \`-close staff partnership\` / \`-open staff partnership\` — Lock / unlock Staff Partnership\n` +
+          `• \`-add @user\` / \`-unadd @user\` — Add or remove a member from the active ticket\n` +
           `• \`-status\` — View current ticket desk status\n` +
           `• \`-ticket help\` — View this ticket desk guide\n` +
           `• \`-commands\` — View the complete server command directory`
@@ -9934,7 +10709,7 @@ client.on(Events.MessageCreate, async (message) => {
         }
         await targetMember.timeout(durationMs, `${reason} (Issued by ${message.author.tag})`);
         const card = new ContainerBuilder().setAccentColor(0x2b2d31);
-        card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⏳ Member Timed Out'));
+        card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Member Timed Out'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
@@ -10445,7 +11220,8 @@ export {
   loadSuggestions,
   retriggerCommand,
   commandsCommand,
-  helpCommand,
+  addCommand,
+  unaddCommand,
   handleRetriggerCommand,
-  buildCommandsGuideCard
+  buildCommandsGuidePage
 };
