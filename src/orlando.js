@@ -75,11 +75,12 @@ function sectionRow(title, desc, buttonLabel, customId, style = ButtonStyle.Seco
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(`**${title}**\n${desc}`)
     )
-    .setAccessory(
+    .setButtonAccessory(
       new ButtonBuilder()
         .setCustomId(customId)
         .setLabel(buttonLabel)
         .setStyle(style)
+        .setDisabled(true)
     );
 }
 
@@ -368,11 +369,20 @@ client.on(Events.GuildMemberAdd, async (member) => {
     }
 
     if (welcomeChannel && welcomeChannel.isTextBased()) {
-      const card = buildOrlandoWelcomeCard(member);
+      const memberCount = member.guild?.memberCount || 1;
+      const welcomeText = `${ORLANDO_EMOJI} Welcome to **Orlando Roleplay**, ${member}. Navigate the server through <#${welcomeChannel.id}>`;
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('orlando_welcome_member_count')
+          .setLabel(`Member #${memberCount.toLocaleString()}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      );
+
       await welcomeChannel.send({
-        content: `Welcome to **Orlando Roleplay**, <@${member.id}>! ${ORLANDO_EMOJI}`,
-        components: [card.toJSON()],
-        flags: MessageFlags.IsComponentsV2
+        content: welcomeText,
+        components: [row]
       });
       console.log(`[Orlando] Sent welcome message to #${welcomeChannel.name} for ${member.user.tag}`);
     }
@@ -387,18 +397,28 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot || !message.guild) return;
     const raw = message.content.trim().toLowerCase();
 
+    // Staff check helper
+    const getIsStaff = async () => {
+      if (message.author.id === message.guild.ownerId) return true;
+      const mem = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+      if (!mem) return false;
+      return (
+        mem.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        mem.permissions.has(PermissionFlagsBits.Administrator) ||
+        mem.roles?.cache?.some((r) => /(staff|mod|admin|owner|supervisor|high\s*rank)/i.test(r.name))
+      );
+    };
+
     if (
       raw === '-panel' ||
+      raw === '-support' ||
       raw === '-support panel' ||
       raw === '-staff panel' ||
       raw === '-ticket panel' ||
+      raw === '-ticket' ||
       raw === '!panel'
     ) {
-      const isStaff =
-        message.member?.permissions.has(PermissionFlagsBits.ManageGuild) ||
-        message.member?.permissions.has(PermissionFlagsBits.Administrator) ||
-        message.member?.roles?.cache?.some((r) => /(staff|mod|admin|owner|supervisor|high\s*rank)/i.test(r.name));
-
+      const isStaff = await getIsStaff();
       if (!isStaff) return;
 
       const container = buildOrlandoSupportPanel();
@@ -421,17 +441,25 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (raw === '-welcome test' || raw === '-welcome') {
+    if (raw === '-welcome test' || raw === '-welcome' || raw === '-testwelcome') {
       let welcomeChannel = message.guild.channels.cache.get(WELCOME_CHANNEL_ID);
       if (!welcomeChannel) {
         welcomeChannel = await message.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
       }
       const targetChan = welcomeChannel || message.channel;
-      const card = buildOrlandoWelcomeCard(message.member || message.author);
+      const memberCount = message.guild?.memberCount || 1;
+      const welcomeText = `${ORLANDO_EMOJI} Welcome to **Orlando Roleplay**, <@${message.author.id}>. Navigate the server through <#${targetChan.id}>`;
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('orlando_welcome_member_count')
+          .setLabel(`Member #${memberCount.toLocaleString()}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      );
+
       await targetChan.send({
-        content: `Welcome to **Orlando Roleplay**, <@${message.author.id}>! ${ORLANDO_EMOJI}`,
-        components: [card.toJSON()],
-        flags: MessageFlags.IsComponentsV2
+        content: welcomeText,
+        components: [row]
       });
       await message.reply(`✅ Test welcome sent to <#${targetChan.id}>.`).then((m) => {
         setTimeout(() => m.delete().catch(() => null), 5000);
@@ -439,7 +467,35 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (raw.startsWith('-close')) {
+    if (raw.startsWith('-add ') || raw.startsWith('-unadd ')) {
+      const isAdd = raw.startsWith('-add ');
+      const ticket = orlandoTickets.get(message.channel.id);
+      if (!ticket) return;
+
+      const parts = message.content.trim().split(/\s+/);
+      const target = message.mentions.users.first() || (parts[1] ? await message.client.users.fetch(parts[1]).catch(() => null) : null);
+      if (!target) {
+        await message.reply(`❌ Usage: \`-${isAdd ? 'add' : 'unadd'} @user\``);
+        return;
+      }
+
+      if (isAdd) {
+        await message.channel.permissionOverwrites.edit(target.id, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+          AttachFiles: true,
+          EmbedLinks: true
+        });
+        await message.reply(`✅ Added <@${target.id}> to this ticket.`);
+      } else {
+        await message.channel.permissionOverwrites.delete(target.id).catch(() => null);
+        await message.reply(`✅ Removed <@${target.id}> from this ticket.`);
+      }
+      return;
+    }
+
+    if (raw === '-close' || raw === '-ticket close') {
       const ticket = orlandoTickets.get(message.channel.id);
       if (ticket) {
         await message.reply('🔒 Closing this ticket in 5 seconds...');
@@ -497,11 +553,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             welcomeChannel = await interaction.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
           }
           const targetChan = welcomeChannel || interaction.channel;
-          const card = buildOrlandoWelcomeCard(interaction.member || interaction.user);
+          const memberCount = interaction.guild?.memberCount || 1;
+          const welcomeText = `${ORLANDO_EMOJI} Welcome to **Orlando Roleplay**, <@${interaction.user.id}>. Navigate the server through <#${targetChan.id}>`;
+          const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('orlando_welcome_member_count')
+              .setLabel(`Member #${memberCount.toLocaleString()}`)
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true)
+          );
+
           await targetChan.send({
-            content: `Welcome to **Orlando Roleplay**, <@${interaction.user.id}>! ${ORLANDO_EMOJI}`,
-            components: [card.toJSON()],
-            flags: MessageFlags.IsComponentsV2
+            content: welcomeText,
+            components: [row]
           });
           await interaction.editReply({
             content: `✅ Test welcome message sent to <#${targetChan.id}>.`

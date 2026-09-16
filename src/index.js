@@ -5957,6 +5957,8 @@ client.once(Events.ClientReady, async (readyClient) => {
 const WELCOME_CHANNEL_ID = '1232495212019056733';
 
 client.on(Events.GuildMemberAdd, async (member) => {
+  // Orlando Roleplay server isolation: Alabama bot must NEVER send welcome messages in Orlando guild
+  if (member.guild?.id === '1530147023754367006') return;
   try {
     let channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
     if (!channel) {
@@ -6887,6 +6889,8 @@ async function createTicketForUser(client, interaction, catKey, reason) {
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
+  if (interaction.guildId === '1530147023754367006') return;
   try {
     // ─────────────── postpone: custom duration modal ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vote_delay_custom_')) {
@@ -10283,6 +10287,8 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
 }
 
 client.on(Events.MessageCreate, async (message) => {
+  // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
+  if (message.guildId === '1530147023754367006') return;
   try {
     if (message.author?.bot || !message.guild) return;
 
