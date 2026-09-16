@@ -40,6 +40,7 @@ const ORLANDO_TOKEN =
 const ORLANDO_EMOJI = '<:imageorlando:1549633573991223477>';
 const BANNER_PATH = path.join(__dirname, 'assets', 'orlando_support.png');
 const ORLANDO_TICKETS_FILE = path.join(__dirname, '..', 'orlando_tickets.json');
+const WELCOME_CHANNEL_ID = '1549635572698447932';
 
 const orlandoTickets = new Map();
 
@@ -105,7 +106,7 @@ const client = new Client({
 const commands = [
   new SlashCommandBuilder()
     .setName('support')
-    .setDescription('Orlando Support management.')
+    .setDescription('Orlando Support operations.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((sub) =>
       sub
@@ -114,7 +115,7 @@ const commands = [
         .addChannelOption((opt) =>
           opt
             .setName('channel')
-            .setDescription('Target channel for the panel (default: current channel)')
+            .setDescription('Target channel for the panel')
             .setRequired(false)
         )
     ),
@@ -166,12 +167,12 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('welcome')
-    .setDescription('Preview the Orlando Roleplay welcome card.')
+    .setDescription('Test the Orlando Roleplay welcome message.')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((sub) =>
       sub
         .setName('test')
-        .setDescription('Send a test welcome message in this channel.')
+        .setDescription('Send a test welcome message in the welcome channel.')
     )
 ];
 
@@ -336,7 +337,7 @@ function buildOrlandoTicketControlCard(ticket) {
   return container;
 }
 
-// ─────────────── Client Events ───────────────
+// ─────────────── Client Ready ───────────────
 client.once(Events.ClientReady, async () => {
   console.log(`[Orlando] Logged in as ${client.user.tag} (ID: ${client.user.id})`);
   client.user.setPresence({
@@ -353,29 +354,109 @@ client.once(Events.ClientReady, async () => {
   await registerCommands();
 });
 
-// Member Welcome Handler
+// ─────────────── Member Welcome Handler ───────────────
 client.on(Events.GuildMemberAdd, async (member) => {
   try {
-    const welcomeChannel = member.guild.channels.cache.find(
-      (c) =>
-        c.isTextBased() &&
-        /(welcome|welcomes|joins|arrival|arrivals|gate)/i.test(c.name)
-    );
+    let welcomeChannel = member.guild.channels.cache.get(WELCOME_CHANNEL_ID);
+    if (!welcomeChannel) {
+      welcomeChannel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
+    }
+    if (!welcomeChannel) {
+      welcomeChannel = member.guild.channels.cache.find(
+        (c) => c.isTextBased() && /(welcome|welcomes|joins|arrival)/i.test(c.name)
+      );
+    }
 
-    if (welcomeChannel) {
+    if (welcomeChannel && welcomeChannel.isTextBased()) {
       const card = buildOrlandoWelcomeCard(member);
       await welcomeChannel.send({
         content: `Welcome to **Orlando Roleplay**, <@${member.id}>! ${ORLANDO_EMOJI}`,
         components: [card.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
+      console.log(`[Orlando] Sent welcome message to #${welcomeChannel.name} for ${member.user.tag}`);
     }
   } catch (err) {
-    console.error('[Orlando] Error handling GuildMemberAdd:', err.message);
+    console.error('[Orlando] Error in GuildMemberAdd:', err);
   }
 });
 
-// Interaction Handling
+// ─────────────── Prefix Commands (for instant staff convenience) ───────────────
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    if (message.author.bot || !message.guild) return;
+    const raw = message.content.trim().toLowerCase();
+
+    if (
+      raw === '-panel' ||
+      raw === '-support panel' ||
+      raw === '-staff panel' ||
+      raw === '-ticket panel' ||
+      raw === '!panel'
+    ) {
+      const isStaff =
+        message.member?.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        message.member?.permissions.has(PermissionFlagsBits.Administrator) ||
+        message.member?.roles?.cache?.some((r) => /(staff|mod|admin|owner|supervisor|high\s*rank)/i.test(r.name));
+
+      if (!isStaff) return;
+
+      const container = buildOrlandoSupportPanel();
+      const files = [];
+      if (fs.existsSync(BANNER_PATH)) {
+        files.push(new AttachmentBuilder(BANNER_PATH, { name: 'orlando_support.png' }));
+      }
+
+      await message.channel.send({
+        files,
+        components: [container.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+
+      const confirm = await message.reply('✅ Orlando Support panel posted successfully.');
+      setTimeout(() => {
+        confirm.delete().catch(() => null);
+        message.delete().catch(() => null);
+      }, 5000);
+      return;
+    }
+
+    if (raw === '-welcome test' || raw === '-welcome') {
+      let welcomeChannel = message.guild.channels.cache.get(WELCOME_CHANNEL_ID);
+      if (!welcomeChannel) {
+        welcomeChannel = await message.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
+      }
+      const targetChan = welcomeChannel || message.channel;
+      const card = buildOrlandoWelcomeCard(message.member || message.author);
+      await targetChan.send({
+        content: `Welcome to **Orlando Roleplay**, <@${message.author.id}>! ${ORLANDO_EMOJI}`,
+        components: [card.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      await message.reply(`✅ Test welcome sent to <#${targetChan.id}>.`).then((m) => {
+        setTimeout(() => m.delete().catch(() => null), 5000);
+      });
+      return;
+    }
+
+    if (raw.startsWith('-close')) {
+      const ticket = orlandoTickets.get(message.channel.id);
+      if (ticket) {
+        await message.reply('🔒 Closing this ticket in 5 seconds...');
+        setTimeout(async () => {
+          orlandoTickets.delete(message.channel.id);
+          saveOrlandoTickets();
+          await message.channel.delete().catch(() => null);
+        }, 5000);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('[Orlando] Error handling prefix message:', err);
+  }
+});
+
+// ─────────────── Interaction Handling ───────────────
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     // ─────────────── Slash Commands ───────────────
@@ -383,6 +464,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'support' || interaction.commandName === 'staff') {
         const sub = interaction.options.getSubcommand();
         if (sub === 'panel') {
+          // Defer immediately to prevent 3-second timeout during file upload!
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
           const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
           const container = buildOrlandoSupportPanel();
 
@@ -397,9 +481,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: MessageFlags.IsComponentsV2
           });
 
-          await interaction.reply({
-            content: `✅ Orlando Support panel posted in <#${targetChannel.id}>.`,
-            flags: MessageFlags.Ephemeral
+          await interaction.editReply({
+            content: `✅ Orlando Support panel posted in <#${targetChannel.id}>.`
           });
           return;
         }
@@ -408,15 +491,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === 'welcome') {
         const sub = interaction.options.getSubcommand();
         if (sub === 'test') {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          let welcomeChannel = interaction.guild.channels.cache.get(WELCOME_CHANNEL_ID);
+          if (!welcomeChannel) {
+            welcomeChannel = await interaction.guild.channels.fetch(WELCOME_CHANNEL_ID).catch(() => null);
+          }
+          const targetChan = welcomeChannel || interaction.channel;
           const card = buildOrlandoWelcomeCard(interaction.member || interaction.user);
-          await interaction.channel.send({
+          await targetChan.send({
             content: `Welcome to **Orlando Roleplay**, <@${interaction.user.id}>! ${ORLANDO_EMOJI}`,
             components: [card.toJSON()],
             flags: MessageFlags.IsComponentsV2
           });
-          await interaction.reply({
-            content: '✅ Test welcome message sent.',
-            flags: MessageFlags.Ephemeral
+          await interaction.editReply({
+            content: `✅ Test welcome message sent to <#${targetChan.id}>.`
           });
           return;
         }
@@ -462,7 +550,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ViewChannel: true,
           SendMessages: true,
           ReadMessageHistory: true,
-          AttachFiles: true
+          AttachFiles: true,
+          EmbedLinks: true
         });
         await interaction.reply({
           content: `✅ Added <@${target.id}> to this ticket.`
@@ -505,9 +594,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('ticket_reason')
-              .setLabel('Reason for opening this ticket')
-              .setPlaceholder('Describe your inquiry or issue...')
+              .setLabel('Reason for opening ticket')
+              .setPlaceholder('Please describe your inquiry in detail...')
               .setStyle(TextInputStyle.Paragraph)
+              .setMinLength(3)
+              .setMaxLength(1000)
               .setRequired(true)
           )
         );
@@ -533,42 +624,104 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const cleanName = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
       const chanName = `${cat}-${cleanName}`;
 
-      // Check if guild has a category named TICKETS or SUPPORT
-      const categoryChannel = interaction.guild.channels.cache.find(
-        (c) => c.type === ChannelType.GuildCategory && /(ticket|support|help)/i.test(c.name)
-      );
+      // Search for specific or matching category
+      await interaction.guild.channels.fetch().catch(() => null);
 
-      const ticketChannel = await interaction.guild.channels.create({
-        name: chanName,
-        type: ChannelType.GuildText,
-        parent: categoryChannel ? categoryChannel.id : null,
-        permissionOverwrites: [
-          {
-            id: interaction.guild.id,
-            deny: [PermissionFlagsBits.ViewChannel]
-          },
-          {
-            id: interaction.user.id,
+      let targetCategory = null;
+      if (cat === 'general') {
+        targetCategory = interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && /general/i.test(c.name)
+        );
+      } else if (cat === 'ia') {
+        targetCategory = interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && /internal/i.test(c.name)
+        );
+      } else if (cat === 'highrank') {
+        targetCategory = interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && /high\s*rank/i.test(c.name)
+        );
+      } else if (cat === 'partnership') {
+        targetCategory = interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && /partner/i.test(c.name)
+        );
+      }
+
+      if (!targetCategory) {
+        targetCategory = interaction.guild.channels.cache.find(
+          (c) => c.type === ChannelType.GuildCategory && /(ticket|support)/i.test(c.name)
+        );
+      }
+
+      // Department staff role access
+      const deptPattern =
+        cat === 'ia'
+          ? /(internal|\bia\b|supervisor)/i
+          : (cat === 'highrank' || cat === 'partnership')
+            ? /(super\s*high|high\s*rank|\bshr\b|\bhr\b|management|executive|director|partner)/i
+            : /(support|staff|moderator|mod|admin|supervisor)/i;
+
+      const permOverwrites = [
+        {
+          id: interaction.guild.id,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks
+          ]
+        },
+        {
+          id: interaction.client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.ManageMessages,
+            PermissionFlagsBits.EmbedLinks,
+            PermissionFlagsBits.AttachFiles
+          ]
+        }
+      ];
+
+      const staffRoles = interaction.guild.roles.cache.filter(
+        (r) => !r.managed && deptPattern.test(r.name)
+      );
+      for (const [rId] of staffRoles) {
+        if (!permOverwrites.some((p) => p.id === rId)) {
+          permOverwrites.push({
+            id: rId,
             allow: [
               PermissionFlagsBits.ViewChannel,
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
-              PermissionFlagsBits.AttachFiles
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.EmbedLinks
             ]
-          },
-          {
-            id: interaction.client.user.id,
-            allow: [
-              PermissionFlagsBits.ViewChannel,
-              PermissionFlagsBits.SendMessages,
-              PermissionFlagsBits.ManageChannels,
-              PermissionFlagsBits.ManageMessages,
-              PermissionFlagsBits.EmbedLinks,
-              PermissionFlagsBits.AttachFiles
-            ]
-          }
-        ]
-      });
+          });
+        }
+      }
+
+      let ticketChannel;
+      try {
+        ticketChannel = await interaction.guild.channels.create({
+          name: chanName,
+          type: ChannelType.GuildText,
+          parent: targetCategory ? targetCategory.id : null,
+          permissionOverwrites: permOverwrites
+        });
+      } catch (catErr) {
+        console.warn('[Orlando] Category parent failed, retrying without parent:', catErr.message);
+        ticketChannel = await interaction.guild.channels.create({
+          name: chanName,
+          type: ChannelType.GuildText,
+          permissionOverwrites: permOverwrites
+        });
+      }
 
       const ticketData = {
         channelId: ticketChannel.id,
@@ -643,7 +796,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // Ignore status pill button clicks
+    // Status pill button
     if (interaction.isButton() && interaction.customId === 'orlando_desk_status') {
       await interaction.reply({
         content: '🟢 Orlando Support Desk is currently online and accepting inquiries.',
@@ -653,12 +806,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (err) {
     console.error('[Orlando] Error handling interaction:', err);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: '❌ Something went wrong while processing your request.',
-        flags: MessageFlags.Ephemeral
-      }).catch(() => null);
-    }
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({
+          content: `❌ Error: ${err.message || 'Something went wrong while processing your request.'}`
+        });
+      } else if (!interaction.replied) {
+        await interaction.reply({
+          content: `❌ Error: ${err.message || 'Something went wrong while processing your request.'}`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+    } catch {}
   }
 });
 
