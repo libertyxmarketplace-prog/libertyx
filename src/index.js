@@ -33,6 +33,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import path from 'node:path';
+import { fork } from 'node:child_process';
 
 /**
  * ─────────────────────────────────────────────────────────────────────
@@ -4844,10 +4845,10 @@ function buildTicketPanelContainer() {
 
   const deskLabel =
     ticketDeskState.status === 'online'
-      ? 'Online'
+      ? '🟢 Online'
       : ticketDeskState.status === 'busy'
-        ? 'Busy'
-        : 'Closed';
+        ? '🟡 Busy'
+        : '🔴 Closed';
 
   const pillStyle =
     ticketDeskState.status === 'online'
@@ -9877,11 +9878,11 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Session & Server Operations\n` +
         `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
-        `• **/session panel [ping_role]**\n` +
+        `### /session panel [ping_role]\n` +
         `> Post the live session panel with real-time in-game player counts and direct join buttons.\n\n` +
-        `• **/session vote <required> <duration> [ping_role]**\n` +
+        `### /session vote <required> <duration> [ping_role]\n` +
         `> Open an interactive community vote for a new session with customizable vote targets.\n\n` +
-        `• **/session shutdown**\n` +
+        `### /session shutdown\n` +
         `> Safely shut down the active session, update panel status to closed, and alert voters via DM.`
       )
     );
@@ -9890,15 +9891,15 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Staff & Management\n` +
         `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
-        `• **/staff panel [ping_role]**\n` +
+        `### /staff panel [ping_role]\n` +
         `> Post the live staff control and session management panel.\n\n` +
-        `• **/staff promotion <user> <new_rank> <prev_rank> [roles] [reason]**\n` +
+        `### /staff promotion <user> <new_rank> <prev_rank> [roles] [reason]\n` +
         `> Post an official staff promotion notice and update member roles.\n\n` +
-        `• **/staff derank <user> <remove_role> <new_rank> <reason>**\n` +
+        `### /staff derank <user> <remove_role> <new_rank> <reason>\n` +
         `> Demote a staff member and remove old staff roles.\n\n` +
-        `• **/staff feedback <staff> <rating> <comments> [anonymous]**\n` +
+        `### /staff feedback <staff> <rating> <comments> [anonymous]\n` +
         `> Submit a 1 to 5 star rating and feedback review for a staff member.\n\n` +
-        `• **/staff application panel [channel]**\n` +
+        `### /staff application panel [channel]\n` +
         `> Post the interactive staff application desk panel.`
       )
     );
@@ -9907,21 +9908,21 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Moderation & Server Security\n` +
         `*Page 3 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
-        `• **/ban <target> [reason] [delete_days]**\n` +
+        `### /ban <target> [reason] [delete_days]\n` +
         `> Ban a user from the Discord server.\n\n` +
-        `• **/kick <target> [reason]**\n` +
+        `### /kick <target> [reason]\n` +
         `> Kick a member from the Discord server.\n\n` +
-        `• **/timeout <target> <duration> [reason]**\n` +
+        `### /timeout <target> <duration> [reason]\n` +
         `> Mute or timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n\n` +
-        `• **/unban <target> [reason]**\n` +
+        `### /unban <target> [reason]\n` +
         `> Unban a user from the Discord server or in-game ER:LC server.\n\n` +
-        `• **/purge <amount> [user]**\n` +
+        `### /purge <amount> [user]\n` +
         `> Bulk-delete 1 to 100 recent messages in the current channel.\n\n` +
-        `• **/antinuke status**\n` +
+        `### /antinuke status\n` +
         `> View anti-nuke defense status, thresholds, and recent incident logs.\n\n` +
-        `• **/antinuke snapshot**\n` +
+        `### /antinuke snapshot\n` +
         `> Save an instant backup snapshot of all channels and roles.\n\n` +
-        `• **/antinuke restore <channels|roles>**\n` +
+        `### /antinuke restore <channels|roles>\n` +
         `> Instantly recreate deleted channels or roles from snapshot.`
       )
     );
@@ -9930,19 +9931,19 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
         `*Page 4 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
-        `• **/erlc scan**\n` +
+        `### /erlc scan\n` +
         `> Scan in-game players for default avatar outfits and Discord VC compliance.\n\n` +
-        `• **/erlc status**\n` +
+        `### /erlc status\n` +
         `> View live in-game enforcer tracking statistics and non-Discord players.\n\n` +
-        `• **/erlc pm <player> <message>**\n` +
+        `### /erlc pm <player> <message>\n` +
         `> Send a private in-game message to a player.\n\n` +
-        `• **/erlc jail <player> / /erlc unjail <player>**\n` +
+        `### /erlc jail <player> / /erlc unjail <player>\n` +
         `> Jail or unjail a player in the ER:LC private server.\n\n` +
-        `• **/erlc kick <player> / /erlc ban <player>**\n` +
+        `### /erlc kick <player> / /erlc ban <player>\n` +
         `> Kick or ban a player from the private server.\n\n` +
-        `• **/erlc message <msg> / /erlc hint <msg>**\n` +
+        `### /erlc message <msg> / /erlc hint <msg>\n` +
         `> Broadcast a server announcement (:m) or top hint (:h).\n\n` +
-        `• **/safezone strike | status | clear**\n` +
+        `### /safezone strike | status | clear\n` +
         `> Manage Safe Zone shooting strikes and auto-escalations.`
       )
     );
@@ -9951,33 +9952,25 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Tickets, Roblox & Community\n` +
         `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
-        `• **/ticket panel**\n` +
+        `### /ticket panel\n` +
         `> Post the interactive assistance ticket desk panel for support requests.\n\n` +
-        `• **/add <user> / /unadd <user>**\n` +
+        `### /add <user> / /unadd <user>\n` +
         `> Add or remove a member from the active ticket channel.\n\n` +
-        `• **/verify panel**\n` +
+        `### /verify panel\n` +
         `> Post the official Roblox account verification panel.\n\n` +
-        `• **/proof partnership <screenshot>**\n` +
+        `### /proof partnership <screenshot>\n` +
         `> Submit screenshot proof of our server advertisement.\n\n` +
-        `• **/suggest <suggestion>**\n` +
+        `### /suggest <suggestion>\n` +
         `> Submit a community suggestion for public voting.\n\n` +
-        `### Ticket Desk Prefix Controls (-)\n` +
-        `• **-busy**\n` +
-        `> Set ticket desk to Busy (panel turns yellow with delay notice).\n\n` +
-        `• **-open / -open all**\n` +
-        `> Set ticket desk to Online and open all departments (panel turns green).\n\n` +
-        `• **-close all**\n` +
-        `> Close ticket desk and lock all categories (panel turns red).\n\n` +
-        `• **-close <dept> / -open <dept>**\n` +
-        `> Lock or unlock specific departments (general, internal, high rank, partnership, staff partnership).\n\n` +
-        `• **-add @user / -unadd @user**\n` +
-        `> Add or remove a member from the current ticket.\n\n` +
-        `• **-partnership <text>**\n` +
-        `> Submit partnership application and advertisement inside ticket.\n\n` +
-        `• **-confirm**\n` +
-        `> Staff verification for paid partnership game pass purchases.\n\n` +
-        `• **-status**\n` +
-        `> Display current operational availability of the ticket desk.`
+        `### Prefix Controls (-)\n` +
+        `> • **-busy** — Set ticket desk to 🟡 Busy (panel turns yellow)\n` +
+        `> • **-open** / **-open all** — Set desk to 🟢 Online (all categories open)\n` +
+        `> • **-close all** — Set desk to 🔴 Closed (all categories locked)\n` +
+        `> • **-close <dept>** / **-open <dept>** — Lock / unlock specific department\n` +
+        `> • **-add @user** / **-unadd @user** — Manage ticket channel members\n` +
+        `> • **-partnership <text>** — Submit partnership application inside ticket\n` +
+        `> • **-confirm** — Staff verification for paid partnership payments\n` +
+        `> • **-status** — Display current operational availability of ticket desk`
       )
     );
   } else {
@@ -9985,11 +9978,11 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Emergency Controls & Appeals\n` +
         `*Page 6 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
-        `• **/appeal**\n` +
+        `### /appeal\n` +
         `> Open an official in-game ban appeal form for staff review.\n\n` +
-        `• **/retrigger**\n` +
-        `> Emergency reboot & re-sync: re-registers slash commands with Discord API, restarts frozen live panel refresh timers ("Last Updated"), reboots in-game enforcer loops, and unblocks stuck buttons.\n\n` +
-        `• **/commands**\n` +
+        `### /retrigger\n` +
+        `> Emergency reboot & re-sync: re-registers slash commands with Discord API, restarts frozen live panel refresh timers, reboots enforcer loops, and unblocks stuck buttons.\n\n` +
+        `### /commands\n` +
         `> Display this interactive multi-page command directory.`
       )
     );
@@ -11313,6 +11306,17 @@ if (!process.env.SKIP_LOGIN) {
   const self = fileURLToPath(import.meta.url).replace(/\\/g, '/');
   if (entry.endsWith('/src/index.js') && (entry === self || path.resolve(entry) === path.resolve(self))) {
     client.login(config.token);
+
+    // Launch Orlando Roleplay bot as a completely separate background process
+    try {
+      const orlandoScript = fileURLToPath(new URL('./orlando.js', import.meta.url));
+      if (fs.existsSync(orlandoScript)) {
+        console.log('[Runner] Launching Orlando Roleplay bot process...');
+        fork(orlandoScript);
+      }
+    } catch (orlErr) {
+      console.warn('[Runner] Could not start orlando.js process:', orlErr.message);
+    }
   }
 }
 
