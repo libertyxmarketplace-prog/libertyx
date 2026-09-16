@@ -272,6 +272,10 @@ const staffCommand = new SlashCommandBuilder()
       )
   );
 
+const appealCommand = new SlashCommandBuilder()
+  .setName('appeal')
+  .setDescription('Submit an official appeal for an Alabama State Roleplay in-game ban.');
+
 const suggestionCommand = new SlashCommandBuilder()
   .setName('suggestion')
   .setDescription('Alabama State Roleplay community suggestion tools.')
@@ -4613,6 +4617,31 @@ function saveApplications() {
   }
 }
 
+const APPEALS_FILE = fileURLToPath(new URL('../appeals.json', import.meta.url));
+const activeAppeals = new Map(); // appealId -> appealData
+const APPEALS_CHANNEL_ID = '1360997421642944623';
+
+function loadAppeals() {
+  try {
+    if (!fs.existsSync(APPEALS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(APPEALS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) activeAppeals.set(k, v);
+    console.log(`Restored ${activeAppeals.size} ban appeal(s) from appeals.json.`);
+  } catch (err) {
+    console.error('Failed to load appeals.json:', err.message);
+  }
+}
+
+function saveAppeals() {
+  try {
+    const flat = {};
+    for (const [k, v] of activeAppeals) flat[k] = v;
+    fs.writeFileSync(APPEALS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save appeals.json:', err.message);
+  }
+}
+
 let ticketDeskState = {
   status: 'online', // 'online' | 'busy' | 'closed'
   categories: {
@@ -5025,21 +5054,18 @@ function buildApplicantDashboard(appData) {
     .setCustomId(`app_btn_step1_${appData.id}`)
     .setLabel('1. Rules & Requirements')
     .setStyle(appData.step1Done ? ButtonStyle.Success : ButtonStyle.Secondary);
-  if (appData.step1Done) btn1.setEmoji('✅');
 
   const btn2 = new ButtonBuilder()
     .setCustomId(`app_btn_step2_${appData.id}`)
     .setLabel('2. General Information')
     .setStyle(appData.step2Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step1Done);
-  if (appData.step2Done) btn2.setEmoji('✅');
 
   const btn3 = new ButtonBuilder()
     .setCustomId(`app_btn_step3_${appData.id}`)
     .setLabel('3. Knowledge & Scenarios')
     .setStyle(appData.step3Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step2Done);
-  if (appData.step3Done) btn3.setEmoji('✅');
 
   const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3);
   card.addActionRowComponents(stepRow);
@@ -5051,7 +5077,6 @@ function buildApplicantDashboard(appData) {
         .setCustomId(`app_btn_submit_${appData.id}`)
         .setLabel('Submit Application')
         .setStyle(ButtonStyle.Primary)
-        .setEmoji('📨')
     );
     card.addActionRowComponents(submitRow);
   }
@@ -5063,40 +5088,78 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
   const card = new ContainerBuilder();
   const gen = appData.generalInfo || {};
   const ans = appData.scenarioAnswers || {};
+  const isDiscord = appData.appType === 'Discord Staff';
 
   if (pageIndex === 0) {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `## 📋 Staff Application Review — Page 1/3\n` +
-        `### Applicant & General Information\n` +
-        `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
-        `> **Application Type:** **${appData.appType}**\n` +
-        `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:f>\n\n` +
-        `• **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n` +
-        `• **Timezone:** \`${gen.timezone || 'N/A'}\`\n` +
-        `• **Working Microphone & Recording:** \`${gen.mic_software || 'N/A'}\`\n` +
-        `• **Weekly Availability:** \`${gen.availability || 'N/A'}\`\n` +
-        `• **Previous Experience:**\n\`\`\`\n${(gen.experience || 'None provided').slice(0, 500)}\n\`\`\``
-      )
-    );
+    if (isDiscord) {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 Discord Staff Application Review — Page 1/3\n` +
+          `### Applicant & General Information\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
+          `> **Application Type:** **${appData.appType}**\n` +
+          `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:f>\n\n` +
+          `• **Discord Username & Age:** \`${gen.discord_tag_user || 'N/A'}\`\n` +
+          `• **Age & Timezone:** \`${gen.timezone_age || 'N/A'}\`\n` +
+          `• **Bot & Tool Knowledge:** \`${gen.bot_knowledge || 'N/A'}\`\n` +
+          `• **Weekly Availability:** \`${gen.availability || 'N/A'}\`\n` +
+          `• **Previous Discord Moderation Experience:**\n\`\`\`\n${(gen.experience || 'None provided').slice(0, 500)}\n\`\`\``
+        )
+      );
+    } else {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 In-Game Staff Application Review — Page 1/3\n` +
+          `### Applicant & General Information\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
+          `> **Application Type:** **${appData.appType}**\n` +
+          `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:f>\n\n` +
+          `• **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n` +
+          `• **Age & Timezone:** \`${gen.timezone_age || 'N/A'}\`\n` +
+          `• **Working Microphone & Clip Software:** \`${gen.mic_software || 'N/A'}\`\n` +
+          `• **Weekly Availability:** \`${gen.availability || 'N/A'}\`\n` +
+          `• **Previous ER:LC Staff Experience:**\n\`\`\`\n${(gen.experience || 'None provided').slice(0, 500)}\n\`\`\``
+        )
+      );
+    }
   } else if (pageIndex === 1) {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `## 📋 Staff Application Review — Page 2/3\n` +
-        `### Knowledge & Scenarios\n` +
-        `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
-        `**1. Fail Roleplay & Vehicle Deathmatch (VDM):**\n` +
-        `> ${(ans.failrp_vdm || 'N/A').slice(0, 300)}\n\n` +
-        `**2. Cuff Rushing & Staff Evasion:**\n` +
-        `> ${(ans.cuff_evasion || 'N/A').slice(0, 300)}\n\n` +
-        `**3. New Life Rule (NLR) & Safezone Crime:**\n` +
-        `> ${(ans.nlr_safezone || 'N/A').slice(0, 300)}\n\n` +
-        `**4. In-Game Mod Commands (Return car / Bring):**\n` +
-        `> ${(ans.mod_commands || 'N/A').slice(0, 200)}\n\n` +
-        `**5. Staff Abuse & Heated Arguments Resolution:**\n` +
-        `> ${(ans.disrespect_abuse || 'N/A').slice(0, 300)}`
-      )
-    );
+    if (isDiscord) {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 Discord Staff Application Review — Page 2/3\n` +
+          `### Moderation Scenarios & Enforcement\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+          `**1. Mass Spam / Raids & Phishing Links:**\n` +
+          `> ${(ans.raid_spam || 'N/A').slice(0, 300)}\n\n` +
+          `**2. Heated Arguments & Harassment in Chat:**\n` +
+          `> ${(ans.harassment_toxicity || 'N/A').slice(0, 300)}\n\n` +
+          `**3. Ticket In-Game Ban Dispute & Angry Member:**\n` +
+          `> ${(ans.ticket_dispute || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Friends Breaking Rules & Bias Prevention:**\n` +
+          `> ${(ans.bias_favoritism || 'N/A').slice(0, 300)}\n\n` +
+          `**5. Underage Member & Discord TOS Violation:**\n` +
+          `> ${(ans.underage_tos || 'N/A').slice(0, 300)}`
+        )
+      );
+    } else {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 In-Game Staff Application Review — Page 2/3\n` +
+          `### In-Game Scenarios & Strict Enforcement\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+          `**1. Fail Roleplay & Mass VDM:**\n` +
+          `> ${(ans.failrp_vdm || 'N/A').slice(0, 300)}\n\n` +
+          `**2. Combat Logging & Cuff Evasion:**\n` +
+          `> ${(ans.combatlog_evade || 'N/A').slice(0, 300)}\n\n` +
+          `**3. New Life Rule (NLR) & Safe Zone Violations:**\n` +
+          `> ${(ans.nlr_safezone || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Admin Commands & Abuse Prevention:**\n` +
+          `> ${(ans.admin_abuse || 'N/A').slice(0, 300)}\n\n` +
+          `**5. De-escalation & Accusations of Staff Bias:**\n` +
+          `> ${(ans.deescalation || 'N/A').slice(0, 300)}`
+        )
+      );
+    }
   } else {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
@@ -5104,7 +5167,7 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
         `### Final Verdict & Decision\n` +
         `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
         `> **Position:** **${appData.appType}**\n` +
-        `> **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n\n` +
+        (isDiscord ? `> **Discord User:** \`${gen.discord_tag_user || appData.applicantTag}\`\n\n` : `> **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n\n`) +
         `Please review all applicant responses carefully. When ready, click **Accept Application** or **Deny Application** below to record your reason and publish the final verdict.`
       )
     );
@@ -5114,13 +5177,11 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
       new ButtonBuilder()
         .setCustomId(`app_verdict_accept_${appData.id}`)
         .setLabel('Accept Application')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('✅'),
+        .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`app_verdict_deny_${appData.id}`)
         .setLabel('Deny Application')
         .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌')
     );
     card.addActionRowComponents(verdictRow);
   }
@@ -5185,6 +5246,60 @@ async function handleStaffApplicationPanelCommand(interaction) {
   });
 
   await interaction.editReply({ content: `✅ Staff Application Panel posted in <#${targetChannel.id}>.` });
+}
+
+async function handleAppealCommand(interaction) {
+  const modal = new ModalBuilder()
+    .setCustomId('appeal_modal_submit')
+    .setTitle('In-Game Ban Appeal')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('roblox_user')
+          .setLabel('Your Roblox Username')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Enter your exact Roblox username')
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('ban_reason')
+          .setLabel('Reason for Your In-Game Ban')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('What rule or reason were you banned for?')
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('ban_date_staff')
+          .setLabel('Date of Ban & Staff Member (if known)')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. 3 days ago by ModeratorName / Unknown')
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('appeal_explanation')
+          .setLabel('Why should your ban be lifted?')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('Explain your perspective, what occurred, and why you should be unbanned...')
+          .setMinLength(15)
+          .setMaxLength(1000)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('future_conduct')
+          .setLabel('Commitment to Server Rules Going Forward')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('How will you ensure you strictly follow Alabama State Roleplay rules?')
+          .setMinLength(15)
+          .setMaxLength(1000)
+          .setRequired(true)
+      )
+    );
+
+  await interaction.showModal(modal);
 }
 
 async function getApplicationReviewerStaff(client) {
@@ -5623,7 +5738,8 @@ function getSlashPayload() {
     jailCommand.toJSON(),
     unjailCommand.toJSON(),
     unbanCommand.toJSON(),
-    safezoneCommand.toJSON()
+    safezoneCommand.toJSON(),
+    appealCommand.toJSON()
   ];
 }
 
@@ -5667,6 +5783,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadSafeZoneStrikes();
     loadSuggestions();
     loadApplications();
+    loadAppeals();
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
       if (g) await backupGuildState(g);
@@ -6605,12 +6722,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
       }
+      const robloxUser = interaction.fields.getTextInputValue('roblox_user')?.trim() || interaction.fields.getTextInputValue('discord_tag_user')?.trim() || 'N/A';
+      const timezoneAge = interaction.fields.getTextInputValue('timezone_age')?.trim() || interaction.fields.getTextInputValue('timezone')?.trim() || 'N/A';
+      const micSoftware = interaction.fields.getTextInputValue('mic_software')?.trim() || interaction.fields.getTextInputValue('bot_knowledge')?.trim() || 'N/A';
+      const experience = interaction.fields.getTextInputValue('experience')?.trim() || 'None provided';
+      const availability = interaction.fields.getTextInputValue('availability')?.trim() || 'N/A';
+
       appData.generalInfo = {
-        roblox_user: interaction.fields.getTextInputValue('roblox_user')?.trim() || 'N/A',
-        timezone: interaction.fields.getTextInputValue('timezone')?.trim() || 'N/A',
-        mic_software: interaction.fields.getTextInputValue('mic_software')?.trim() || 'N/A',
-        experience: interaction.fields.getTextInputValue('experience')?.trim() || 'None provided',
-        availability: interaction.fields.getTextInputValue('availability')?.trim() || 'N/A'
+        roblox_user: robloxUser,
+        discord_tag_user: robloxUser,
+        timezone: timezoneAge,
+        timezone_age: timezoneAge,
+        mic_software: micSoftware,
+        bot_knowledge: micSoftware,
+        experience,
+        availability
       };
       appData.step2Done = true;
       saveApplications();
@@ -6630,13 +6756,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
       }
-      appData.scenarioAnswers = {
-        failrp_vdm: interaction.fields.getTextInputValue('failrp_vdm')?.trim() || 'N/A',
-        cuff_evasion: interaction.fields.getTextInputValue('cuff_evasion')?.trim() || 'N/A',
-        nlr_safezone: interaction.fields.getTextInputValue('nlr_safezone')?.trim() || 'N/A',
-        mod_commands: interaction.fields.getTextInputValue('mod_commands')?.trim() || 'N/A',
-        disrespect_abuse: interaction.fields.getTextInputValue('disrespect_abuse')?.trim() || 'N/A'
-      };
+      const isDiscord = appData.appType === 'Discord Staff';
+      if (isDiscord) {
+        appData.scenarioAnswers = {
+          raid_spam: interaction.fields.getTextInputValue('raid_spam')?.trim() || 'N/A',
+          harassment_toxicity: interaction.fields.getTextInputValue('harassment_toxicity')?.trim() || 'N/A',
+          ticket_dispute: interaction.fields.getTextInputValue('ticket_dispute')?.trim() || 'N/A',
+          bias_favoritism: interaction.fields.getTextInputValue('bias_favoritism')?.trim() || 'N/A',
+          underage_tos: interaction.fields.getTextInputValue('underage_tos')?.trim() || 'N/A'
+        };
+      } else {
+        appData.scenarioAnswers = {
+          failrp_vdm: interaction.fields.getTextInputValue('failrp_vdm')?.trim() || 'N/A',
+          combatlog_evade: interaction.fields.getTextInputValue('combatlog_evade')?.trim() || interaction.fields.getTextInputValue('cuff_evasion')?.trim() || 'N/A',
+          nlr_safezone: interaction.fields.getTextInputValue('nlr_safezone')?.trim() || 'N/A',
+          admin_abuse: interaction.fields.getTextInputValue('admin_abuse')?.trim() || interaction.fields.getTextInputValue('mod_commands')?.trim() || 'N/A',
+          deescalation: interaction.fields.getTextInputValue('deescalation')?.trim() || interaction.fields.getTextInputValue('disrespect_abuse')?.trim() || 'N/A'
+        };
+      }
       appData.step3Done = true;
       saveApplications();
       const updatedCard = buildApplicantDashboard(appData);
@@ -6744,8 +6881,224 @@ client.on(Events.InteractionCreate, async (interaction) => {
       activeReviewSessions.delete(interaction.user.id);
       saveApplications();
 
+      // Update reviewer message and schedule 5-minute auto-delete
+      if (interaction.message) {
+        try {
+          const closedCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+          closedCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## ${isPassed ? 'Staff Application Accepted' : 'Staff Application Denied'}\n` +
+              `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+              `> **Position:** **${appData.appType}**\n` +
+              `> **Verdict:** **${isPassed ? 'PASSED' : 'DENIED'}**\n` +
+              `> **Reviewer:** <@${interaction.user.id}>\n` +
+              `> **Notes / Reason:** ${reason}\n\n` +
+              `-# ⏳ This review session message will automatically delete in 5 minutes.`
+            )
+          );
+          await interaction.message.edit({
+            components: [closedCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => null);
+        } catch {}
+
+        setTimeout(async () => {
+          try {
+            await interaction.message?.delete().catch(() => null);
+          } catch {}
+        }, 300000);
+      }
+
       await interaction.editReply({
-        content: `✅ Application verdict (${isPassed ? 'ACCEPTED' : 'DENIED'}) has been recorded and published in <#${APP_DECISIONS_CHANNEL_ID}>.`
+        content: `✅ Application verdict (${isPassed ? 'ACCEPTED' : 'DENIED'}) has been recorded and published in <#${APP_DECISIONS_CHANNEL_ID}>. This review message will auto-delete in 5 minutes.`
+      });
+      return;
+    }
+
+    // ─────────────── Ban Appeal: Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId === 'appeal_modal_submit') {
+      const robloxUser = interaction.fields.getTextInputValue('roblox_user')?.trim() || 'N/A';
+      const banReason = interaction.fields.getTextInputValue('ban_reason')?.trim() || 'N/A';
+      const banDateStaff = interaction.fields.getTextInputValue('ban_date_staff')?.trim() || 'Unknown';
+      const appealExplanation = interaction.fields.getTextInputValue('appeal_explanation')?.trim() || 'N/A';
+      const futureConduct = interaction.fields.getTextInputValue('future_conduct')?.trim() || 'N/A';
+
+      const appealId = `${Date.now().toString(36)}_${interaction.user.id.slice(-4)}`;
+      const appealData = {
+        id: appealId,
+        applicantId: interaction.user.id,
+        applicantTag: interaction.user.tag || interaction.user.username,
+        robloxUser,
+        banReason,
+        banDateStaff,
+        appealExplanation,
+        futureConduct,
+        submittedAt: Date.now(),
+        status: 'pending',
+        channelMessageId: null
+      };
+
+      activeAppeals.set(appealId, appealData);
+      saveAppeals();
+
+      await interaction.reply({
+        content: '✅ Your in-game ban appeal has been submitted! Our staff will review it. Please check your Direct Messages for confirmation.',
+        flags: MessageFlags.Ephemeral
+      });
+
+      // DM applicant confirmation
+      try {
+        const dmCard = new ContainerBuilder().setAccentColor(0x3498db);
+        dmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⚖️ Ban Appeal Submitted'));
+        dmCard.addSeparatorComponents(thinLine());
+        dmCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `Hello <@${interaction.user.id}>,\n\n` +
+            `Your in-game ban appeal for Roblox account **${robloxUser}** has been received!\n\n` +
+            `> **Status:** Pending Staff Review\n` +
+            `> **Submitted:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n` +
+            `Our moderation team has been notified. You will receive a direct message notification here once a decision has been reached.`
+          )
+        );
+        await interaction.user.send({
+          components: [dmCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+      } catch (dmErr) {
+        console.warn(`Could not send appeal confirmation DM: ${dmErr.message}`);
+      }
+
+      // Send to Appeals Channel 1360997421642944623 (NO BANNER!)
+      const appealChan = await interaction.client.channels.fetch(APPEALS_CHANNEL_ID).catch(() => null);
+      if (appealChan) {
+        try {
+          const reviewCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+          reviewCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## ⚖️ New In-Game Ban Appeal\n` +
+              `> **Applicant:** <@${interaction.user.id}> (\`${interaction.user.tag || interaction.user.username}\` • \`${interaction.user.id}\`)\n` +
+              `> **Roblox Username:** \`${robloxUser}\`\n` +
+              `> **Ban Date / Staff:** ${banDateStaff}\n` +
+              `> **Submitted:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n` +
+              `### Ban Reason Stated\n> ${banReason}\n\n` +
+              `### Appeal Explanation & Evidence\n> ${appealExplanation}\n\n` +
+              `### Future Conduct Commitment\n> ${futureConduct}\n\n` +
+              `Staff: Click a button below to accept or deny this appeal with a mandatory reason.`
+            )
+          );
+          reviewCard.addSeparatorComponents(thinLine());
+          const actRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`appeal_btn_accept_${appealId}`)
+              .setLabel('Accept Appeal')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`appeal_btn_deny_${appealId}`)
+              .setLabel('Deny Appeal')
+              .setStyle(ButtonStyle.Danger)
+          );
+          reviewCard.addActionRowComponents(actRow);
+
+          const sentMsg = await appealChan.send({
+            components: [reviewCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+          appealData.channelMessageId = sentMsg.id;
+          saveAppeals();
+        } catch (chanErr) {
+          console.error('Failed to post ban appeal card in channel:', chanErr.message);
+        }
+      }
+      return;
+    }
+
+    // ─────────────── Ban Appeal: Verdict Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('appeal_modal_verdict_')) {
+      const isAccept = interaction.customId.startsWith('appeal_modal_verdict_accept_');
+      const prefix = isAccept ? 'appeal_modal_verdict_accept_' : 'appeal_modal_verdict_deny_';
+      const appealId = interaction.customId.replace(prefix, '');
+      const reason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || 'No reason provided';
+      const appeal = activeAppeals.get(appealId);
+
+      if (!appeal) {
+        await interaction.reply({ content: '❌ Appeal record not found or already processed.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      appeal.status = isAccept ? 'accepted' : 'denied';
+      appeal.reviewedBy = interaction.user.id;
+      appeal.reviewerTag = interaction.user.tag || interaction.user.username;
+      appeal.reviewReason = reason;
+      appeal.reviewedAt = Date.now();
+      saveAppeals();
+
+      // If accepted, execute in-game unban via API
+      if (isAccept && appeal.robloxUser && appeal.robloxUser !== 'N/A') {
+        try {
+          await sendErlcCommand(`:unban ${appeal.robloxUser}`);
+        } catch (unbanErr) {
+          console.warn(`Could not automatically execute :unban ${appeal.robloxUser}: ${unbanErr.message}`);
+        }
+      }
+
+      // DM Applicant with verdict and reason
+      try {
+        const applicantUser = await interaction.client.users.fetch(appeal.applicantId).catch(() => null);
+        if (applicantUser) {
+          const resCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          resCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## ${isAccept ? '🎉 Ban Appeal Accepted!' : '❌ Ban Appeal Denied'}\n` +
+              `Hello <@${appeal.applicantId}>,\n\n` +
+              `Your in-game ban appeal for Roblox account **${appeal.robloxUser}** has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by <@${interaction.user.id}>.\n\n` +
+              `> **Staff Reason / Notes:**\n> ${reason}\n\n` +
+              (isAccept
+                ? `You have been unbanned and may rejoin the Alabama State Roleplay private server. Please ensure you strictly adhere to all server rules.`
+                : `Your ban remains in effect. Please do not evade or create alternate accounts.`)
+            )
+          );
+          await applicantUser.send({
+            components: [resCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+      } catch (dmErr) {
+        console.warn(`Could not send appeal decision DM: ${dmErr.message}`);
+      }
+
+      // Edit the review message in channel 1360997421642944623
+      if (interaction.message) {
+        try {
+          const decisionCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          decisionCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `## ⚖️ Ban Appeal ${isAccept ? 'Accepted' : 'Denied'}\n` +
+              `> **Applicant:** <@${appeal.applicantId}> (\`${appeal.applicantTag}\`)\n` +
+              `> **Roblox Username:** \`${appeal.robloxUser}\`\n` +
+              `> **Verdict:** **${isAccept ? 'ACCEPTED' : 'DENIED'}**\n` +
+              `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag || interaction.user.username})\n` +
+              `> **Staff Reason:** ${reason}\n\n` +
+              `-# ⏳ This message will automatically delete in 5 minutes.`
+            )
+          );
+          await interaction.message.edit({
+            components: [decisionCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        } catch {}
+
+        // Auto delete after 5 minutes (300000 ms)
+        setTimeout(async () => {
+          try {
+            await interaction.message?.delete().catch(() => null);
+          } catch {}
+        }, 300000);
+      }
+
+      await interaction.editReply({
+        content: `✅ Ban appeal verdict (${isAccept ? 'ACCEPTED' : 'DENIED'}) recorded. The channel message will auto-delete in 5 minutes.`
       });
       return;
     }
@@ -7002,6 +7355,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await handleStaffFeedbackCommand(interaction);
           return;
         }
+      } else if (interaction.commandName === 'appeal') {
+        await handleAppealCommand(interaction);
+        return;
       } else if (interaction.commandName === 'suggestion' || interaction.commandName === 'suggest') {
         await handleSuggestionCommand(interaction);
         return;
@@ -7696,23 +8052,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
       }
+      const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step1_${appId}`)
-        .setTitle('Step 1: Rules & Requirements')
+        .setTitle('Step 1: Rules & Requirements Agreement')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('rules_agree')
-              .setLabel('Do you agree to follow all staff rules?')
-              .setPlaceholder('Type "Yes" to confirm')
+              .setLabel(isDiscord ? 'Do you agree to enforce Discord rules & TOS?' : 'Do you agree to enforce server rules strictly?')
+              .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('activity_agree')
-              .setLabel('Can you maintain weekly activity & quotas?')
-              .setPlaceholder('Type "Yes" to confirm')
+              .setLabel(isDiscord ? 'Can you maintain active chat & ticket presence?' : 'Can you maintain minimum 10+ hrs/week on duty?')
+              .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
@@ -7720,7 +8077,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             new TextInputBuilder()
               .setCustomId('nda_agree')
               .setLabel('Do you agree to keep staff channels private?')
-              .setPlaceholder('Type "Yes" to confirm')
+              .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           )
@@ -7736,29 +8093,75 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
       }
+      const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step2_${appId}`)
-        .setTitle('Step 2: General Information')
-        .addComponents(
+        .setTitle('Step 2: General Information');
+
+      if (isDiscord) {
+        modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('roblox_user')
-              .setLabel('Roblox Username')
+              .setCustomId('discord_tag_user')
+              .setLabel('Discord Tag & Account Age')
+              .setPlaceholder('e.g. username | 2 years')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('timezone')
-              .setLabel('Timezone / Region')
-              .setPlaceholder('e.g. EST, CST, GMT')
+              .setCustomId('timezone_age')
+              .setLabel('Your Age & Timezone')
+              .setPlaceholder('e.g. 16 | EST')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('bot_knowledge')
+              .setLabel('Discord Bot Knowledge (Dyno, Wick, Carl, etc.)')
+              .setPlaceholder('Describe your experience with moderation bots and Discord Automod...')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('experience')
+              .setLabel('Previous Discord Staff / Moderation Roles')
+              .setPlaceholder('List server names, member counts, ranks held, duration...')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('availability')
+              .setLabel('Weekly Moderation Availability')
+              .setPlaceholder('e.g. 2-4 hours daily, available afternoons/evenings')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          )
+        );
+      } else {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('roblox_user')
+              .setLabel('Roblox Username & Profile Link')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('timezone_age')
+              .setLabel('Your Age & Timezone')
+              .setPlaceholder('e.g. 16 | EST')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('mic_software')
-              .setLabel('Working Microphone & Clip Software?')
+              .setLabel('Working Microphone & Clip Software')
               .setPlaceholder('e.g. Yes - Medal / OBS / GeForce')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
@@ -7766,20 +8169,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('experience')
-              .setLabel('Previous Staff Experience')
-              .setPlaceholder('List server names, roles held, and duration...')
+              .setLabel('Previous ER:LC / Roblox Staff Roles')
+              .setPlaceholder('List server names, ranks held, duration, supervisor references...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('availability')
-              .setLabel('Weekly Availability (Hours & Days)')
-              .setPlaceholder('e.g. 15-20 hrs/week, available afternoons')
+              .setLabel('Weekly Duty Availability & Times')
+              .setPlaceholder('e.g. 15-20 hours/week, active during patrols')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
           )
         );
+      }
       await interaction.showModal(modal);
       return;
     }
@@ -7791,51 +8195,98 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
       }
+      const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step3_${appId}`)
-        .setTitle('Step 3: Knowledge & Scenarios')
-        .addComponents(
+        .setTitle('Step 3: Knowledge & Scenarios');
+
+      if (isDiscord) {
+        modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('failrp_vdm')
-              .setLabel('Player committing FailRP / VDM:')
-              .setPlaceholder('What immediate action and punishment do you take?')
+              .setCustomId('raid_spam')
+              .setLabel('Mass spam / raid / phishing links in chat:')
+              .setPlaceholder('Immediate lockdown, purge, and ban/timeout protocol?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('cuff_evasion')
-              .setLabel('Combat logging / evading staff:')
-              .setPlaceholder('How do you investigate and handle this?')
+              .setCustomId('harassment_toxicity')
+              .setLabel('Heated arguments, slurs, toxicity in chat:')
+              .setPlaceholder('De-escalation steps, warning, and timeout guidelines?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('ticket_dispute')
+              .setLabel('Member furiously disputes in-game ban in ticket:')
+              .setPlaceholder('How do you remain professional and guide them?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('bias_favoritism')
+              .setLabel('A close friend breaks rules in general chat:')
+              .setPlaceholder('How do you handle them without favoritism?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('underage_tos')
+              .setLabel('User admits under 13 or posts TOS content:')
+              .setPlaceholder('Safety actions taken and evidence recording?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+      } else {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('failrp_vdm')
+              .setLabel('Player committing mass VDM & Fail RP:')
+              .setPlaceholder('Immediate moderation actions and punishment log?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('combatlog_evade')
+              .setLabel('Suspect combat logs or cuff evades in pursuit:')
+              .setPlaceholder('How do you confirm logs/clip and enforce punishment?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('nlr_safezone')
-              .setLabel('Explain NLR and Safe Zone rules:')
-              .setPlaceholder('Define both rules in your own words...')
+              .setLabel('Explain NLR and Safe Zone gunplay rules:')
+              .setPlaceholder('Define both rules and how you handle violators...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('mod_commands')
-              .setLabel('Appropriate mod command usage:')
-              .setPlaceholder('When are :bring, :to, :return, :jail appropriate?')
+              .setCustomId('admin_abuse')
+              .setLabel('Admin Commands & Abuse Prevention:')
+              .setPlaceholder('When are :jail, :to, :bring, :return, :kick allowed/abusive?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('disrespect_abuse')
-              .setLabel('Member toxic / disrespectful to staff:')
-              .setPlaceholder('How do you de-escalate and address the member?')
+              .setCustomId('deescalation')
+              .setLabel('Player screams in VC accusing you of bias:')
+              .setPlaceholder('How do you maintain strict composure and resolve this?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           )
         );
+      }
       await interaction.showModal(modal);
       return;
     }
@@ -7964,6 +8415,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
               .setMinLength(2)
               .setMaxLength(1000)
               .setPlaceholder(isAccept ? 'e.g. Great scenarios and solid past experience...' : 'e.g. Insufficient detail on scenario answers...')
+          )
+        );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // ─────────────── Ban Appeal: Reviewer Verdict Buttons (Accept / Deny) ───────────────
+    if (interaction.isButton() && (interaction.customId.startsWith('appeal_btn_accept_') || interaction.customId.startsWith('appeal_btn_deny_'))) {
+      const isAccept = interaction.customId.startsWith('appeal_btn_accept_');
+      const appealId = interaction.customId.replace(isAccept ? 'appeal_btn_accept_' : 'appeal_btn_deny_', '');
+      const appeal = activeAppeals.get(appealId);
+
+      const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      if (!isStaffMember(member) && !member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You must have staff permissions to review appeals.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (!appeal || appeal.status !== 'pending') {
+        await interaction.reply({ content: '❌ This appeal is no longer pending or has already been reviewed.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`appeal_modal_verdict_${isAccept ? 'accept' : 'deny'}_${appealId}`)
+        .setTitle(isAccept ? 'Accept Ban Appeal' : 'Deny Ban Appeal')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('verdict_reason')
+              .setLabel(isAccept ? 'Acceptance Reason & Conditions' : 'Reason for Denial')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+              .setMinLength(3)
+              .setMaxLength(1000)
+              .setPlaceholder(isAccept ? 'e.g. Acknowledged mistake, no prior infractions; ban revoked.' : 'e.g. Repeated trolling and severe NLR violation; appeal denied.')
           )
         );
 
