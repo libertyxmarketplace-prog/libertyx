@@ -257,6 +257,31 @@ const staffCommand = new SlashCommandBuilder()
       .addBooleanOption((opt) =>
         opt.setName('anonymous').setDescription('Submit feedback anonymously? (optional)').setRequired(false)
       )
+  )
+  .addSubcommandGroup((grp) =>
+    grp
+      .setName('application')
+      .setDescription('Staff application panel commands.')
+      .addSubcommand((sub) =>
+        sub
+          .setName('panel')
+          .setDescription('Post the staff application desk panel.')
+          .addChannelOption((opt) =>
+            opt.setName('channel').setDescription('Channel to post panel into (defaults to #applications)').setRequired(false)
+          )
+      )
+  );
+
+const applicationCommand = new SlashCommandBuilder()
+  .setName('application')
+  .setDescription('Staff application desk.')
+  .addSubcommand((sub) =>
+    sub
+      .setName('panel')
+      .setDescription('Post the staff application desk panel.')
+      .addChannelOption((opt) =>
+        opt.setName('channel').setDescription('Channel to post panel into (defaults to #applications)').setRequired(false)
+      )
   );
 
 const suggestionCommand = new SlashCommandBuilder()
@@ -4575,6 +4600,30 @@ const TRANSCRIPTS_CHANNEL_ID = '1236052058059309108';
 const closedTranscripts = new Map(); // msgId -> transcriptInfo
 
 const activeTickets = new Map(); // channelId -> ticketData
+const APPLICATIONS_FILE = fileURLToPath(new URL('../applications.json', import.meta.url));
+const activeApplications = new Map(); // applicantId -> applicationData
+const activeReviewSessions = new Map(); // reviewerId -> { appId, pageIndex }
+
+function loadApplications() {
+  try {
+    if (!fs.existsSync(APPLICATIONS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(APPLICATIONS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) activeApplications.set(k, v);
+    console.log(`Restored ${activeApplications.size} staff application(s) from applications.json.`);
+  } catch (err) {
+    console.error('Failed to load applications.json:', err.message);
+  }
+}
+
+function saveApplications() {
+  try {
+    const flat = {};
+    for (const [k, v] of activeApplications) flat[k] = v;
+    fs.writeFileSync(APPLICATIONS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save applications.json:', err.message);
+  }
+}
 
 let ticketDeskState = {
   status: 'online', // 'online' | 'busy' | 'closed'
@@ -4878,6 +4927,354 @@ function buildPartnershipGuideContainer() {
   );
 
   return container;
+}
+
+// ═══════════════════════ Staff Application System ═══════════════════════
+const APP_PANEL_BANNER_URL =
+  'https://media.discordapp.net/attachments/1539681421306896476/1547364175469355119/Applications.png?ex=6aab0fb0&is=6aa9be30&hm=7508cef429f53226df5621afe56da7ca214377f69c43cd96d0710927752743a2&=&format=webp&quality=lossless&width=2048&height=684';
+const APP_PASSED_BANNER_URL =
+  'https://media.discordapp.net/attachments/1232495213986058283/1536858352754360392/content.png?ex=6aab12e0&is=6aa9c160&hm=236ce65b7c5709b6e05934e6c7de79760de79a4832f8e08d510ccfc9b4951425&=&format=webp&quality=lossless';
+const APP_DECISIONS_CHANNEL_ID = '1232495212333498458';
+const APP_PANEL_CHANNEL_ID = '1539681421306896476';
+const APP_REVIEWER_ROLE_ID = '1548637141850918993';
+
+function buildStaffApplicationPanelCard() {
+  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  card.addMediaGalleryComponents(
+    new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PANEL_BANNER_URL))
+  );
+
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay Staff Applications'));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      'Interested in becoming part of the Alabama State Roleplay Staff Team or Discord Staff? We are looking for mature, active, and dedicated members who are willing to help build a professional and enjoyable roleplay community.\n\n' +
+      '### IN-GAME REQUIREMENTS\n' +
+      '• 14+ years of age\n' +
+      '• Must be active within the server\n' +
+      '• Must have a working microphone\n' +
+      '• Must be respectful, mature, and professional\n' +
+      '• Must understand and follow the server rules\n' +
+      '• Must be willing to attend required staff trainings and meetings\n' +
+      '• Must be able to communicate effectively with members and staff\n' +
+      '• Must be willing to enforce rules fairly and without favoritism\n' +
+      '• Must be able to work as part of a team\n' +
+      '• Prior staff experience is preferred, but not required\n\n' +
+      '### DISCORD STAFF REQUIREMENTS\n' +
+      '• 14+ years of age\n' +
+      '• Must be active within the Discord server\n' +
+      '• Must have a working microphone\n' +
+      '• Must be respectful, mature, and professional\n' +
+      '• Must understand and follow all server rules\n' +
+      '• Must be able to communicate effectively with members and staff\n' +
+      '• Must be willing to enforce Discord rules fairly and without favoritism\n' +
+      '• Must be able to handle tickets, questions, and member concerns\n' +
+      '• Must be willing to attend required staff trainings and meetings\n' +
+      '• Must be able to work effectively as part of a team\n' +
+      '• Prior Discord staff experience is preferred, but not required\n\n' +
+      '### IMPORTANT\n' +
+      'Submitting an application does not guarantee acceptance. Applications are reviewed based on maturity, activity, effort, experience, and overall suitability for the position.\n\n' +
+      'Please be honest and thorough when completing your application. Providing false information may result in an immediate denial or removal from the staff team. Do not contact High Ranks regarding application status. AI usage is strictly prohibited.\n\n' +
+      'Click a button below to begin your application in your Direct Messages.'
+    )
+  );
+
+  card.addSeparatorComponents(thinLine());
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('app_start_ingame')
+      .setLabel('In-Game Staff Application')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('app_start_discord')
+      .setLabel('Discord Staff Application')
+      .setStyle(ButtonStyle.Secondary)
+  );
+  card.addActionRowComponents(row);
+
+  return card;
+}
+
+function buildApplicantDashboard(appData) {
+  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Alabama State Roleplay Staff Application\n` +
+      `> **Position:** **${appData.appType}**\n` +
+      `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+      `Complete each of the numbered steps below in order. Buttons will turn green as you complete each section. When all three steps are green, click **Submit Application**.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  const btn1 = new ButtonBuilder()
+    .setCustomId(`app_btn_step1_${appData.id}`)
+    .setLabel('1. Rules & Requirements')
+    .setStyle(appData.step1Done ? ButtonStyle.Success : ButtonStyle.Secondary);
+  if (appData.step1Done) btn1.setEmoji('✅');
+
+  const btn2 = new ButtonBuilder()
+    .setCustomId(`app_btn_step2_${appData.id}`)
+    .setLabel('2. General Information')
+    .setStyle(appData.step2Done ? ButtonStyle.Success : ButtonStyle.Secondary)
+    .setDisabled(!appData.step1Done);
+  if (appData.step2Done) btn2.setEmoji('✅');
+
+  const btn3 = new ButtonBuilder()
+    .setCustomId(`app_btn_step3_${appData.id}`)
+    .setLabel('3. Knowledge & Scenarios')
+    .setStyle(appData.step3Done ? ButtonStyle.Success : ButtonStyle.Secondary)
+    .setDisabled(!appData.step2Done);
+  if (appData.step3Done) btn3.setEmoji('✅');
+
+  const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3);
+  card.addActionRowComponents(stepRow);
+
+  if (appData.step1Done && appData.step2Done && appData.step3Done && appData.status !== 'pending_review') {
+    card.addSeparatorComponents(thinLine());
+    const submitRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_btn_submit_${appData.id}`)
+        .setLabel('Submit Application')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('📨')
+    );
+    card.addActionRowComponents(submitRow);
+  }
+
+  return card;
+}
+
+function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
+  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  const gen = appData.generalInfo || {};
+  const ans = appData.scenarioAnswers || {};
+
+  if (pageIndex === 0) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 📋 Staff Application Review — Page 1/3\n` +
+        `### Applicant & General Information\n` +
+        `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
+        `> **Application Type:** **${appData.appType}**\n` +
+        `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:f>\n\n` +
+        `• **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n` +
+        `• **Timezone:** \`${gen.timezone || 'N/A'}\`\n` +
+        `• **Working Microphone & Recording:** \`${gen.mic_software || 'N/A'}\`\n` +
+        `• **Weekly Availability:** \`${gen.availability || 'N/A'}\`\n` +
+        `• **Previous Experience:**\n\`\`\`\n${(gen.experience || 'None provided').slice(0, 500)}\n\`\`\``
+      )
+    );
+  } else if (pageIndex === 1) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 📋 Staff Application Review — Page 2/3\n` +
+        `### Knowledge & Scenarios\n` +
+        `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+        `**1. Fail Roleplay & Vehicle Deathmatch (VDM):**\n` +
+        `> ${(ans.failrp_vdm || 'N/A').slice(0, 300)}\n\n` +
+        `**2. Cuff Rushing & Staff Evasion:**\n` +
+        `> ${(ans.cuff_evasion || 'N/A').slice(0, 300)}\n\n` +
+        `**3. New Life Rule (NLR) & Safezone Crime:**\n` +
+        `> ${(ans.nlr_safezone || 'N/A').slice(0, 300)}\n\n` +
+        `**4. In-Game Mod Commands (Return car / Bring):**\n` +
+        `> ${(ans.mod_commands || 'N/A').slice(0, 200)}\n\n` +
+        `**5. Staff Abuse & Heated Arguments Resolution:**\n` +
+        `> ${(ans.disrespect_abuse || 'N/A').slice(0, 300)}`
+      )
+    );
+  } else {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 📋 Staff Application Review — Page 3/3\n` +
+        `### Final Verdict & Decision\n` +
+        `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+        `> **Position:** **${appData.appType}**\n` +
+        `> **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n\n` +
+        `Please review all applicant responses carefully. When ready, click **Accept Application** or **Deny Application** below to record your reason and publish the final verdict.`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+
+    const verdictRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_verdict_accept_${appData.id}`)
+        .setLabel('Accept Application')
+        .setStyle(ButtonStyle.Success)
+        .setEmoji('✅'),
+      new ButtonBuilder()
+        .setCustomId(`app_verdict_deny_${appData.id}`)
+        .setLabel('Deny Application')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('❌')
+    );
+    card.addActionRowComponents(verdictRow);
+  }
+
+  card.addSeparatorComponents(thinLine());
+
+  // Navigation row: Left arrow, Page indicator, Right arrow
+  const leftBtn = new ButtonBuilder()
+    .setCustomId(`app_rev_page_${appData.id}_${pageIndex - 1}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(pageIndex <= 0);
+  try {
+    leftBtn.setEmoji({ id: '1549583273519489089', name: 'arrow_left' });
+  } catch {
+    leftBtn.setEmoji('⬅️');
+  }
+
+  const indicatorBtn = new ButtonBuilder()
+    .setCustomId('app_rev_indicator')
+    .setLabel(`Page ${pageIndex + 1} / 3`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(true);
+
+  const rightBtn = new ButtonBuilder()
+    .setCustomId(`app_rev_page_${appData.id}_${pageIndex + 1}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(pageIndex >= 2);
+  try {
+    rightBtn.setEmoji({ id: '1549583002676236308', name: 'Right_arrow' });
+  } catch {
+    rightBtn.setEmoji('➡️');
+  }
+
+  const navRow = new ActionRowBuilder().addComponents(leftBtn, indicatorBtn, rightBtn);
+  card.addActionRowComponents(navRow);
+
+  return card;
+}
+
+async function handleStaffApplicationPanelCommand(interaction) {
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  if (!isStaffMember(member) && !member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({ content: '❌ You must have staff permissions to post the application panel.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const targetChannel =
+    interaction.options?.getChannel?.('channel') ||
+    interaction.guild?.channels.cache.get(APP_PANEL_CHANNEL_ID) ||
+    interaction.channel;
+
+  if (!targetChannel) {
+    await interaction.editReply({ content: '❌ Could not find target channel for application panel.' });
+    return;
+  }
+
+  const card = buildStaffApplicationPanelCard();
+  await targetChannel.send({
+    components: [card.toJSON()],
+    flags: MessageFlags.IsComponentsV2
+  });
+
+  await interaction.editReply({ content: `✅ Staff Application Panel posted in <#${targetChannel.id}>.` });
+}
+
+async function getApplicationReviewerStaff(client) {
+  const staffMembers = [];
+  const checkedUsers = new Set();
+
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await guild.members.fetch().catch(() => null);
+      const role = guild.roles.cache.get(APP_REVIEWER_ROLE_ID);
+      if (role) {
+        for (const member of role.members.values()) {
+          if (!member.user.bot && !checkedUsers.has(member.id)) {
+            checkedUsers.add(member.id);
+            staffMembers.push(member);
+          }
+        }
+      }
+    } catch { }
+  }
+
+  if (!staffMembers.length) {
+    const primaryGuild = client.guilds.cache.get('1232495211490443284') || client.guilds.cache.first();
+    if (primaryGuild) {
+      for (const m of primaryGuild.members.cache.values()) {
+        if (!m.user.bot && isStaffMember(m) && !checkedUsers.has(m.id)) {
+          checkedUsers.add(m.id);
+          staffMembers.push(m);
+        }
+      }
+    }
+  }
+
+  return staffMembers;
+}
+
+async function sendNextReviewInquiry(client, appData) {
+  if (!appData.reviewCandidates || appData.currentReviewCandidateIdx >= appData.reviewCandidates.length) {
+    console.warn(`[Staff Application] All review candidates exhausted for application ${appData.id}.`);
+    return;
+  }
+
+  const staffId = appData.reviewCandidates[appData.currentReviewCandidateIdx];
+  const staffUser = await client.users.fetch(staffId).catch(() => null);
+  if (!staffUser) {
+    appData.currentReviewCandidateIdx++;
+    saveApplications();
+    return sendNextReviewInquiry(client, appData);
+  }
+
+  const card = new ContainerBuilder().setAccentColor(0xd69a5c);
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## 📋 Staff Application Review Request\n` +
+      `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+      `> **Position:** **${appData.appType}**\n` +
+      `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:R>\n\n` +
+      `Are you available to read and review this application?`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  // 2 buttons all gray: <:checkmark:1549230329418485832> and <:wrong:1549230458070507552>
+  const checkBtn = new ButtonBuilder()
+    .setCustomId(`app_rev_claim_${appData.id}`)
+    .setStyle(ButtonStyle.Secondary);
+  try {
+    checkBtn.setEmoji({ id: '1549230329418485832', name: 'checkmark' });
+  } catch {
+    checkBtn.setEmoji('✅');
+  }
+
+  const wrongBtn = new ButtonBuilder()
+    .setCustomId(`app_rev_decline_${appData.id}`)
+    .setStyle(ButtonStyle.Secondary);
+  try {
+    wrongBtn.setEmoji({ id: '1549230458070507552', name: 'wrong' });
+  } catch {
+    wrongBtn.setEmoji('❌');
+  }
+
+  const row = new ActionRowBuilder().addComponents(checkBtn, wrongBtn);
+  card.addActionRowComponents(row);
+
+  try {
+    await staffUser.send({
+      components: [card.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+    console.log(`[Staff Application] Dispatched review inquiry to staff ${staffUser.tag} (${staffUser.id})`);
+  } catch (err) {
+    console.warn(`[Staff Application] Could not DM staff ${staffUser.tag}: ${err.message}. Skipping to next staff.`);
+    appData.currentReviewCandidateIdx++;
+    saveApplications();
+    return sendNextReviewInquiry(client, appData);
+  }
+}
+
+async function dispatchApplicationReview(client, appData) {
+  const candidateStaff = await getApplicationReviewerStaff(client);
+  appData.reviewCandidates = candidateStaff.map((m) => m.user.id);
+  appData.currentReviewCandidateIdx = 0;
+  saveApplications();
+  await sendNextReviewInquiry(client, appData);
 }
 
 async function editVoteMessage(client, vote) {
@@ -5212,7 +5609,8 @@ function getSlashPayload() {
     jailCommand.toJSON(),
     unjailCommand.toJSON(),
     unbanCommand.toJSON(),
-    safezoneCommand.toJSON()
+    safezoneCommand.toJSON(),
+    applicationCommand.toJSON()
   ];
 }
 
@@ -5255,6 +5653,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadTicketPanels();
     loadSafeZoneStrikes();
     loadSuggestions();
+    loadApplications();
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
       if (g) await backupGuildState(g);
@@ -5998,15 +6397,26 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       controlMessageId: null
     };
 
-    // Welcome ping for the user
+    // Top ping for department role & user
+    let deptPingRoleId = null;
+    if (catKey === 'ia') deptPingRoleId = '1341932342343897269';
+    else if (catKey === 'general') deptPingRoleId = '1236052056201105418';
+    else if (catKey === 'highrank') deptPingRoleId = '1341932333741244476';
+    else if (catKey === 'partnership') deptPingRoleId = '1341965114101731418';
+
+    const topPingContent = deptPingRoleId
+      ? `<@&${deptPingRoleId}> <@${interaction.user.id}>`
+      : `<@${interaction.user.id}>`;
+
     await ticketChannel.send({
-      content: isPartnership
-        ? `<@${interaction.user.id}> Welcome to your partnership ticket! This inquiry has been claimed and handled by our **Automated AI Assistant**.`
-        : `<@${interaction.user.id}> Welcome to your assistance ticket. Staff will assist you shortly!`
+      content: `${topPingContent}\n` +
+        (isPartnership
+          ? `Welcome to your partnership ticket! Please select what type of partnership you are opening below.`
+          : `Welcome to your assistance ticket. Staff will assist you shortly!`)
     });
 
     if (catKey === 'partnership') {
-      ticketData.partnershipStep = 'awaiting_ad';
+      ticketData.partnershipStep = 'select_type';
     }
 
     // Pinned control card
@@ -6019,6 +6429,37 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       await controlMsg.pin();
     } catch (pinErr) {
       console.warn(`Could not pin ticket control card: ${pinErr.message}`);
+    }
+
+    // If partnership ticket, post the interactive Regular vs Paid selector
+    if (isPartnership) {
+      const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
+      selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
+      selectTypeCard.addSeparatorComponents(thinLine());
+      selectTypeCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `Welcome <@${interaction.user.id}>! Please choose which partnership path you would like to pursue:\n\n` +
+          `• **Regular Partnership**: Mutual advertisement exchange for communities meeting our member requirement.\n` +
+          `• **Paid Partnership**: Direct promotion for communities under the member limit or seeking an @here / @everyone ping.`
+        )
+      );
+      selectTypeCard.addSeparatorComponents(thinLine());
+      const selectTypeRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`part_type_regular_${ticketChannel.id}`)
+          .setLabel('Regular Partnership')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`part_type_paid_${ticketChannel.id}`)
+          .setLabel('Paid Partnership')
+          .setStyle(ButtonStyle.Primary)
+      );
+      selectTypeCard.addActionRowComponents(selectTypeRow);
+
+      await ticketChannel.send({
+        components: [selectTypeCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
     }
 
     ticketData.controlMessageId = controlMsg.id;
@@ -6121,6 +6562,173 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({
         content: `✅ Updated transcript reason to: **"${newReason}"**`,
         flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Step 1 Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step1_')) {
+      const appId = interaction.customId.replace('app_modal_step1_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      appData.step1Done = true;
+      saveApplications();
+      const updatedCard = buildApplicantDashboard(appData);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Step 2 Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step2_')) {
+      const appId = interaction.customId.replace('app_modal_step2_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      appData.generalInfo = {
+        roblox_user: interaction.fields.getTextInputValue('roblox_user')?.trim() || 'N/A',
+        timezone: interaction.fields.getTextInputValue('timezone')?.trim() || 'N/A',
+        mic_software: interaction.fields.getTextInputValue('mic_software')?.trim() || 'N/A',
+        experience: interaction.fields.getTextInputValue('experience')?.trim() || 'None provided',
+        availability: interaction.fields.getTextInputValue('availability')?.trim() || 'N/A'
+      };
+      appData.step2Done = true;
+      saveApplications();
+      const updatedCard = buildApplicantDashboard(appData);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Step 3 Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step3_')) {
+      const appId = interaction.customId.replace('app_modal_step3_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      appData.scenarioAnswers = {
+        failrp_vdm: interaction.fields.getTextInputValue('failrp_vdm')?.trim() || 'N/A',
+        cuff_evasion: interaction.fields.getTextInputValue('cuff_evasion')?.trim() || 'N/A',
+        nlr_safezone: interaction.fields.getTextInputValue('nlr_safezone')?.trim() || 'N/A',
+        mod_commands: interaction.fields.getTextInputValue('mod_commands')?.trim() || 'N/A',
+        disrespect_abuse: interaction.fields.getTextInputValue('disrespect_abuse')?.trim() || 'N/A'
+      };
+      appData.step3Done = true;
+      saveApplications();
+      const updatedCard = buildApplicantDashboard(appData);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Verdict Decision Modal Submit ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_verdict_')) {
+      const action = interaction.customId.startsWith('app_modal_verdict_accept_') ? 'accept' : 'deny';
+      const prefix = interaction.customId.startsWith('app_modal_verdict_accept_') ? 'app_modal_verdict_accept_' : 'app_modal_verdict_deny_';
+      const appId = interaction.customId.replace(prefix, '');
+      const reason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || 'No specific notes provided.';
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+
+      if (!appData) {
+        await interaction.reply({ content: 'Application record not found or already processed.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const isPassed = action === 'accept';
+      const logChannel = await interaction.client.channels.fetch(APP_DECISIONS_CHANNEL_ID).catch(() => null);
+
+      if (isPassed) {
+        const passedCard = new ContainerBuilder().setAccentColor(0x57f287);
+        passedCard.addMediaGalleryComponents(
+          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
+        );
+        passedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🎉 Staff Application Passed!'));
+        passedCard.addSeparatorComponents(thinLine());
+        passedCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+            `> **Position:** **${appData.appType}**\n` +
+            `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
+            `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
+            `> **Reviewer Notes:** ${reason}\n` +
+            `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+          )
+        );
+
+        if (logChannel) {
+          await logChannel.send({
+            content: `🎉 Congratulations <@${appData.applicantId}>! Your staff application has been approved.`,
+            components: [passedCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(console.error);
+        }
+
+        try {
+          const applicantUser = await interaction.client.users.fetch(appData.applicantId).catch(() => null);
+          if (applicantUser) {
+            await applicantUser.send({
+              content: `🎉 **Congratulations!** Your Alabama State Roleplay **${appData.appType}** application has been **PASSED** by <@${interaction.user.id}>!\n\n**Reviewer Notes:**\n> ${reason}\n\nPlease check <#${APP_DECISIONS_CHANNEL_ID}> for details.`
+            });
+          }
+        } catch { }
+      } else {
+        const failedCard = new ContainerBuilder().setAccentColor(0xed4245);
+        const attachment = new AttachmentBuilder('src/assets/application_failed.png', { name: 'application_failed.png' });
+        failedCard.addMediaGalleryComponents(
+          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://application_failed.png'))
+        );
+        failedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Staff Application Denied'));
+        failedCard.addSeparatorComponents(thinLine());
+        failedCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+            `> **Position:** **${appData.appType}**\n` +
+            `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
+            `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
+            `> **Reason for Denial:** ${reason}\n` +
+            `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+          )
+        );
+
+        if (logChannel) {
+          await logChannel.send({
+            content: `<@${appData.applicantId}> Your staff application decision has been recorded.`,
+            components: [failedCard.toJSON()],
+            files: [attachment],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(console.error);
+        }
+
+        try {
+          const applicantUser = await interaction.client.users.fetch(appData.applicantId).catch(() => null);
+          if (applicantUser) {
+            await applicantUser.send({
+              content: `❌ Your Alabama State Roleplay **${appData.appType}** application was **DENIED** by <@${interaction.user.id}>.\n\n**Reason:**\n> ${reason}`
+            });
+          }
+        } catch { }
+      }
+
+      activeApplications.delete(appData.applicantId);
+      activeReviewSessions.delete(interaction.user.id);
+      saveApplications();
+
+      await interaction.editReply({
+        content: `✅ Application verdict (${isPassed ? 'ACCEPTED' : 'DENIED'}) has been recorded and published in <#${APP_DECISIONS_CHANNEL_ID}>.`
       });
       return;
     }
@@ -6355,7 +6963,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } catch {
           sub = interaction.options?.data?.[0]?.name ?? null;
         }
-        sub = typeof sub === 'string' ? sub.toLowerCase().trim() : sub;
+        let grp = null;
+        try { grp = interaction.options.getSubcommandGroup(false); } catch {}
+        if (grp === 'application' || sub === 'application') {
+          await handleStaffApplicationPanelCommand(interaction);
+          return;
+        }
         if (sub === 'panel') {
           await handleSessionPanel(interaction);
           return;
@@ -6372,6 +6985,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await handleStaffFeedbackCommand(interaction);
           return;
         }
+      } else if (interaction.commandName === 'application') {
+        await handleStaffApplicationPanelCommand(interaction);
+        return;
       } else if (interaction.commandName === 'suggestion' || interaction.commandName === 'suggest') {
         await handleSuggestionCommand(interaction);
         return;
@@ -6879,6 +7495,456 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `> Once linked, your Alabama State Roleplay in-game data, callsign, and roles will be synchronized automatically.`,
         flags: MessageFlags.Ephemeral
       });
+      return;
+    }
+
+    // ─────────────── Partnership Type Selection Buttons ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('part_type_regular_')) {
+      const channelId = interaction.customId.replace('part_type_regular_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      ticket.partnershipType = 'regular';
+      ticket.partnershipStep = 'awaiting_ad';
+      saveTickets();
+
+      const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
+      regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Regular Partnership Selected'));
+      regularCard.addSeparatorComponents(thinLine());
+      regularCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Requirement:** Your server must have at least **120+ active members** (excluding bots).\n\n` +
+          `**Next Step:** Please submit your partnership information and server advertisement using:\n` +
+          `\`-partnership [Your Server Details & Advertisement]\`\n\n` +
+          `You may click the **Partnership Requirements & Application** button on the control card above for our application form template.`
+        )
+      );
+
+      await interaction.update({
+        components: [regularCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('part_type_paid_')) {
+      const channelId = interaction.customId.replace('part_type_paid_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      ticket.partnershipType = 'paid';
+      ticket.partnershipStep = 'awaiting_payment_proof';
+      saveTickets();
+
+      const paidCard = new ContainerBuilder().setAccentColor(0xfee75c);
+      paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💎 Paid Partnership Game Passes'));
+      paidCard.addSeparatorComponents(thinLine());
+      paidCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `Please purchase one of our official game passes below to proceed with your paid partnership:\n\n` +
+          `• [**Paid Partnership Fee (100 R$)**](https://www.roblox.com/game-pass/1941739587/Alabama-State-Roleplay-Partnership-Fee-100)\n` +
+          `> Promote your server to our community and help potential members discover and join faster. The partnership fee will only be for communities under the required member count.\n\n` +
+          `• [**Paid Partnership @here ping (200 R$)**](https://www.roblox.com/game-pass/1941619662/Alabama-Paid-Partnership-here-ping-200)\n` +
+          `> Get your advertisement promoted with an @here ping for additional exposure.\n\n` +
+          `• [**Paid Partnership @everyone ping (300 R$)**](https://www.roblox.com/game-pass/1944102339/Alabama-Paid-Partnership-everyone-ping-300)\n` +
+          `> Get maximum exposure with an @everyone ping, helping your server reach the entire community faster.\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📸 **Payment Proof Required:** After purchasing, upload a screenshot of your purchase confirmation or transaction inventory into this channel (or reply with the image).\n` +
+          `Once uploaded, staff (<@&1341965114101731418>) will verify your payment and confirm it so you can submit your advertisement!`
+        )
+      );
+
+      await interaction.update({
+        components: [paidCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('part_confirm_payment_')) {
+      const channelId = interaction.customId.replace('part_confirm_payment_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      const canConfirm = member && (
+        member.roles?.cache?.has('1341965114101731418') ||
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        member.roles?.cache?.some((r) => /(moderator|mod|admin|owner|supervisor|high\s*rank|staff)/i.test(r.name))
+      );
+      if (!canConfirm) {
+        await interaction.reply({
+          content: '❌ You do not have permission to verify partnership payments. Required role: <@&1341965114101731418>.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      ticket.paymentVerified = true;
+      ticket.partnershipStep = 'awaiting_ad';
+      saveTickets();
+
+      const confirmedCard = new ContainerBuilder().setAccentColor(0x57f287);
+      confirmedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Payment Verified by Staff!'));
+      confirmedCard.addSeparatorComponents(thinLine());
+      confirmedCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Verified by:** <@${interaction.user.id}>\n\n` +
+          `**Next Step:** <@${ticket.authorId}>, your payment has been verified! Please submit your server advertisement using:\n` +
+          `\`-partnership [Your Server Details & Advertisement]\``
+        )
+      );
+
+      await interaction.update({
+        components: [confirmedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Start Application Buttons ───────────────
+    if (interaction.isButton() && (interaction.customId === 'app_start_ingame' || interaction.customId === 'app_start_discord')) {
+      const existing = activeApplications.get(interaction.user.id);
+      if (existing) {
+        await interaction.reply({
+          content: '⚠️ You already have an active application in progress. Please check your Direct Messages with me to complete it.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const isIngame = interaction.customId === 'app_start_ingame';
+      const appType = isIngame ? 'In-Game Staff' : 'Discord Staff';
+      const appId = `${Date.now().toString(36)}_${interaction.user.id.slice(-4)}`;
+
+      const newApp = {
+        id: appId,
+        applicantId: interaction.user.id,
+        applicantTag: interaction.user.tag,
+        appType,
+        step1Done: false,
+        step2Done: false,
+        step3Done: false,
+        generalInfo: null,
+        scenarioAnswers: null,
+        createdAt: Date.now(),
+        dmMessageId: null
+      };
+
+      try {
+        const dashboard = buildApplicantDashboard(newApp);
+        const dmMsg = await interaction.user.send({
+          content: `**Alabama State Roleplay Staff Application Portal**\nPosition: **${appType}**\nPlease complete the 3 steps below:`,
+          components: [dashboard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        newApp.dmMessageId = dmMsg.id;
+        activeApplications.set(interaction.user.id, newApp);
+        saveApplications();
+
+        await interaction.reply({
+          content: `✅ I have opened your **${appType}** application in your DMs! Please check your direct messages to begin.`,
+          flags: MessageFlags.Ephemeral
+        });
+      } catch (err) {
+        await interaction.reply({
+          content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
+          flags: MessageFlags.Ephemeral
+        });
+      }
+      return;
+    }
+
+    // ─────────────── Staff Application: Step Buttons (Applicant DM) ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('app_btn_step1_')) {
+      const appId = interaction.customId.replace('app_btn_step1_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`app_modal_step1_${appId}`)
+        .setTitle('Step 1: Rules & Requirements')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('rules_agree')
+              .setLabel('Do you agree to follow all staff rules?')
+              .setPlaceholder('Type "Yes" to confirm')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('activity_agree')
+              .setLabel('Can you maintain weekly activity & quotas?')
+              .setPlaceholder('Type "Yes" to confirm')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('nda_agree')
+              .setLabel('Do you agree to keep staff channels private?')
+              .setPlaceholder('Type "Yes" to confirm')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          )
+        );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_btn_step2_')) {
+      const appId = interaction.customId.replace('app_btn_step2_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`app_modal_step2_${appId}`)
+        .setTitle('Step 2: General Information')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('roblox_user')
+              .setLabel('Roblox Username')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('timezone')
+              .setLabel('Timezone / Region')
+              .setPlaceholder('e.g. EST, CST, GMT')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('mic_software')
+              .setLabel('Working Microphone & Clip Software?')
+              .setPlaceholder('e.g. Yes - Medal / OBS / GeForce')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('experience')
+              .setLabel('Previous Staff Experience')
+              .setPlaceholder('List server names, roles held, and duration...')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('availability')
+              .setLabel('Weekly Availability (Hours & Days)')
+              .setPlaceholder('e.g. 15-20 hrs/week, available afternoons')
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true)
+          )
+        );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_btn_step3_')) {
+      const appId = interaction.customId.replace('app_btn_step3_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`app_modal_step3_${appId}`)
+        .setTitle('Step 3: Knowledge & Scenarios')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('failrp_vdm')
+              .setLabel('Player committing FailRP / VDM:')
+              .setPlaceholder('What immediate action and punishment do you take?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('cuff_evasion')
+              .setLabel('Combat logging / evading staff:')
+              .setPlaceholder('How do you investigate and handle this?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('nlr_safezone')
+              .setLabel('Explain NLR and Safe Zone rules:')
+              .setPlaceholder('Define both rules in your own words...')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('mod_commands')
+              .setLabel('Appropriate mod command usage:')
+              .setPlaceholder('When are :bring, :to, :return, :jail appropriate?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('disrespect_abuse')
+              .setLabel('Member toxic / disrespectful to staff:')
+              .setPlaceholder('How do you de-escalate and address the member?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_btn_submit_')) {
+      const appId = interaction.customId.replace('app_btn_submit_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (!appData.step1Done || !appData.step2Done || !appData.step3Done) {
+        await interaction.reply({ content: '⚠️ Please complete all 3 steps before submitting your application.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      appData.status = 'pending_review';
+      appData.submittedAt = Date.now();
+      saveApplications();
+
+      const submittedCard = new ContainerBuilder().setAccentColor(0x57f287);
+      submittedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Staff Application Submitted!'));
+      submittedCard.addSeparatorComponents(thinLine());
+      submittedCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `Thank you <@${interaction.user.id}>! Your application for **${appData.appType}** has been submitted.\n\n` +
+          `Our staff team will review your application. You will receive a direct message notification here once a verdict has been recorded.`
+        )
+      );
+
+      await interaction.update({
+        content: 'Your application has been received!',
+        components: [submittedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+
+      // Dispatch to sequential review among staff with role 1548637141850918993
+      await dispatchApplicationReview(interaction.client, appData);
+      return;
+    }
+
+    // ─────────────── Staff Application: Review Claim / Decline / Paging / Verdict ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('app_rev_claim_')) {
+      const appId = interaction.customId.replace('app_rev_claim_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'This application has already been processed or expired.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      if (appData.claimedReviewerId && appData.claimedReviewerId !== interaction.user.id) {
+        await interaction.reply({ content: `This application has already been claimed by <@${appData.claimedReviewerId}>.`, flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      appData.claimedReviewerId = interaction.user.id;
+      appData.currentPage = 0;
+      saveApplications();
+      activeReviewSessions.set(interaction.user.id, { appId, currentPage: 0 });
+
+      const reviewCard = buildApplicationReviewReaderCard(appData, 0);
+      await interaction.update({
+        content: `📖 **Application Review Active** (Applicant: <@${appData.applicantId}>)`,
+        components: [reviewCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_rev_decline_')) {
+      const appId = interaction.customId.replace('app_rev_decline_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.update({ content: 'Application no longer pending.', components: [] });
+        return;
+      }
+
+      await interaction.update({
+        content: 'You declined to review this application. Forwarding to next staff member...',
+        components: []
+      });
+
+      appData.currentReviewCandidateIdx = (appData.currentReviewCandidateIdx || 0) + 1;
+      saveApplications();
+      await sendNextReviewInquiry(interaction.client, appData);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_rev_page_')) {
+      const parts = interaction.customId.split('_');
+      const pageIndex = parseInt(parts.pop(), 10) || 0;
+      const appId = parts.slice(3).join('_');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      appData.currentPage = pageIndex;
+      saveApplications();
+      const reviewCard = buildApplicationReviewReaderCard(appData, pageIndex);
+      await interaction.update({
+        components: [reviewCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && (interaction.customId.startsWith('app_verdict_accept_') || interaction.customId.startsWith('app_verdict_deny_'))) {
+      const isAccept = interaction.customId.startsWith('app_verdict_accept_');
+      const appId = interaction.customId.replace(isAccept ? 'app_verdict_accept_' : 'app_verdict_deny_', '');
+      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      if (!appData) {
+        await interaction.reply({ content: 'Application record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`app_modal_verdict_${isAccept ? 'accept' : 'deny'}_${appId}`)
+        .setTitle(isAccept ? 'Accept Staff Application' : 'Deny Staff Application')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('verdict_reason')
+              .setLabel(isAccept ? 'Reviewer Feedback & Notes' : 'Reason for Denial')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+              .setMinLength(2)
+              .setMaxLength(1000)
+              .setPlaceholder(isAccept ? 'e.g. Great scenarios and solid past experience...' : 'e.g. Insufficient detail on scenario answers...')
+          )
+        );
+
+      await interaction.showModal(modal);
       return;
     }
 
@@ -7842,11 +8908,20 @@ client.on(Events.MessageCreate, async (message) => {
           } catch { }
         }
 
-        if (memberCount !== null && memberCount < 120) {
+        if (ticket.partnershipType === 'paid' && !ticket.paymentVerified) {
+          await message.reply({
+            content:
+              `⚠️ **Payment Verification Required:** Please purchase your Paid Partnership Game Pass and submit proof before submitting your advertisement.\n` +
+              `Staff role <@&1341965114101731418> will verify your payment and confirm it.`
+          });
+          return;
+        }
+
+        if (memberCount !== null && memberCount < 120 && !(ticket.partnershipType === 'paid' && ticket.paymentVerified)) {
           await message.reply({
             content:
               `❌ **Requirement Not Met:** Your server must have at least **120+ active members** (excluding bots) to partner with Alabama State Roleplay. Your submission indicated **${memberCount} members**.\n` +
-              `-# Please re-apply once your server reaches 120+ members.`
+              `-# If your community is under 120 members, you may choose a Paid Partnership.`
           });
           return;
         }
@@ -7878,7 +8953,49 @@ client.on(Events.MessageCreate, async (message) => {
         return;
       }
 
-      // ── 2. -proof command ──
+      // ── 2. -confirm command (Staff verification for paid partnerships) ──
+      if (lower === 'confirm' || lower.startsWith('confirm')) {
+        if (!isPartnershipTicket) {
+          await autoDeleteReply(message, '❌ The `-confirm` command can only be used inside an active partnership ticket.', 30000);
+          return;
+        }
+
+        const member = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+        const canConfirm = member && (
+          member.roles?.cache?.has('1341965114101731418') ||
+          member.permissions.has(PermissionFlagsBits.Administrator) ||
+          member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+          member.roles?.cache?.some((r) => /(moderator|mod|admin|owner|supervisor|high\s*rank|staff)/i.test(r.name))
+        );
+        if (!canConfirm) {
+          await message.reply({ content: '❌ You do not have permission to verify partnership payments. Required role: <@&1341965114101731418>.' });
+          return;
+        }
+
+        ticket.paymentVerified = true;
+        ticket.partnershipStep = 'awaiting_ad';
+        saveTickets();
+
+        const verifiedCard = new ContainerBuilder().setAccentColor(0x57f287);
+        verifiedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Paid Partnership Confirmed!'));
+        verifiedCard.addSeparatorComponents(thinLine());
+        verifiedCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Verified by:** <@${message.author.id}>\n\n` +
+            `**Next Step:** <@${ticket.authorId}>, your payment has been confirmed! Please submit your server advertisement using:\n` +
+            `\`-partnership [Your Server Details & Advertisement]\``
+          )
+        );
+
+        await message.reply({
+          content: `<@${ticket.authorId}> Payment verified!`,
+          components: [verifiedCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      // ── 3. -proof command ──
       if (lower.startsWith('proof')) {
         if (!isPartnershipTicket) {
           await autoDeleteReply(message, '❌ The `-proof` command can only be used inside an active partnership ticket.', 30000);
@@ -7899,6 +9016,40 @@ client.on(Events.MessageCreate, async (message) => {
           return;
         }
 
+        if (ticket.partnershipStep === 'awaiting_payment_proof' || (ticket.partnershipType === 'paid' && !ticket.paymentVerified)) {
+          ticket.paymentProofUrl = hasImage.url;
+          ticket.partnershipStep = 'payment_proof_submitted';
+          saveTickets();
+
+          const pendingCard = new ContainerBuilder().setAccentColor(0xfee75c);
+          pendingCard.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(hasImage.url))
+          );
+          pendingCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💳 Payment Proof Submitted!'));
+          pendingCard.addSeparatorComponents(thinLine());
+          pendingCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `> **Submitted by:** <@${message.author.id}>\n\n` +
+              `Attention <@&1341965114101731418>: Please verify this payment proof.\n` +
+              `Once verified, type \`-confirm\` or click **Confirm Payment** below to unlock advertisement submission.`
+            )
+          );
+
+          const confirmRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`part_confirm_payment_${ticket.channelId}`)
+              .setLabel('Confirm Payment')
+              .setStyle(ButtonStyle.Success)
+          );
+
+          await message.reply({
+            content: `<@&1341965114101731418> New paid partnership payment proof uploaded!`,
+            components: [pendingCard.toJSON(), confirmRow],
+            flags: MessageFlags.IsComponentsV2
+          });
+          return;
+        }
+
         await processPartnershipProof({
           guild: message.guild,
           channel: message.channel,
@@ -7912,24 +9063,60 @@ client.on(Events.MessageCreate, async (message) => {
       }
     }
 
-    // ── 3. Direct image screenshot upload while awaiting proof ──
-    if (isPartnershipTicket && ticket.partnershipStep === 'awaiting_screenshot' && message.author.id === ticket.authorId) {
+    // ── 4. Direct image screenshot upload while awaiting proof ──
+    if (isPartnershipTicket && message.author.id === ticket.authorId) {
       const hasImage = message.attachments.find(
         (att) =>
           att.contentType?.startsWith('image/') ||
           /\.(png|jpe?g|webp|gif)$/i.test(att.name || att.url)
       );
       if (hasImage) {
-        await processPartnershipProof({
-          guild: message.guild,
-          channel: message.channel,
-          author: message.author,
-          ticket,
-          imageUrl: hasImage.url,
-          replyTarget: message,
-          isInteraction: false
-        });
-        return;
+        if (ticket.partnershipStep === 'awaiting_payment_proof' || (ticket.partnershipType === 'paid' && !ticket.paymentVerified)) {
+          ticket.paymentProofUrl = hasImage.url;
+          ticket.partnershipStep = 'payment_proof_submitted';
+          saveTickets();
+
+          const pendingCard = new ContainerBuilder().setAccentColor(0xfee75c);
+          pendingCard.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(hasImage.url))
+          );
+          pendingCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💳 Payment Proof Submitted!'));
+          pendingCard.addSeparatorComponents(thinLine());
+          pendingCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `> **Submitted by:** <@${message.author.id}>\n\n` +
+              `Attention <@&1341965114101731418>: Please verify this payment proof.\n` +
+              `Once verified, type \`-confirm\` or click **Confirm Payment** below to unlock advertisement submission.`
+            )
+          );
+
+          const confirmRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`part_confirm_payment_${ticket.channelId}`)
+              .setLabel('Confirm Payment')
+              .setStyle(ButtonStyle.Success)
+          );
+
+          await message.reply({
+            content: `<@&1341965114101731418> New paid partnership payment proof uploaded!`,
+            components: [pendingCard.toJSON(), confirmRow],
+            flags: MessageFlags.IsComponentsV2
+          });
+          return;
+        }
+
+        if (ticket.partnershipStep === 'awaiting_screenshot') {
+          await processPartnershipProof({
+            guild: message.guild,
+            channel: message.channel,
+            author: message.author,
+            ticket,
+            imageUrl: hasImage.url,
+            replyTarget: message,
+            isInteraction: false
+          });
+          return;
+        }
       }
     }
 
