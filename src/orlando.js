@@ -186,7 +186,14 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('unclaim')
-    .setDescription('Unclaim the active ticket channel.')
+    .setDescription('Unclaim the active ticket channel.'),
+
+  new SlashCommandBuilder()
+    .setName('proof')
+    .setDescription('Submit partnership screenshot proof.')
+    .addAttachmentOption((opt) =>
+      opt.setName('screenshot').setDescription('Screenshot of reciprocal advertisement').setRequired(true)
+    )
 ];
 
 async function registerCommands() {
@@ -407,11 +414,14 @@ function buildOrlandoCommandsList() {
       `> • \`-support panel\` or \`-staff panel\` — Alternative aliases to post the panel.\n` +
       `> • \`/support panel [channel]\` — Slash command to deploy the panel to any selected channel.\n\n` +
       `### 🛠️ In-Ticket Management\n` +
-      `> • \`Claim Ticket\` button or \`-claim\` — Claim the active ticket channel (switches status to 🟢 Claimed).\n` +
-      `> • \`Unclaim Ticket\` button or \`-unclaim\` — Release the ticket back to the staff queue (🔴 Unclaimed).\n` +
-      `> • \`Close Ticket\` button or \`-close [reason]\` — Close and delete the ticket with a 5-second countdown.\n` +
+      `> • \`Claim Ticket\` button or \`-claim\` — Claim ticket (switches channel name to 🟢・ and status to 🟢 Claimed).\n` +
+      `> • \`Unclaim Ticket\` button or \`-unclaim\` — Release ticket back to queue (🔴・ and 🔴 Unclaimed).\n` +
+      `> • \`Close Ticket\` button or \`-close [reason]\` — Close and delete ticket.\n` +
       `> • \`-add @user\` or \`/add target:@user\` — Add a member to the private ticket channel.\n` +
       `> • \`-unadd @user\` or \`/unadd target:@user\` — Remove a member from the active ticket channel.\n\n` +
+      `### 🤝 Partnership Operations\n` +
+      `> • \`-partnership [ad text]\` — Submit your server advertisement for review.\n` +
+      `> • \`/proof screenshot:<file>\` or \`-proof\` — Submit proof screenshot to approve partnership.\n\n` +
       `### 👋 Welcome & Community\n` +
       `> • \`-welcome test\` or \`/welcome test\` — Send a test welcome card to <#${WELCOME_CHANNEL_ID}>.\n` +
       `> • \`!list\` or \`-list\` — Show this command reference guide.`
@@ -425,6 +435,119 @@ function buildOrlandoCommandsList() {
   );
 
   return container;
+}
+
+// ─────────────── Partnership Proof Handler ───────────────
+async function handleOrlandoProof(interactionOrMessage, isSlash, screenshotUrl) {
+  const channel = interactionOrMessage.channel;
+  const ticket = orlandoTickets.get(channel.id);
+  const author = isSlash ? interactionOrMessage.user : interactionOrMessage.author;
+
+  if (!ticket || ticket.category !== 'partnership') {
+    const msg = '❌ This command can only be used inside an active partnership ticket channel.';
+    if (isSlash) {
+      return interactionOrMessage.reply({ content: msg, flags: MessageFlags.Ephemeral });
+    }
+    return interactionOrMessage.reply(msg);
+  }
+
+  ticket.partnershipStep = 'completed';
+  saveOrlandoTickets();
+
+  // Forward screenshot to proof channel if exists
+  const guild = interactionOrMessage.guild;
+  const proofChan = guild.channels.cache.find(
+    (c) => c.isTextBased() && /(proof|partner-proof|partnership-proof)/i.test(c.name)
+  );
+  if (proofChan && screenshotUrl) {
+    try {
+      const proofCard = new ContainerBuilder().setAccentColor(0x3498db);
+      proofCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Proof Submitted'));
+      proofCard.addSeparatorComponents(thinLine());
+      proofCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Representative:** <@${author.id}>\n` +
+          `> **Ticket Channel:** <#${channel.id}>\n` +
+          `> **Status:** Verification Passed\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+        )
+      );
+      proofCard.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(screenshotUrl))
+      );
+      await proofChan.send({
+        components: [proofCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch {}
+  }
+
+  // Forward ad to partnerships channel if exists
+  const publishChan = guild.channels.cache.find(
+    (c) => c.isTextBased() && /(partnership|partnerships|affiliates|partner-ads)/i.test(c.name)
+  );
+  if (publishChan && ticket.partnerAd) {
+    try {
+      const plainAd =
+        `# Community Partnership\n` +
+        `> **Representative:** <@${author.id}>\n` +
+        `> **Date:** <t:${Math.floor(Date.now() / 1000)}:d>\n` +
+        `───────────────────────────────────────\n\n` +
+        `${ticket.partnerAd}\n\n` +
+        `───────────────────────────────────────\n` +
+        `-# Orlando Roleplay • Official Partnership`;
+      await publishChan.send({
+        content: plainAd.slice(0, 2000),
+        allowedMentions: { parse: [] }
+      });
+    } catch {}
+  }
+
+  const confirmCard = new ContainerBuilder().setAccentColor(0x3498db);
+  confirmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Approved & Published!'));
+  confirmCard.addSeparatorComponents(thinLine());
+  confirmCard.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **Status:** Passed & Approved\n` +
+      `> Your proof screenshot has been recorded and verified.\n` +
+      `> Your community partnership advertisement has been published.\n\n` +
+      `**Thank you for partnering with Orlando Roleplay!**\n\n` +
+      `⏱️ *This ticket is finished and will automatically close in **5 minutes** if not closed below.*`
+    )
+  );
+  confirmCard.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`orlando_close_${ticket.channelId}`)
+        .setLabel('Close Ticket')
+        .setStyle(ButtonStyle.Danger)
+    )
+  );
+
+  if (isSlash) {
+    await interactionOrMessage.reply({
+      components: [confirmCard.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+  } else {
+    await channel.send({
+      components: [confirmCard.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+  }
+
+  // 5-minute auto close timer
+  setTimeout(async () => {
+    try {
+      const curTicket = orlandoTickets.get(ticket.channelId);
+      if (curTicket) {
+        await channel.send('⏱️ **5-minute completion window reached.** Closing ticket now...').catch(() => null);
+        orlandoTickets.delete(ticket.channelId);
+        saveOrlandoTickets();
+        await channel.delete().catch(() => null);
+      }
+    } catch {}
+  }, 5 * 60 * 1000);
 }
 
 // ─────────────── Client Ready ───────────────
@@ -613,6 +736,7 @@ client.on(Events.MessageCreate, async (message) => {
       if (!isStaff) return;
       ticket.claimedBy = message.author.id;
       saveOrlandoTickets();
+      await message.channel.setName(`🟢・${ticket.chanBase || ticket.category}`).catch(() => null);
       const updatedCard = buildOrlandoTicketControlCard(ticket);
       const pinned = await message.channel.messages.fetchPinned().catch(() => null);
       const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
@@ -630,6 +754,7 @@ client.on(Events.MessageCreate, async (message) => {
       if (!isStaff) return;
       ticket.claimedBy = null;
       saveOrlandoTickets();
+      await message.channel.setName(`🔴・${ticket.chanBase || ticket.category}`).catch(() => null);
       const updatedCard = buildOrlandoTicketControlCard(ticket);
       const pinned = await message.channel.messages.fetchPinned().catch(() => null);
       const ctrlMsg = pinned?.find((m) => m.author.id === client.user.id && m.flags?.has?.(MessageFlags.IsComponentsV2));
@@ -637,6 +762,26 @@ client.on(Events.MessageCreate, async (message) => {
         await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
       }
       await message.reply(`🔄 <@${message.author.id}> has unclaimed this ticket.`);
+      return;
+    }
+
+    if (raw.startsWith('-partnership ')) {
+      const ticket = orlandoTickets.get(message.channel.id);
+      if (!ticket) return;
+      const ad = message.content.slice(13).trim();
+      ticket.partnerAd = ad;
+      saveOrlandoTickets();
+      await message.reply('✅ Partner advertisement recorded! Now please post our advertisement in your community and run `/proof <screenshot>` or `-proof` (with screenshot attachment).');
+      return;
+    }
+
+    if (raw === '-proof' || raw.startsWith('-proof ')) {
+      const attachment = message.attachments.first()?.url || message.content.split(/\s+/)[1];
+      if (!attachment) {
+        await message.reply('❌ Please attach a screenshot: `-proof` (with attached image)');
+        return;
+      }
+      await handleOrlandoProof(message, false, attachment);
       return;
     }
   } catch (err) {
@@ -792,6 +937,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         ticket.claimedBy = interaction.user.id;
         saveOrlandoTickets();
+        await interaction.channel.setName(`🟢・${ticket.chanBase || ticket.category}`).catch(() => null);
         const updatedCard = buildOrlandoTicketControlCard(ticket);
         await interaction.reply({
           content: `👋 <@${interaction.user.id}> has claimed this ticket.`
@@ -815,6 +961,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         ticket.claimedBy = null;
         saveOrlandoTickets();
+        await interaction.channel.setName(`🔴・${ticket.chanBase || ticket.category}`).catch(() => null);
         const updatedCard = buildOrlandoTicketControlCard(ticket);
         await interaction.reply({
           content: `🔄 <@${interaction.user.id}> has unclaimed this ticket.`
@@ -824,6 +971,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (ctrlMsg) {
           await ctrlMsg.edit({ components: [updatedCard.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
         }
+        return;
+      }
+
+      if (interaction.commandName === 'proof') {
+        const attachment = interaction.options.getAttachment('screenshot', true);
+        await handleOrlandoProof(interaction, true, attachment.url);
         return;
       }
     }
@@ -873,7 +1026,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       };
       const catName = catNames[cat] || 'Support';
       const cleanName = interaction.user.username.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
-      const chanName = `${cat}-${cleanName}`;
+      const chanBase = `${cat}-${cleanName}`;
+      const chanName = `🔴・${chanBase}`;
 
       // Search for specific or matching category
       await interaction.guild.channels.fetch().catch(() => null);
@@ -980,6 +1134,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         authorTag: interaction.user.tag,
         category: cat,
         categoryName: catName,
+        chanBase,
         reason,
         openedAt: Date.now(),
         claimedBy: null
@@ -988,16 +1143,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
       orlandoTickets.set(ticketChannel.id, ticketData);
       saveOrlandoTickets();
 
+      // 1. Top welcome ping
+      await ticketChannel.send({
+        content: `<@${interaction.user.id}>\n` +
+          (cat === 'partnership'
+            ? 'Welcome to your partnership ticket! Please select what type of partnership you are opening below.'
+            : 'Welcome to your assistance ticket. Staff will assist you shortly!'),
+        allowedMentions: { users: [interaction.user.id] }
+      });
+
+      // 2. Pinned control card
       const controlCard = buildOrlandoTicketControlCard(ticketData);
       const ctrlMsg = await ticketChannel.send({
-        content: `Welcome <@${interaction.user.id}> to your **${catName}** ticket!`,
         components: [controlCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
 
       try {
         await ctrlMsg.pin();
+        ticketData.controlMessageId = ctrlMsg.id;
+        saveOrlandoTickets();
       } catch {}
+
+      // 3. If partnership ticket, post the interactive selector
+      if (cat === 'partnership') {
+        const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
+        selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
+        selectTypeCard.addSeparatorComponents(thinLine());
+        selectTypeCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `Welcome <@${interaction.user.id}>! Please choose which partnership path you would like to pursue:\n\n` +
+            `• **Regular Partnership**\n` +
+            `> Mutual advertisement exchange for active community servers.\n\n` +
+            `• **Paid Partnership**\n` +
+            `> Direct promotion game passes for communities seeking advertising with here or everyone ping tiers.\n\n` +
+            `• **Staff Partnership & Transfers**\n` +
+            `> Reciprocal staff transfers and rank correlation for partner community staff members.`
+          )
+        );
+        selectTypeCard.addSeparatorComponents(thinLine());
+        const selectTypeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`orlando_part_regular_${ticketChannel.id}`)
+            .setLabel('Regular Partnership')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`orlando_part_paid_${ticketChannel.id}`)
+            .setLabel('Paid Partnership')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(`orlando_part_staff_${ticketChannel.id}`)
+            .setLabel('Staff Partnership')
+            .setStyle(ButtonStyle.Success)
+        );
+        selectTypeCard.addActionRowComponents(selectTypeRow);
+
+        await ticketChannel.send({
+          components: [selectTypeCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+      }
 
       await interaction.editReply({
         content: `✅ Your ticket has been opened: <#${ticketChannel.id}>`
@@ -1005,7 +1210,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // ─────────────── Buttons: Claim / Close ───────────────
+    // ─────────────── Buttons: Claim / Unclaim / Close / Partnership ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('orlando_claim_')) {
       const channelId = interaction.customId.replace('orlando_claim_', '');
       const ticket = orlandoTickets.get(channelId);
@@ -1015,6 +1220,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       ticket.claimedBy = interaction.user.id;
       saveOrlandoTickets();
+
+      await interaction.channel.setName(`🟢・${ticket.chanBase || ticket.category}`).catch(() => null);
 
       const updatedCard = buildOrlandoTicketControlCard(ticket);
       await interaction.update({
@@ -1037,6 +1244,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ticket.claimedBy = null;
       saveOrlandoTickets();
 
+      await interaction.channel.setName(`🔴・${ticket.chanBase || ticket.category}`).catch(() => null);
+
       const updatedCard = buildOrlandoTicketControlCard(ticket);
       await interaction.update({
         components: [updatedCard.toJSON()],
@@ -1044,6 +1253,95 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
       await interaction.channel.send({
         content: `🔄 <@${interaction.user.id}> has unclaimed this ticket. It is now open for any staff member.`
+      });
+      return;
+    }
+
+    // Partnership Type Selection Buttons
+    if (interaction.isButton() && interaction.customId.startsWith('orlando_part_regular_')) {
+      const channelId = interaction.customId.replace('orlando_part_regular_', '');
+      const ticket = orlandoTickets.get(channelId);
+      if (ticket) {
+        ticket.partnershipType = 'regular';
+        ticket.partnershipStep = 'awaiting_ad';
+        saveOrlandoTickets();
+      }
+
+      const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
+      regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Regular Partnership Selected'));
+      regularCard.addSeparatorComponents(thinLine());
+      regularCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Tier:** Mutual Community Advertising Exchange\n` +
+          `> **Requirement:** Active community server\n` +
+          `> **Placement:** Reciprocal advertisement placement in our partnerships channel.\n\n` +
+          `### Next Steps & Advertisement Submission\n` +
+          `> **1. Submit Server Advertisement**\n` +
+          `> Send your community description and Discord invite in this channel using:\n` +
+          `> \`-partnership [Your Server Details & Ad Message]\`\n\n` +
+          `> **2. Reciprocal Advertisement**\n` +
+          `> Once reviewed, post our official server advertisement in your community.\n\n` +
+          `> **3. Proof Submission**\n` +
+          `> After posting our ad in your server, run \`/proof screenshot:<file>\` or \`-proof\` (with screenshot attachment) to confirm reciprocal posting.`
+        )
+      );
+      await interaction.update({
+        components: [regularCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('orlando_part_paid_')) {
+      const channelId = interaction.customId.replace('orlando_part_paid_', '');
+      const ticket = orlandoTickets.get(channelId);
+      if (ticket) {
+        ticket.partnershipType = 'paid';
+        saveOrlandoTickets();
+      }
+
+      const paidCard = new ContainerBuilder().setAccentColor(0x3498db);
+      paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Paid Partnership Selected'));
+      paidCard.addSeparatorComponents(thinLine());
+      paidCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Tier:** Paid Community Promotion & Advertising Tiers\n\n` +
+          `### Available Options\n` +
+          `> • **Tier 1:** Standard partner ad with \`@here\` ping.\n` +
+          `> • **Tier 2:** Highlighted partner ad with \`@everyone\` ping.\n\n` +
+          `Please provide your server invite, description, and link to game pass / proof of support in this channel for staff review.`
+        )
+      );
+      await interaction.update({
+        components: [paidCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('orlando_part_staff_')) {
+      const channelId = interaction.customId.replace('orlando_part_staff_', '');
+      const ticket = orlandoTickets.get(channelId);
+      if (ticket) {
+        ticket.partnershipType = 'staff';
+        saveOrlandoTickets();
+      }
+
+      const staffCard = new ContainerBuilder().setAccentColor(0x3498db);
+      staffCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Staff Partnership & Transfers'));
+      staffCard.addSeparatorComponents(thinLine());
+      staffCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Tier:** Partner Server Staff Transfers & Reciprocal Rank Correlation\n\n` +
+          `### Requirements\n` +
+          `> • Please only request roles corresponding to your verified rank in the partner community.\n` +
+          `> • You may use \`-add @user\` to add partner server representatives to this ticket.\n\n` +
+          `Staff will review your rank transfers and assist you shortly.`
+        )
+      );
+      await interaction.update({
+        components: [staffCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
       });
       return;
     }
