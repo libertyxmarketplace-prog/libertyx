@@ -4715,24 +4715,61 @@ function saveTicketPanels() {
   }
 }
 
-async function refreshAllTicketPanels(discordClient) {
+async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
+  let updatedAny = false;
   for (const [chanKey, msgId] of [...lastTicketPanelByChannel]) {
     const parts = chanKey.split(':');
     if (parts.length !== 2) continue;
     const channelId = parts[1];
     try {
-      const ch = await discordClient.channels.fetch(channelId);
+      const ch = await discordClient.channels.fetch(channelId).catch(() => null);
       if (!ch) continue;
-      const msg = await ch.messages.fetch(msgId);
+      const msg = await ch.messages.fetch(msgId).catch(() => null);
       if (msg) {
         await msg.edit({
           components: [buildTicketPanelContainer().toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
+        updatedAny = true;
+      } else {
+        // Try to find the most recent panel message in the channel
+        const recent = await ch.messages.fetch({ limit: 20 }).catch(() => null);
+        if (recent) {
+          const found = recent.find((m) => m.author?.id === discordClient.user?.id && m.flags?.has(MessageFlags.IsComponentsV2));
+          if (found) {
+            await found.edit({
+              components: [buildTicketPanelContainer().toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+            lastTicketPanelByChannel.set(chanKey, found.id);
+            saveTicketPanels();
+            updatedAny = true;
+          }
+        }
       }
     } catch (err) {
       console.warn(`Could not refresh ticket panel in ${channelId}: ${err.message}`);
     }
+  }
+
+  // If provided a fallbackChannel and it wasn't already updated, inspect it
+  if (fallbackChannel && fallbackChannel.isTextBased()) {
+    try {
+      const recent = await fallbackChannel.messages.fetch({ limit: 25 }).catch(() => null);
+      if (recent) {
+        const found = recent.find((m) => m.author?.id === discordClient.user?.id && m.flags?.has(MessageFlags.IsComponentsV2));
+        if (found) {
+          await found.edit({
+            components: [buildTicketPanelContainer().toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+          const chanKey = `${fallbackChannel.guildId || fallbackChannel.guild?.id}:${fallbackChannel.id}`;
+          lastTicketPanelByChannel.set(chanKey, found.id);
+          saveTicketPanels();
+          updatedAny = true;
+        }
+      }
+    } catch {}
   }
 }
 
@@ -4762,7 +4799,7 @@ function buildTicketPanelContainer() {
     ticketDeskState.status === 'online'
       ? 0x57f287
       : ticketDeskState.status === 'busy'
-        ? 0xfee75c
+        ? 0xf1c40f
         : 0xed4245;
 
   const container = new ContainerBuilder().setAccentColor(accentColor);
@@ -4779,6 +4816,13 @@ function buildTicketPanelContainer() {
   );
   container.addSeparatorComponents(thinLine());
 
+  const statusBanner =
+    ticketDeskState.status === 'online'
+      ? '> **Operational Status:** 🟢 **Online** — Staff are actively responding to inquiries.\n\n'
+      : ticketDeskState.status === 'busy'
+        ? '> **Operational Status:** 🟡 **Busy** — Staff are actively assisting; response times may be slower.\n\n'
+        : '> **Operational Status:** 🔴 **Closed** — Support desk is currently closed.\n\n';
+
   const generalOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.general;
   const iaOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.ia;
   const hrOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.highrank;
@@ -4787,6 +4831,7 @@ function buildTicketPanelContainer() {
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
+      statusBanner +
       `**General Support** — ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**Internal Affairs** — ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**High Rank Support** — ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
@@ -6754,7 +6799,7 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       console.warn(`Could not pin ticket control card: ${pinErr.message}`);
     }
 
-    // If partnership ticket, post the interactive Regular vs Paid selector
+    // If partnership ticket, post the interactive Regular vs Paid vs Staff selector
     if (isPartnership) {
       const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
       selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
@@ -6762,8 +6807,12 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       selectTypeCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `Welcome <@${interaction.user.id}>! Please choose which partnership path you would like to pursue:\n\n` +
-          `• **Regular Partnership**: Mutual advertisement exchange for communities meeting our 120+ member requirement.\n` +
-          `• **Paid Partnership**: Direct promotion for communities under the member limit or seeking a here / everyone ping tier.`
+          `• **Regular Partnership**\n` +
+          `> Mutual advertisement exchange for communities meeting our 120+ member requirement.\n\n` +
+          `• **Paid Partnership**\n` +
+          `> Direct promotion game passes for communities seeking advertising with here or everyone ping tiers.\n\n` +
+          `• **Staff Partnership & Transfers**\n` +
+          `> Reciprocal staff transfers and rank correlation for partner community staff members.`
         )
       );
       selectTypeCard.addSeparatorComponents(thinLine());
@@ -6775,7 +6824,11 @@ async function createTicketForUser(client, interaction, catKey, reason) {
         new ButtonBuilder()
           .setCustomId(`part_type_paid_${ticketChannel.id}`)
           .setLabel('Paid Partnership')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`part_type_staff_${ticketChannel.id}`)
+          .setLabel('Staff Partnership')
+          .setStyle(ButtonStyle.Success)
       );
       selectTypeCard.addActionRowComponents(selectTypeRow);
 
@@ -8278,19 +8331,76 @@ client.on(Events.InteractionCreate, async (interaction) => {
       saveTickets();
 
       const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
-      regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Regular Partnership Selected'));
+      regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Regular Partnership Selected'));
       regularCard.addSeparatorComponents(thinLine());
       regularCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `> **Requirement:** Your server must have at least **120+ active members** (excluding bots).\n\n` +
-          `**Next Step:** Please submit your partnership information and server advertisement using:\n` +
-          `\`-partnership [Your Server Details & Advertisement]\`\n\n` +
-          `You may click the **Partnership Requirements & Application** button on the control card above for our application form template.`
+          `> **Tier:** Mutual Community Advertising Exchange\n` +
+          `> **Requirement:** Minimum **120+ active community members** (excluding bot accounts)\n` +
+          `> **Placement:** Reciprocal advertisement placement in our designated partnerships channel.\n\n` +
+          `### Next Steps & Advertisement Submission\n` +
+          `> **1. Submit Server Advertisement**\n` +
+          `> Send your community description and permanent Discord invite in this channel using:\n` +
+          `> \`-partnership [Your Server Details & Ad Message]\`\n\n` +
+          `> **2. Reciprocal Advertisement**\n` +
+          `> Once reviewed, our partnership managers will provide our official server advertisement to post in your community.\n\n` +
+          `> **3. Proof Submission**\n` +
+          `> After posting our ad in your server, run \`/proof partnership <screenshot>\` to confirm reciprocal posting.`
         )
       );
+      regularCard.addSeparatorComponents(thinLine());
+      const regularRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`ticket_part_reqs_${channelId}`)
+          .setLabel('View Partnership Requirements')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      regularCard.addActionRowComponents(regularRow);
 
       await interaction.update({
         components: [regularCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('part_type_staff_')) {
+      const channelId = interaction.customId.replace('part_type_staff_', '');
+      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      ticket.partnershipType = 'staff';
+      ticket.isStaffPartnership = true;
+      if (!ticket.staffRequests) ticket.staffRequests = [];
+      saveTickets();
+
+      const staffPartCard = new ContainerBuilder().setAccentColor(0x3498db);
+      staffPartCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## Staff Partnership & Rank Transfer Department\n` +
+          `Welcome <@${ticket.userId || interaction.user.id}> to your official staff partnership and rank transfer ticket.\n\n` +
+          `### When Requesting Roles & Transfers\n` +
+          `> When submitting a role request for yourself or server representatives:\n` +
+          `> • **Matching Rank:** Please only request roles that correlate directly with your current position or rank in the partner community (Lower Rank, Supervisor, High Rank).\n` +
+          `> • **Dividers Included:** Make sure to include all roles you are eligible for, including required divider roles.\n` +
+          `> • **Applicability:** These requirements apply to all departments and divisions within Alabama State Roleplay.\n\n` +
+          `> You may use \`/add <user>\` or \`-add @user\` to add partner server representatives to this ticket.\n` +
+          `> Click **Submit Transfer Request** below to add a member to the review batch for SHR review.`
+        )
+      );
+      staffPartCard.addSeparatorComponents(thinLine());
+      const staffPartRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`part_staff_add_${channelId}`)
+          .setLabel('Submit Transfer Request')
+          .setStyle(ButtonStyle.Primary)
+      );
+      staffPartCard.addActionRowComponents(staffPartRow);
+
+      await interaction.update({
+        components: [staffPartCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
       return;
@@ -8633,12 +8743,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step1_${appId}`)
-        .setTitle('Step 1: Rules & Requirements Agreement')
+        .setTitle('Step 1: Rules & Requirements')
         .addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('rules_agree')
-              .setLabel(isDiscord ? 'Do you agree to enforce Discord rules & TOS?' : 'Do you agree to enforce server rules strictly?')
+              .setLabel(isDiscord ? 'Agree to enforce Discord rules & TOS?' : 'Agree to enforce server rules strictly?')
               .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
@@ -8646,7 +8756,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('activity_agree')
-              .setLabel(isDiscord ? 'Can you maintain active chat & ticket presence?' : 'Can you maintain minimum 10+ hrs/week on duty?')
+              .setLabel(isDiscord ? 'Maintain active chat & ticket presence?' : 'Maintain 10+ hours/week on duty?')
               .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
@@ -8654,7 +8764,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('nda_agree')
-              .setLabel('Do you agree to keep staff channels private?')
+              .setLabel('Keep staff channels and info private?')
               .setPlaceholder('Type "Yes" to confirm agreement')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
@@ -8697,7 +8807,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('bot_knowledge')
-              .setLabel('Discord Bot Knowledge (Dyno, Wick, Carl, etc.)')
+              .setLabel('Discord Bot & AutoMod Knowledge')
               .setPlaceholder('Describe your experience with moderation bots and Discord Automod...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8705,7 +8815,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('experience')
-              .setLabel('Previous Discord Staff / Moderation Roles')
+              .setLabel('Previous Discord Staff Experience')
               .setPlaceholder('List server names, member counts, ranks held, duration...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8747,7 +8857,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('experience')
-              .setLabel('Previous ER:LC / Roblox Staff Roles')
+              .setLabel('Previous ER:LC Staff Experience')
               .setPlaceholder('List server names, ranks held, duration, supervisor references...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8755,7 +8865,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('availability')
-              .setLabel('Weekly Duty Availability & Times')
+              .setLabel('Weekly Duty Availability')
               .setPlaceholder('e.g. 15-20 hours/week, active during patrols')
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
@@ -8783,7 +8893,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('raid_spam')
-              .setLabel('Mass spam / raid / phishing links in chat:')
+              .setLabel('Handling raid / phishing links in chat:')
               .setPlaceholder('Immediate lockdown, purge, and ban/timeout protocol?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8791,7 +8901,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('harassment_toxicity')
-              .setLabel('Heated arguments, slurs, toxicity in chat:')
+              .setLabel('Handling toxicity and slurs in chat:')
               .setPlaceholder('De-escalation steps, warning, and timeout guidelines?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8799,7 +8909,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('ticket_dispute')
-              .setLabel('Member furiously disputes in-game ban in ticket:')
+              .setLabel('Handling ban dispute in a ticket:')
               .setPlaceholder('How do you remain professional and guide them?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8807,7 +8917,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('bias_favoritism')
-              .setLabel('A close friend breaks rules in general chat:')
+              .setLabel('Close friend breaks rules in chat:')
               .setPlaceholder('How do you handle them without favoritism?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8815,7 +8925,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('underage_tos')
-              .setLabel('User admits under 13 or posts TOS content:')
+              .setLabel('Underage user or TOS violation:')
               .setPlaceholder('Safety actions taken and evidence recording?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8826,7 +8936,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('failrp_vdm')
-              .setLabel('Player committing mass VDM & Fail RP:')
+              .setLabel('Handling mass VDM & Fail RP:')
               .setPlaceholder('Immediate moderation actions and punishment log?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8834,7 +8944,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('combatlog_evade')
-              .setLabel('Suspect combat logs or cuff evades in pursuit:')
+              .setLabel('Combat logging or cuff evading:')
               .setPlaceholder('How do you confirm logs/clip and enforce punishment?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8842,7 +8952,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('nlr_safezone')
-              .setLabel('Explain NLR and Safe Zone gunplay rules:')
+              .setLabel('NLR and Safe Zone gunplay rules:')
               .setPlaceholder('Define both rules and how you handle violators...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -8858,7 +8968,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('deescalation')
-              .setLabel('Player screams in VC accusing you of bias:')
+              .setLabel('Handling player screaming bias in VC:')
               .setPlaceholder('How do you maintain strict composure and resolve this?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
@@ -9767,11 +9877,11 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Session & Server Operations\n` +
         `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
-        `• \`/session panel [ping_role]\`\n` +
+        `• **/session panel [ping_role]**\n` +
         `> Post the live session panel with real-time in-game player counts and direct join buttons.\n\n` +
-        `• \`/session vote <required> <duration> [ping_role]\`\n` +
+        `• **/session vote <required> <duration> [ping_role]**\n` +
         `> Open an interactive community vote for a new session with customizable vote targets.\n\n` +
-        `• \`/session shutdown\`\n` +
+        `• **/session shutdown**\n` +
         `> Safely shut down the active session, update panel status to closed, and alert voters via DM.`
       )
     );
@@ -9780,15 +9890,15 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Staff & Management\n` +
         `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
-        `• \`/staff panel [ping_role]\`\n` +
+        `• **/staff panel [ping_role]**\n` +
         `> Post the live staff control and session management panel.\n\n` +
-        `• \`/staff promotion <user> <new_rank> <prev_rank> [roles] [reason]\`\n` +
+        `• **/staff promotion <user> <new_rank> <prev_rank> [roles] [reason]**\n` +
         `> Post an official staff promotion notice and update member roles.\n\n` +
-        `• \`/staff derank <user> <remove_role> <new_rank> <reason>\`\n` +
+        `• **/staff derank <user> <remove_role> <new_rank> <reason>**\n` +
         `> Demote a staff member and remove old staff roles.\n\n` +
-        `• \`/staff feedback <staff> <rating> <comments> [anonymous]\`\n` +
+        `• **/staff feedback <staff> <rating> <comments> [anonymous]**\n` +
         `> Submit a 1 to 5 star rating and feedback review for a staff member.\n\n` +
-        `• \`/staff application panel [channel]\`\n` +
+        `• **/staff application panel [channel]**\n` +
         `> Post the interactive staff application desk panel.`
       )
     );
@@ -9797,14 +9907,22 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Moderation & Server Security\n` +
         `*Page 3 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
-        `• \`/ban <target> [reason] [delete_days]\` — Ban a user from the Discord server.\n` +
-        `• \`/kick <target> [reason]\` — Kick a member from the Discord server.\n` +
-        `• \`/timeout <target> <duration> [reason]\` — Mute/timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n` +
-        `• \`/unban <target> [reason]\` — Unban a user from the Discord server or in-game ER:LC server.\n` +
-        `• \`/purge <amount> [user]\` — Bulk-delete 1 to 100 recent messages in the current channel.\n` +
-        `• \`/antinuke status\` — View anti-nuke defense status, thresholds, and recent incident logs.\n` +
-        `• \`/antinuke snapshot\` — Save an instant backup snapshot of all channels and roles.\n` +
-        `• \`/antinuke restore <channels|roles>\` — Instantly recreate deleted channels or roles.`
+        `• **/ban <target> [reason] [delete_days]**\n` +
+        `> Ban a user from the Discord server.\n\n` +
+        `• **/kick <target> [reason]**\n` +
+        `> Kick a member from the Discord server.\n\n` +
+        `• **/timeout <target> <duration> [reason]**\n` +
+        `> Mute or timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n\n` +
+        `• **/unban <target> [reason]**\n` +
+        `> Unban a user from the Discord server or in-game ER:LC server.\n\n` +
+        `• **/purge <amount> [user]**\n` +
+        `> Bulk-delete 1 to 100 recent messages in the current channel.\n\n` +
+        `• **/antinuke status**\n` +
+        `> View anti-nuke defense status, thresholds, and recent incident logs.\n\n` +
+        `• **/antinuke snapshot**\n` +
+        `> Save an instant backup snapshot of all channels and roles.\n\n` +
+        `• **/antinuke restore <channels|roles>**\n` +
+        `> Instantly recreate deleted channels or roles from snapshot.`
       )
     );
   } else if (page === 3) {
@@ -9812,13 +9930,20 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
         `*Page 4 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
-        `• \`/erlc scan\` — Scan in-game players for default avatar outfits and Discord VC compliance.\n` +
-        `• \`/erlc status\` — View live in-game enforcer tracking statistics and non-Discord players.\n` +
-        `• \`/erlc pm <player> <message>\` — Send a private in-game message to a player.\n` +
-        `• \`/erlc jail <player>\` / \`/erlc unjail <player>\` — Jail or unjail a player in the ER:LC private server.\n` +
-        `• \`/erlc kick <player>\` / \`/erlc ban <player>\` — Kick or ban a player from the private server.\n` +
-        `• \`/erlc message <msg>\` / \`/erlc hint <msg>\` — Broadcast a server announcement (:m) or top hint (:h).\n` +
-        `• \`/safezone strike|status|clear\` — Manage Safe Zone shooting strikes and auto-escalations.`
+        `• **/erlc scan**\n` +
+        `> Scan in-game players for default avatar outfits and Discord VC compliance.\n\n` +
+        `• **/erlc status**\n` +
+        `> View live in-game enforcer tracking statistics and non-Discord players.\n\n` +
+        `• **/erlc pm <player> <message>**\n` +
+        `> Send a private in-game message to a player.\n\n` +
+        `• **/erlc jail <player> / /erlc unjail <player>**\n` +
+        `> Jail or unjail a player in the ER:LC private server.\n\n` +
+        `• **/erlc kick <player> / /erlc ban <player>**\n` +
+        `> Kick or ban a player from the private server.\n\n` +
+        `• **/erlc message <msg> / /erlc hint <msg>**\n` +
+        `> Broadcast a server announcement (:m) or top hint (:h).\n\n` +
+        `• **/safezone strike | status | clear**\n` +
+        `> Manage Safe Zone shooting strikes and auto-escalations.`
       )
     );
   } else if (page === 4) {
@@ -9826,21 +9951,33 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Tickets, Roblox & Community\n` +
         `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
-        `• \`/ticket panel\` — Post the interactive assistance ticket desk panel for support requests.\n` +
-        `• \`/add <user>\` — Add a member to the current ticket channel.\n` +
-        `• \`/unadd <user>\` — Remove a member from the current ticket channel.\n` +
-        `• \`/verify panel\` — Post the official Roblox account verification panel.\n` +
-        `• \`/proof partnership <screenshot>\` — Submit screenshot proof of our server advertisement.\n` +
-        `• \`/suggest <suggestion>\` — Submit a community suggestion for public voting.\n\n` +
-        `### Ticket Desk Prefix Commands (-)\n` +
-        `• \`-busy\` — Set ticket desk to Busy (panel turns yellow).\n` +
-        `• \`-open\` or \`-open all\` — Set ticket desk to Online and open all departments (panel turns green).\n` +
-        `• \`-close all\` — Close ticket desk and lock all categories (panel turns red).\n` +
-        `• \`-close <dept>\` / \`-open <dept>\` — Lock / unlock specific departments (general, ia, high rank, partnership, staff partnership).\n` +
-        `• \`-add @user\` / \`-unadd @user\` — Add or remove a member from the current ticket.\n` +
-        `• \`-partnership <text>\` — Submit partnership application & ad inside ticket.\n` +
-        `• \`-confirm\` — Staff verification for paid partnership payments.\n` +
-        `• \`-status\` — Display current operational availability of the ticket desk.`
+        `• **/ticket panel**\n` +
+        `> Post the interactive assistance ticket desk panel for support requests.\n\n` +
+        `• **/add <user> / /unadd <user>**\n` +
+        `> Add or remove a member from the active ticket channel.\n\n` +
+        `• **/verify panel**\n` +
+        `> Post the official Roblox account verification panel.\n\n` +
+        `• **/proof partnership <screenshot>**\n` +
+        `> Submit screenshot proof of our server advertisement.\n\n` +
+        `• **/suggest <suggestion>**\n` +
+        `> Submit a community suggestion for public voting.\n\n` +
+        `### Ticket Desk Prefix Controls (-)\n` +
+        `• **-busy**\n` +
+        `> Set ticket desk to Busy (panel turns yellow with delay notice).\n\n` +
+        `• **-open / -open all**\n` +
+        `> Set ticket desk to Online and open all departments (panel turns green).\n\n` +
+        `• **-close all**\n` +
+        `> Close ticket desk and lock all categories (panel turns red).\n\n` +
+        `• **-close <dept> / -open <dept>**\n` +
+        `> Lock or unlock specific departments (general, internal, high rank, partnership, staff partnership).\n\n` +
+        `• **-add @user / -unadd @user**\n` +
+        `> Add or remove a member from the current ticket.\n\n` +
+        `• **-partnership <text>**\n` +
+        `> Submit partnership application and advertisement inside ticket.\n\n` +
+        `• **-confirm**\n` +
+        `> Staff verification for paid partnership game pass purchases.\n\n` +
+        `• **-status**\n` +
+        `> Display current operational availability of the ticket desk.`
       )
     );
   } else {
@@ -9848,11 +9985,11 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Emergency Controls & Appeals\n` +
         `*Page 6 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
-        `• \`/appeal\`\n` +
+        `• **/appeal**\n` +
         `> Open an official in-game ban appeal form for staff review.\n\n` +
-        `• \`/retrigger\`\n` +
+        `• **/retrigger**\n` +
         `> Emergency reboot & re-sync: re-registers slash commands with Discord API, restarts frozen live panel refresh timers ("Last Updated"), reboots in-game enforcer loops, and unblocks stuck buttons.\n\n` +
-        `• \`/commands\`\n` +
+        `• **/commands**\n` +
         `> Display this interactive multi-page command directory.`
       )
     );
@@ -10441,6 +10578,8 @@ client.on(Events.MessageCreate, async (message) => {
 
     const isKnownCmd =
       raw === 'busy' ||
+      raw === 'ticket panel' ||
+      raw === 'ticketpanel' ||
       raw === 'open' ||
       raw === 'open all' ||
       raw === 'close all' ||
@@ -10477,11 +10616,23 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
+    if (raw === 'ticket panel' || raw === 'ticketpanel') {
+      const panelMsg = await message.channel.send({
+        components: [buildTicketPanelContainer().toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      const chanKey = `${message.guild.id}:${message.channel.id}`;
+      lastTicketPanelByChannel.set(chanKey, panelMsg.id);
+      saveTicketPanels();
+      await autoDeleteReply(message, '✅ Live assistance ticket panel posted and tracked in this channel.', 15000);
+      return;
+    }
+
     if (raw === 'busy') {
       ticketDeskState.status = 'busy';
       saveTicketDeskState();
-      await refreshAllTicketPanels(client);
-      await autoDeleteReply(message, '🟠 Support desk status set to **Busy** (panel updated to yellow).', 30000);
+      await refreshAllTicketPanels(client, message.channel);
+      await autoDeleteReply(message, '🟡 Support desk status set to **Busy** (panel updated to yellow).', 30000);
       return;
     }
 
@@ -10493,7 +10644,7 @@ client.on(Events.MessageCreate, async (message) => {
       ticketDeskState.categories.partnership = true;
       ticketDeskState.categories.staff_partnership = true;
       saveTicketDeskState();
-      await refreshAllTicketPanels(client);
+      await refreshAllTicketPanels(client, message.channel);
       await autoDeleteReply(message, '🟢 Support desk is now **Online** and all categories are open (panel updated to green).', 30000);
       return;
     }
@@ -10506,7 +10657,7 @@ client.on(Events.MessageCreate, async (message) => {
       ticketDeskState.categories.partnership = false;
       ticketDeskState.categories.staff_partnership = false;
       saveTicketDeskState();
-      await refreshAllTicketPanels(client);
+      await refreshAllTicketPanels(client, message.channel);
       await autoDeleteReply(message, '🔴 Support desk is now **Closed** (all ticket categories locked, panel updated to red).', 30000);
       return;
     }
