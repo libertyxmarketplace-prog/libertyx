@@ -1151,6 +1151,7 @@ const client = new Client({
 const SUGGESTIONS_FILE = fileURLToPath(new URL('../suggestions.json', import.meta.url));
 const activeSuggestions = new Map();
 const SUGGESTION_CHANNEL_ID = '1343769737439608853';
+const SHR_LOGS_CHANNEL_ID = '1549597951611899954';
 
 function saveSuggestions() {
   try {
@@ -6821,6 +6822,90 @@ function getSlashPayload() {
   ];
 }
 
+// ────────────────── Distributed Leader Election & Cross-Instance Deduplication ──────────────────
+const INSTANCE_ID = `inst_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+const INSTANCE_BOOT_TIME = Date.now();
+let isLeader = true;
+let leaderLockMsgId = null;
+
+async function maintainLeaderLock(discordClient) {
+  try {
+    const logChannel = await discordClient.channels.fetch(SHR_LOGS_CHANNEL_ID).catch(() => null);
+    if (!logChannel || !logChannel.isTextBased()) return;
+
+    let lockMsg = null;
+    if (leaderLockMsgId) {
+      lockMsg = await logChannel.messages.fetch(leaderLockMsgId).catch(() => null);
+    }
+    if (!lockMsg) {
+      const recent = await logChannel.messages.fetch({ limit: 15 }).catch(() => null);
+      lockMsg = recent ? [...recent.values()].find(m => m.author?.id === discordClient.user?.id && m.content?.startsWith('🤖 [LEADER_LOCK]:')) : null;
+    }
+
+    const now = Date.now();
+    if (!lockMsg) {
+      lockMsg = await logChannel.send(`🤖 [LEADER_LOCK]:{"instanceId":"${INSTANCE_ID}","heartbeat":${now},"bootTime":${INSTANCE_BOOT_TIME}}`);
+      leaderLockMsgId = lockMsg.id;
+      isLeader = true;
+      console.log(`[LeaderElection] ${INSTANCE_ID} acquired Leader role.`);
+      return;
+    }
+
+    leaderLockMsgId = lockMsg.id;
+    let data = null;
+    try {
+      data = JSON.parse(lockMsg.content.replace('🤖 [LEADER_LOCK]:', '').trim());
+    } catch {}
+
+    if (!data || !data.instanceId) {
+      await lockMsg.edit(`🤖 [LEADER_LOCK]:{"instanceId":"${INSTANCE_ID}","heartbeat":${now},"bootTime":${INSTANCE_BOOT_TIME}}`).catch(() => null);
+      isLeader = true;
+      return;
+    }
+
+    if (data.instanceId === INSTANCE_ID) {
+      // Refresh our heartbeat
+      await lockMsg.edit(`🤖 [LEADER_LOCK]:{"instanceId":"${INSTANCE_ID}","heartbeat":${now},"bootTime":${INSTANCE_BOOT_TIME}}`).catch(() => null);
+      isLeader = true;
+      return;
+    }
+
+    // Another instance created or holds the lock.
+    const lockBootTime = data.bootTime || 0;
+    const heartbeatAge = now - (data.heartbeat || 0);
+
+    // If our boot time is NEWER than the lock's boot time, we are a newly deployed build! Take over the lock!
+    if (INSTANCE_BOOT_TIME > lockBootTime + 1000) {
+      console.log(`[LeaderElection] Newer deployment detected (${INSTANCE_BOOT_TIME} > ${lockBootTime}). Claiming Leader role from ${data.instanceId}.`);
+      await lockMsg.edit(`🤖 [LEADER_LOCK]:{"instanceId":"${INSTANCE_ID}","heartbeat":${now},"bootTime":${INSTANCE_BOOT_TIME}}`).catch(() => null);
+      isLeader = true;
+      return;
+    }
+
+    // If our boot time is OLDER than the lock's boot time, we are an old container that should gracefully exit!
+    if (INSTANCE_BOOT_TIME < lockBootTime - 1000) {
+      console.log(`[LeaderElection] Older deployment detected (${INSTANCE_BOOT_TIME} < ${lockBootTime}). Shutting down container to eliminate duplicates.`);
+      isLeader = false;
+      setTimeout(() => process.exit(0), 1000);
+      return;
+    }
+
+    // If boot times are identical or within 1s (e.g. concurrent replicas):
+    if (heartbeatAge < 18000) {
+      if (isLeader) {
+        console.log(`[LeaderElection] ${INSTANCE_ID} entering Standby mode. Active Leader is ${data.instanceId} (heartbeat ${heartbeatAge}ms ago).`);
+      }
+      isLeader = false;
+    } else {
+      console.log(`[LeaderElection] Previous leader ${data.instanceId} timed out (${heartbeatAge}ms). ${INSTANCE_ID} claiming Leader role.`);
+      await lockMsg.edit(`🤖 [LEADER_LOCK]:{"instanceId":"${INSTANCE_ID}","heartbeat":${now},"bootTime":${INSTANCE_BOOT_TIME}}`).catch(() => null);
+      isLeader = true;
+    }
+  } catch (err) {
+    console.warn('[LeaderElection] Heartbeat update error:', err.message);
+  }
+}
+
 client.once(Events.ClientReady, async (readyClient) => {
   // Register the /session commands + restore persisted votes.
   // NOTE: if you run the bot twice (2 terminals, dry.mjs still open, pm2 +
@@ -6948,12 +7033,15 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.log(`[ER:LC Bot Outbound IP] ${ip} — Ensure this IP is allowlisted on https://api.erlc.gg/server-owners`);
   }).catch(() => {});
   startErlcEnforcerLoop(readyClient);
+  maintainLeaderLock(readyClient);
+  setInterval(() => maintainLeaderLock(readyClient), 8000);
 });
 
 // ═══════════════════════ Welcome Message ═══════════════════════
 const WELCOME_CHANNEL_ID = '1232495212019056733';
 
 client.on(Events.GuildMemberAdd, async (member) => {
+  if (!isLeader) return;
   // Orlando Roleplay server isolation: Alabama bot must NEVER send welcome messages in Orlando guild
   if (member.guild?.id === '1530147023754367006') return;
   try {
@@ -7161,6 +7249,7 @@ client.on(Events.GuildBanRemove, async (ban) => {
 });
 
 client.on(Events.GuildMemberRemove, async (member) => {
+  if (!isLeader) return;
   try {
     if (!member.guild) return;
 
@@ -7568,8 +7657,6 @@ function getActiveTicket(channel) {
   return null;
 }
 
-const SHR_LOGS_CHANNEL_ID = '1549597951611899954';
-
 function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
   const reqs = ticket.staffRequests || [];
   const total = reqs.length;
@@ -7908,6 +7995,7 @@ async function createTicketForUser(client, interaction, catKey, reason) {
 
 const processedInteractionIds = new Set();
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (!isLeader) return;
   // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
   if (interaction.guildId === '1530147023754367006') return;
   if (!interaction?.id || processedInteractionIds.has(interaction.id)) return;
@@ -10486,7 +10574,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             activeApplications.set(startInteraction.user.id, newApp);
             saveApplications();
             await startInteraction.editReply({
-              content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`
+              content: `✅ I have sent your **${appType}** application to your Direct Messages! (Applications are completed directly in your DMs with the bot, not in a ticket channel). Please check your DMs with the bot to begin.`
             }).catch(() => null);
             return;
           }
@@ -10509,7 +10597,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         saveApplications();
 
         await startInteraction.editReply({
-          content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`
+          content: `✅ I have sent your **${appType}** application to your Direct Messages! (Applications are completed directly in your DMs with the bot, not in a ticket channel). Please check your DMs with the bot to begin.`
         }).catch(() => null);
 
         // Step 4: Post-Send Verification & Twin Duplicate Elimination
@@ -12269,6 +12357,7 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
 
 const processedMessageIds = new Set();
 client.on(Events.MessageCreate, async (message) => {
+  if (!isLeader) return;
   // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
   if (message.guildId === '1530147023754367006') return;
   if (!message?.id || processedMessageIds.has(message.id)) return;
