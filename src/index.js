@@ -5332,27 +5332,32 @@ function buildPartnershipGuideContainer() {
         .setCustomId('part_copy_our_ad')
         .setLabel('Copy Our Advertisement')
         .setStyle(ButtonStyle.Secondary)
-        .setEmoji('📋')
     )
   );
 
   return container;
 }
 
-const ASRP_OFFICIAL_AD = `**Alabama State Roleplay** | *Emergency Response: Liberty County*
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Welcome to **Alabama State Roleplay**, a premier ER:LC community dedicated to realistic, immersive, and high-standard roleplay operations!
+const ASRP_OFFICIAL_AD = `🎰 **Welcome to Alabama State Roleplay!** 🎲  
 
-**What We Offer:**
-> 🚓 Realistic & Active Law Enforcement Operations
-> 🚒 Dedicated Fire & Emergency Medical Services
-> 👥 Welcoming, Friendly & Highly Active Community
-> 🛡️ Experienced, Mature & Fair Staff Team
-> 🎁 Daily In-Game Server Start-Ups & Events
+Welcome to **Alabama State Roleplay!** We offer an immersive and enjoyable roleplay experience set in the great state of Alabama. Join us today and experience our unique and realistic roleplays!  
 
-**Join Our Community Today:**
-https://discord.gg/asrp
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+**Why are we different from other servers?** Alabama State Roleplay is built around creating a unique and realistic Alabama-based experience. All liveries, uniforms, ELS, and other assets are custom-made to fit our server and provide an authentic roleplay environment. 
+
+ 🌆 **About Us:** Alabama State Roleplay is a dedicated community designed to provide all members with a safe, professional, and enjoyable roleplaying experience. With a variety of departments, custom assets, and countless opportunities, there's always something new to experience.  
+
+**What we offer:** 
+* 🚓 Custom Liveries and ELS 
+* 👮 Custom Uniforms 
+* 🎭 Unique Roleplay Experiences 
+* 👥 Active Community and Daily SSUs
+* 🏛️ Multiple Departments
+* 🎟️ Always hiring professional and active staff! Open a ticket to learn more!
+
+ **Communications Server:** 
+https://discord.gg/alabam
+
+ 🔥 **Join Alabama State Roleplay today and become part of our growing community!**`;
 
 function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
   const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
@@ -5361,7 +5366,7 @@ function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
   selectTypeCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       (userId ? `Welcome <@${userId}>! ` : 'Welcome! ') +
-      `Please choose which partnership path you would like to pursue:\n\n` +
+      `Please select your desired partnership path from the menu below:\n\n` +
       `• **Regular Partnership**\n` +
       `> Mutual advertisement exchange for communities meeting our 120+ member requirement.\n\n` +
       `• **Paid Partnership**\n` +
@@ -5371,28 +5376,107 @@ function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
     )
   );
   selectTypeCard.addSeparatorComponents(thinLine());
-  const selectTypeRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`part_type_regular_${channelId}`)
-      .setLabel('Regular Partnership')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`part_type_paid_${channelId}`)
-      .setLabel('Paid Partnership')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`part_type_staff_${channelId}`)
-      .setLabel(staffOpen ? 'Staff Partnership' : 'Staff Partnership (Closed)')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(!staffOpen),
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`part_select_type_${channelId}`)
+    .setPlaceholder('Choose a partnership type...')
+    .addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Regular Partnership')
+        .setValue('regular')
+        .setDescription('Mutual advertisement exchange (120+ members)'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Paid Partnership')
+        .setValue('paid')
+        .setDescription('Game pass promotion with ping tiers'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel(staffOpen ? 'Staff Partnership & Transfers' : 'Staff Partnership (Closed)')
+        .setValue('staff')
+        .setDescription(staffOpen ? 'Staff rank correlation and transfers' : 'Currently closed by staff')
+    );
+
+  selectTypeCard.addActionRowComponents(new ActionRowBuilder().addComponents(selectMenu));
+
+  const copyRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('part_copy_our_ad')
-      .setLabel('Copy Our Ad')
+      .setLabel('Copy Our Advertisement')
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji('📋')
   );
-  selectTypeCard.addActionRowComponents(selectTypeRow);
+  selectTypeCard.addActionRowComponents(copyRow);
+
   return selectTypeCard;
+}
+
+function buildStaffTransferOverviewCard(ticket, channelId) {
+  const isSubmitted = !!ticket.batchSubmitted;
+  const card = new ContainerBuilder().setAccentColor(isSubmitted ? 0x57f287 : 0x3498db);
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      isSubmitted
+        ? '## Staff Transfer Batch — Submitted for SHR Review'
+        : '## Staff Partnership & Rank Transfer Department'
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  const requests = Array.isArray(ticket.staffRequests) ? ticket.staffRequests : [];
+  let summaryText =
+    `Welcome <@${ticket.userId || ticket.authorId}> to your official staff partnership and rank transfer ticket.\n\n` +
+    (isSubmitted
+      ? `> **Status:** Successfully submitted to Super High Rank administration.\n> **Total Candidates:** **${requests.length}**\n\n`
+      : `### When Requesting Roles & Transfers\n` +
+        `> • **Matching Rank:** Please only request roles that correlate directly with your current position or rank in the partner community.\n` +
+        `> • **Dividers Included:** Make sure to include all roles you are eligible for, including required divider roles.\n` +
+        `> • **Applicability:** These requirements apply to all departments and divisions within Alabama State Roleplay.\n\n` +
+        `### Current Transfer Requests Batch (${requests.length})\n`);
+
+  if (requests.length === 0) {
+    summaryText += `*No transfer requests added yet. Click **Submit Transfer Request** below to add a member to the batch.*`;
+  } else {
+    for (let i = 0; i < requests.length; i++) {
+      const req = requests[i];
+      const statusIcon = req.status === 'accepted' ? '✅' : req.status === 'denied' ? '❌' : (isSubmitted ? '⏳' : '📝');
+      summaryText +=
+        `**${i + 1}. ${statusIcon} <@${req.userId}> (\`${req.userTag}\`)**\n` +
+        `> • **Roblox:** \`${req.robloxUser}\`\n` +
+        `> • **Roles:** ${req.rolesRequested}\n` +
+        `> • **Reason / Origin:** ${req.reason}\n` +
+        `> • **Proof:** ${req.proof}\n\n`;
+    }
+  }
+
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(summaryText));
+  card.addSeparatorComponents(thinLine());
+
+  const row = new ActionRowBuilder();
+  if (!isSubmitted) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`part_staff_add_${channelId}`)
+        .setLabel(requests.length === 0 ? 'Submit Transfer Request' : 'Add Another Member')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`part_staff_submit_shr_${channelId}`)
+        .setLabel(`Submit Batch to SHR (${requests.length})`)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(requests.length === 0)
+    );
+  } else {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`part_staff_add_${channelId}`)
+        .setLabel('Add Additional Member')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`part_staff_submit_shr_${channelId}`)
+        .setLabel('Submitted to SHR')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(true)
+    );
+  }
+  card.addActionRowComponents(row);
+  return card;
 }
 
 // ═══════════════════════ Staff Application System ═══════════════════════
@@ -7249,33 +7333,12 @@ async function createTicketForUser(client, interaction, catKey, reason) {
     // If staff partnership ticket, post the staff rank transfer submission card
     if (isStaffPartnership) {
       ticketData.staffRequests = [];
-      const staffPartCard = new ContainerBuilder().setAccentColor(0x3498db);
-      staffPartCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `## Staff Partnership & Rank Transfer Department\n` +
-          `Welcome <@${interaction.user.id}> to your official staff partnership and rank transfer ticket.\n\n` +
-          `### When Requesting Roles & Transfers\n` +
-          `When submitting a role request for yourself or server representatives:\n` +
-          `• Please only request roles that apply to your current position or rank in the partner community. For example, if you are a Lower Rank, only request Lower Rank roles. The same applies to Supervisors and High Ranks.\n` +
-          `• Make sure to include all roles eligible for, including any required divider roles.\n` +
-          `• These requirements apply to all departments and jobs within Alabama State Roleplay.\n\n` +
-          `You may use \`/add <user>\` to add partner server representatives to this ticket.\n` +
-          `Click **Submit Transfer Request** below to add a member to the review batch.`
-        )
-      );
-      staffPartCard.addSeparatorComponents(thinLine());
-      const staffPartRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`part_staff_add_${ticketChannel.id}`)
-          .setLabel('Submit Transfer Request')
-          .setStyle(ButtonStyle.Primary)
-      );
-      staffPartCard.addActionRowComponents(staffPartRow);
-
-      await ticketChannel.send({
+      const staffPartCard = buildStaffTransferOverviewCard(ticketData, ticketChannel.id);
+      const staffMsg = await ticketChannel.send({
         components: [staffPartCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
+      ticketData.staffBatchMessageId = staffMsg.id;
     }
 
     ticketData.controlMessageId = controlMsg.id;
@@ -7394,10 +7457,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Partnership: Transfer Request Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('part_staff_modal_')) {
       const channelId = interaction.customId.replace('part_staff_modal_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
       if (!ticket) {
         await interaction.reply({ content: '❌ Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
+      }
+      if (!activeTickets.has(channelId)) {
+        activeTickets.set(channelId, ticket);
       }
 
       const targetUserInput = interaction.fields.getTextInputValue('target_user')?.trim() || '';
@@ -7430,35 +7496,60 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
       saveTickets();
 
-      const itemCard = new ContainerBuilder().setAccentColor(0x3498db);
-      itemCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `## Staff Transfer Request Added\n` +
-          `> **Member:** <@${userId}> (\`${userTag}\`)\n` +
-          `> **Roblox Username:** \`${robloxUser}\`\n` +
-          `> **Roles Requested:** ${rolesRequested}\n` +
-          `> **Server & Reason:** ${reason}\n` +
-          `> **Proof:** ${proof}\n\n` +
-          `Total members in batch: **${ticket.staffRequests.length}**.`
-        )
-      );
-      itemCard.addSeparatorComponents(thinLine());
+      // Update the existing batch overview embed card in place
+      const overviewCard = buildStaffTransferOverviewCard(ticket, channelId);
+      let updatedOverview = false;
 
-      const manageRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`part_staff_add_${channelId}`)
-          .setLabel('Add Another Member')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(`part_staff_submit_shr_${channelId}`)
-          .setLabel(`Submit Batch to SHR (${ticket.staffRequests.length})`)
-          .setStyle(ButtonStyle.Success)
-      );
-      itemCard.addActionRowComponents(manageRow);
+      if (ticket.staffBatchMessageId) {
+        try {
+          const batchMsg = await interaction.channel.messages.fetch(ticket.staffBatchMessageId).catch(() => null);
+          if (batchMsg) {
+            await batchMsg.edit({
+              components: [overviewCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+            updatedOverview = true;
+          }
+        } catch (err) {
+          console.error('Failed to edit staffBatchMessageId:', err);
+        }
+      }
+
+      if (!updatedOverview) {
+        try {
+          const recentMsgs = await interaction.channel.messages.fetch({ limit: 15 }).catch(() => null);
+          if (recentMsgs) {
+            const existingBatchMsg = recentMsgs.find(m =>
+              m.author?.id === interaction.client.user.id &&
+              (JSON.stringify(m.components || []).includes('part_staff_add_') || JSON.stringify(m.components || []).includes('part_staff_submit_shr_'))
+            );
+            if (existingBatchMsg) {
+              await existingBatchMsg.edit({
+                components: [overviewCard.toJSON()],
+                flags: MessageFlags.IsComponentsV2
+              });
+              ticket.staffBatchMessageId = existingBatchMsg.id;
+              saveTickets();
+              updatedOverview = true;
+            }
+          }
+        } catch (err) {
+          console.error('Failed to locate existing staff batch card:', err);
+        }
+      }
+
+      if (!updatedOverview) {
+        const newMsg = await interaction.channel.send({
+          components: [overviewCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        ticket.staffBatchMessageId = newMsg.id;
+        saveTickets();
+      }
 
       await interaction.reply({
-        components: [itemCard.toJSON()],
-        flags: MessageFlags.IsComponentsV2
+        content: `✅ Added <@${userId}> (\`${userTag}\`) to the transfer request batch.\nTotal in batch: **${ticket.staffRequests.length}**. The transfer request overview card above has been updated.`,
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
@@ -7473,7 +7564,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const channelId = remainder.substring(0, lastUnderscore);
       const pageIndex = parseInt(remainder.substring(lastUnderscore + 1), 10) || 0;
 
-      const ticket = activeTickets.get(channelId);
+      const ticket = activeTickets.get(channelId) || getActiveTicket(interaction.client.channels.cache.get(channelId));
       if (!ticket || !Array.isArray(ticket.staffRequests) || !ticket.staffRequests[pageIndex]) {
         await interaction.reply({ content: '❌ Transfer request record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -8778,6 +8869,135 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // ─────────────── Partnership Type Selection Dropdown ───────────────
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('part_select_type_')) {
+      const channelId = interaction.customId.replace('part_select_type_', '');
+      const selected = interaction.values[0];
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      if (!ticket) {
+        await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      if (!activeTickets.has(channelId)) {
+        activeTickets.set(channelId, ticket);
+      }
+
+      if (selected === 'regular') {
+        ticket.partnershipType = 'regular';
+        ticket.partnershipStep = 'awaiting_ad';
+        saveTickets();
+
+        const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
+        regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Regular Partnership Selected'));
+        regularCard.addSeparatorComponents(thinLine());
+        regularCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Tier:** Mutual Community Advertising Exchange\n` +
+            `> **Requirement:** Minimum **120+ active community members** (excluding bot accounts)\n` +
+            `> **Placement:** Reciprocal advertisement placement in our designated partnerships channel.\n\n` +
+            `### Next Steps & Advertisement Submission\n` +
+            `> **1. Submit Server Advertisement**\n` +
+            `> Send your community description and permanent Discord invite in this channel using:\n` +
+            `> \`-partnership [Your Server Details & Ad Message]\`\n\n` +
+            `> **2. Reciprocal Advertisement**\n` +
+            `> Once reviewed, our partnership managers will provide our official server advertisement to post in your community.\n\n` +
+            `> **3. Proof Submission**\n` +
+            `> After posting our ad in your server, run \`/proof partnership <screenshot>\` to confirm reciprocal posting.`
+          )
+        );
+        regularCard.addSeparatorComponents(thinLine());
+        const regularRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ticket_part_reqs_${channelId}`)
+            .setLabel('View Partnership Requirements')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId('part_copy_our_ad')
+            .setLabel('Copy Our Advertisement')
+            .setStyle(ButtonStyle.Secondary)
+        );
+        regularCard.addActionRowComponents(regularRow);
+
+        await interaction.update({
+          components: [regularCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (selected === 'paid') {
+        ticket.partnershipType = 'paid';
+        ticket.partnershipStep = 'awaiting_payment_proof';
+        saveTickets();
+
+        const paidCard = new ContainerBuilder().setAccentColor(0xfee75c);
+        paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Paid Partnership Game Passes'));
+        paidCard.addSeparatorComponents(thinLine());
+        paidCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `Please purchase one of our official game passes below to proceed with your paid partnership:\n\n` +
+            `• [**Paid Partnership Fee (100 R$)**](https://www.roblox.com/game-pass/1941739587/Alabama-State-Roleplay-Partnership-Fee-100)\n` +
+            `> Promote your server to our community. The partnership fee applies to communities under the 120 member threshold.\n\n` +
+            `• [**Paid Partnership Here Ping Tier (200 R$)**](https://www.roblox.com/game-pass/1941619662/Alabama-Paid-Partnership-here-ping-200)\n` +
+            `> Get your advertisement promoted with a here ping tier for additional exposure.\n\n` +
+            `• [**Paid Partnership Everyone Ping Tier (300 R$)**](https://www.roblox.com/game-pass/1944102339/Alabama-Paid-Partnership-everyone-ping-300)\n` +
+            `> Get maximum exposure with an everyone ping tier, reaching the entire community.\n\n` +
+            `**Payment Proof Required:** After purchasing, upload a screenshot of your purchase confirmation into this channel (or run \`/proof partnership\`).\n` +
+            `Once uploaded, the partnership team will verify your payment so you can submit your server advertisement.`
+          )
+        );
+
+        await interaction.update({
+          components: [paidCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      if (selected === 'staff') {
+        const staffPartOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
+        if (!staffPartOpen) {
+          try {
+            const card = buildPartnershipSelectCard(channelId, false, ticket?.userId);
+            await interaction.update({
+              components: [card.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+            await interaction.followUp({
+              content: '🔒 **Staff Partnership** is currently closed by staff.',
+              flags: MessageFlags.Ephemeral
+            });
+          } catch (updateErr) {
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.reply({
+                content: '🔒 **Staff Partnership** is currently closed by staff.',
+                flags: MessageFlags.Ephemeral
+              }).catch(() => null);
+            } else {
+              await interaction.followUp({
+                content: '🔒 **Staff Partnership** is currently closed by staff.',
+                flags: MessageFlags.Ephemeral
+              }).catch(() => null);
+            }
+          }
+          return;
+        }
+
+        ticket.partnershipType = 'staff';
+        ticket.isStaffPartnership = true;
+        if (!ticket.staffRequests) ticket.staffRequests = [];
+        ticket.staffBatchMessageId = interaction.message.id;
+        saveTickets();
+
+        const staffPartCard = buildStaffTransferOverviewCard(ticket, channelId);
+        await interaction.update({
+          components: [staffPartCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+    }
+
     // ─────────────── Partnership Type Selection Buttons ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('part_type_regular_')) {
       const channelId = interaction.customId.replace('part_type_regular_', '');
@@ -8818,7 +9038,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setCustomId('part_copy_our_ad')
           .setLabel('Copy Our Advertisement')
           .setStyle(ButtonStyle.Secondary)
-          .setEmoji('📋')
       );
       regularCard.addActionRowComponents(regularRow);
 
@@ -8868,31 +9087,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ticket.partnershipType = 'staff';
       ticket.isStaffPartnership = true;
       if (!ticket.staffRequests) ticket.staffRequests = [];
+      ticket.staffBatchMessageId = interaction.message.id;
       saveTickets();
 
-      const staffPartCard = new ContainerBuilder().setAccentColor(0x3498db);
-      staffPartCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `## Staff Partnership & Rank Transfer Department\n` +
-          `Welcome <@${ticket.userId || interaction.user.id}> to your official staff partnership and rank transfer ticket.\n\n` +
-          `### When Requesting Roles & Transfers\n` +
-          `> When submitting a role request for yourself or server representatives:\n` +
-          `> • **Matching Rank:** Please only request roles that correlate directly with your current position or rank in the partner community (Lower Rank, Supervisor, High Rank).\n` +
-          `> • **Dividers Included:** Make sure to include all roles you are eligible for, including required divider roles.\n` +
-          `> • **Applicability:** These requirements apply to all departments and divisions within Alabama State Roleplay.\n\n` +
-          `> You may use \`/add <user>\` or \`-add @user\` to add partner server representatives to this ticket.\n` +
-          `> Click **Submit Transfer Request** below to add a member to the review batch for SHR review.`
-        )
-      );
-      staffPartCard.addSeparatorComponents(thinLine());
-      const staffPartRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`part_staff_add_${channelId}`)
-          .setLabel('Submit Transfer Request')
-          .setStyle(ButtonStyle.Primary)
-      );
-      staffPartCard.addActionRowComponents(staffPartRow);
-
+      const staffPartCard = buildStaffTransferOverviewCard(ticket, channelId);
       await interaction.update({
         components: [staffPartCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
@@ -9036,13 +9234,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Partnership: Submit Batch to SHR ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('part_staff_submit_shr_')) {
       const channelId = interaction.customId.replace('part_staff_submit_shr_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
       if (!ticket || !Array.isArray(ticket.staffRequests) || ticket.staffRequests.length === 0) {
         await interaction.reply({
           content: '❌ No transfer requests found in this batch to submit.',
           flags: MessageFlags.Ephemeral
         });
         return;
+      }
+      if (!activeTickets.has(channelId)) {
+        activeTickets.set(channelId, ticket);
       }
 
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -9055,33 +9256,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      ticket.batchSubmitted = true;
+      saveTickets();
+
       const reviewCard = buildStaffTransferReviewCard(ticket, 0);
       const shrMsg = await shrChan.send({
         components: [reviewCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
       ticket.shrMessageId = shrMsg.id;
-      ticket.batchSubmitted = true;
       saveTickets();
 
-      const batchNotif = new ContainerBuilder().setAccentColor(0x57f287);
-      batchNotif.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `## Batch Submitted for Super High Rank Review\n` +
-          `> **Total Requests:** **${ticket.staffRequests.length}**\n` +
-          `> **Submitted by:** <@${interaction.user.id}>\n` +
-          `> **Log Channel:** <#${SHR_LOGS_CHANNEL_ID}>\n\n` +
-          `The Super High Rank administration will review each candidate. You will receive updates directly in this ticket channel.`
-        )
-      );
-
-      await interaction.channel.send({
-        components: [batchNotif.toJSON()],
-        flags: MessageFlags.IsComponentsV2
-      });
+      // Update the existing batch overview embed card in place
+      const updatedOverview = buildStaffTransferOverviewCard(ticket, channelId);
+      try {
+        if (ticket.staffBatchMessageId) {
+          const batchMsg = await interaction.channel.messages.fetch(ticket.staffBatchMessageId).catch(() => null);
+          if (batchMsg) {
+            await batchMsg.edit({
+              components: [updatedOverview.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+          }
+        } else if (interaction.message) {
+          await interaction.message.edit({
+            components: [updatedOverview.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+          ticket.staffBatchMessageId = interaction.message.id;
+          saveTickets();
+        }
+      } catch (e) {
+        console.error('Failed to update batch card upon SHR submission:', e);
+      }
 
       await interaction.editReply({
-        content: `✅ Batch forwarded to Super High Rank logs channel (<#${SHR_LOGS_CHANNEL_ID}>).`
+        content: `✅ Batch of **${ticket.staffRequests.length}** transfer request(s) successfully forwarded to Super High Rank administration (<#${SHR_LOGS_CHANNEL_ID}>).`
       });
       return;
     }
@@ -11142,7 +11352,6 @@ client.on(Events.MessageCreate, async (message) => {
             .setCustomId('part_copy_our_ad')
             .setLabel('Copy Our Advertisement')
             .setStyle(ButtonStyle.Secondary)
-            .setEmoji('📋')
         );
         receivedCard.addActionRowComponents(copyRow);
 
@@ -11490,7 +11699,7 @@ client.on(Events.MessageCreate, async (message) => {
           const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
           if (recent) {
             for (const msg of recent.values()) {
-              if (msg.author?.id === client.user.id && JSON.stringify(msg.components || []).includes('part_type_')) {
+              if (msg.author?.id === client.user.id && (JSON.stringify(msg.components || []).includes('part_type_') || JSON.stringify(msg.components || []).includes('part_select_type_'))) {
                 const updatedCard = buildPartnershipSelectCard(message.channel.id, false);
                 await msg.edit({
                   components: [updatedCard.toJSON()],
@@ -11550,7 +11759,7 @@ client.on(Events.MessageCreate, async (message) => {
           const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
           if (recent) {
             for (const msg of recent.values()) {
-              if (msg.author?.id === client.user.id && JSON.stringify(msg.components || []).includes('part_type_')) {
+              if (msg.author?.id === client.user.id && (JSON.stringify(msg.components || []).includes('part_type_') || JSON.stringify(msg.components || []).includes('part_select_type_'))) {
                 const updatedCard = buildPartnershipSelectCard(message.channel.id, true);
                 await msg.edit({
                   components: [updatedCard.toJSON()],
