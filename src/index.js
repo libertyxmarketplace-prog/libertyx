@@ -10563,32 +10563,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
         };
 
-        // Step 2: DM Channel Pre-Send Deduplication & Old Card Cleanup
+        // Step 2: Clean up any prior application cards in DM so the user only ever has one active application card
         const recentDms = await dmCh.messages.fetch({ limit: 15 }).catch(() => null);
         if (recentDms) {
-          // If an application card was sent in the last 15 seconds, DO NOT SEND ANOTHER!
-          const veryRecentCard = recentDms.find(m => isAppMessage(m) && (Date.now() - m.createdTimestamp < 15000));
-          if (veryRecentCard) {
-            console.log(`[Deduplication] Application card ${veryRecentCard.id} already exists in DM. Reusing.`);
-            newApp.dmMessageId = veryRecentCard.id;
-            activeApplications.set(startInteraction.user.id, newApp);
-            saveApplications();
-            await startInteraction.editReply({
-              content: `✅ I have sent your **${appType}** application to your Direct Messages! (Applications are completed directly in your DMs with the bot, not in a ticket channel). Please check your DMs with the bot to begin.`
-            }).catch(() => null);
-            return;
-          }
-
-          // Clean up old stale application cards so the user has only 1 fresh application card in DMs
           const oldAppCards = recentDms.filter(m => isAppMessage(m));
           for (const oldCard of oldAppCards.values()) {
             await oldCard.delete().catch(() => null);
           }
         }
 
-        // Step 3: Send the clean single application card
+        // Step 3: Send the fresh requested application card
         const dashboard = buildApplicantDashboard(newApp);
-        const dmMsg = await startInteraction.user.send({
+        const dmMsg = await dmCh.send({
           components: [dashboard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
@@ -10597,7 +10583,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         saveApplications();
 
         await startInteraction.editReply({
-          content: `✅ I have sent your **${appType}** application to your Direct Messages! (Applications are completed directly in your DMs with the bot, not in a ticket channel). Please check your DMs with the bot to begin.`
+          content: `✅ Opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`
         }).catch(() => null);
 
         // Step 4: Post-Send Verification & Twin Duplicate Elimination
@@ -10608,7 +10594,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const duplicates = postFetch.filter(m =>
               isAppMessage(m) &&
               m.id !== dmMsg.id &&
-              (Date.now() - m.createdTimestamp < 15000)
+              (Date.now() - m.createdTimestamp < 8000)
             );
             for (const dup of duplicates.values()) {
               console.log(`[Deduplication] Deleted twin duplicate application DM ${dup.id}`);
