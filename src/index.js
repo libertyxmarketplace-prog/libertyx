@@ -570,6 +570,16 @@ const unaddCommand = new SlashCommandBuilder()
     opt.setName('user').setDescription('The user to remove from this ticket').setRequired(true)
   );
 
+const informationCommand = new SlashCommandBuilder()
+  .setName('information')
+  .setDescription('Display or post official Alabama State Roleplay information, rules, and FAQ.')
+  .addChannelOption((opt) =>
+    opt
+      .setName('channel')
+      .setDescription('Target channel to post the information panel to (Staff only)')
+      .setRequired(false)
+  );
+
 const STAFF_CONFIG = {
   color: 0xd69a5c,
   promotionChannelId: '1235012588505665557',
@@ -5445,13 +5455,319 @@ function buildStaffTransferOverviewCard(ticket, channelId) {
   return card;
 }
 
+// ═══════════════════════ Official Information & Rules System ═══════════════════════
+const INFORMATION_BANNER_PATH = fileURLToPath(new URL('./assets/information_banner.png', import.meta.url));
+
+function buildInformationCard(section = 'info_overview', guild = null) {
+  const card = new ContainerBuilder().setAccentColor(0xe67e22); // Warm glowing orange matching banner
+  const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+  const bannerUrl = bannerExists ? 'attachment://information_banner.png' : null;
+
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl))
+    );
+  }
+
+  if (section === 'info_community_rules') {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 📜 COMMUNITY RULES & REGULATIONS\n` +
+        `Welcome to **Alabama State Roleplay**. Our community values absolute professionalism, respect, and high-fidelity roleplay. By participating in this server, you strictly agree to abide by these regulations, Discord’s Terms of Service, and all community policies.`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 01 ┃ ENGLISH ONLY PROTOCOL\n` +
+        `> English is the strictly mandated language across all text channels and voice sessions to guarantee effective moderation, operational clarity, and community oversight.\n\n` +
+        `### 02 ┃ HIGH-RANK RESTRICTION\n` +
+        `> Unwarranted, disruptive, or repeated direct pings to High Ranks, Ownership, and Executive leadership are strictly prohibited. For assistance, submit an official inquiry via **⟬🎟⟭・Assistance**.\n\n` +
+        `### 03 ┃ ZERO DRAMA & EXTERNAL HOSTILITY\n` +
+        `> Inciting unnecessary drama, arguments, or toxic disputes is forbidden. Disagreements or hostilities from external communities or servers must never be imported into Alabama State Roleplay.\n\n` +
+        `### 04 ┃ SPAM & COMMUNICATION DISRUPTION\n` +
+        `> Chat flooding, automated script spam, copypastas, or repeatedly posting unnecessary content is prohibited. Channels must remain cleanly organized and utilized for their intended purposes.\n\n` +
+        `### 05 ┃ ZERO-TOLERANCE EXPLICIT CONTENT\n` +
+        `> NSFW, sexually explicit, gory, obscene, or graphic content is under zero tolerance. Violations result in instantaneous permanent ban and immediate reporting to Discord Trust & Safety.\n\n` +
+        `### 06 ┃ UNAUTHORIZED ADVERTISING\n` +
+        `> Advertising external Discord servers, social handles, commercial ventures, or unsolicited direct message promotions without explicit SHR authorization is strictly prohibited.\n\n` +
+        `### 07 ┃ MANDATORY VOICE CHAT PROTOCOL\n` +
+        `> Alabama State Roleplay operates as a **VC-governed** community during official patrols. Professional microphone etiquette is required at all times. Ear-rape, soundboards, and rapid channel hops are prohibited. Voice changers are permitted strictly for immersive RP.\n\n` +
+        `### 08 ┃ PUNISHMENT EVASION\n` +
+        `> Leaving the guild or utilizing alternate accounts to evade administrative discipline constitutes evasion. All existing punishments will be escalated to a permanent blacklist. Sanctions may only be contested via **⟬🎟⟭・Assistance**.\n\n` +
+        `### 09 ┃ THREATS, INTIMIDATION & HARASSMENT\n` +
+        `> Targeted harassment, cyberbullying, malicious threats, doxxing intimations, or toxic personal attacks will result in immediate, non-negotiable permanent expulsion from the community.\n\n` +
+        `### 10 ┃ PROFANITY & DISCRIMINATORY SPEECH\n` +
+        `> Moderate conversational profanity is tolerated. Racial slurs, hate speech, homophobic slurs, and discriminatory remarks trigger immediate and permanent removal.\n\n` +
+        `### 11 ┃ MANDATORY IDENTITY SYNCHRONIZATION\n` +
+        `> Your Discord server nickname or display identity must clearly reflect or match your active Roblox username while participating in Alabama State Roleplay.`
+      )
+    );
+  } else if (section === 'info_roleplay_rules') {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 🚨 ROLEPLAY RULES & REGULATIONS\n` +
+        `These regulations govern all active roleplay sessions within **Alabama State Roleplay**. Members are expected to uphold maximum realism, professionalism, and scenario continuity. Staff discretion applies based on severity.`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 01 ┃ METAGAMING\n` +
+        `> Using information your character could not realistically know during roleplay is prohibited.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 02 ┃ FEAR ROLEPLAY\n` +
+        `> You must value your character's life and react realistically to dangerous situations.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 03 ┃ FAIL ROLEPLAY (FRP)\n` +
+        `> Performing actions that are unrealistic or could not reasonably occur in real life.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 04 ┃ INTERFERING WITH ROLEPLAY\n` +
+        `> Do not interfere with an ongoing roleplay situation that you are not involved in unless you are called or required to participate.\n` +
+        `> **Punishment:** Kick\n\n` +
+        `### 05 ┃ RANDOM DEATHMATCH (RDM)\n` +
+        `> Attacking or killing another player without a valid roleplay reason.\n` +
+        `> **Punishment:** Warning → Kick → Ban\n\n` +
+        `### 06 ┃ VEHICLE DEATHMATCH (VDM)\n` +
+        `> Intentionally hitting or running over players without a valid roleplay reason.\n` +
+        `> **Punishment:** Warning → Kick → Ban\n\n` +
+        `### 07 ┃ NEW LIFE RULE (NLR)\n` +
+        `> Requires you to forget previous events after your character dies. Returning to scene is prohibited.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 08 ┃ CRASH ROLEPLAY\n` +
+        `> All crashes must be roleplayed realistically, regardless of severity. One-way crashes may not be voided. Two-way crashes may only be voided if both parties agree.\n` +
+        `> **Punishment:** Warning\n\n` +
+        `### 09 ┃ SUICIDE ROLEPLAY\n` +
+        `> Depicting suicide or self-harm in roleplay is strictly prohibited.\n` +
+        `> **Punishment:** Permanent Ban\n\n` +
+        `### 10 ┃ GANG ROLEPLAY\n` +
+        `> Gang roleplay is prohibited. Organized criminal groups, mafias, and approved crime groups may operate when properly authorized.\n` +
+        `> **Punishment:** Kick → Ban`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 11 ┃ REALISTIC OUTFITS\n` +
+        `> All players must use realistic avatars while roleplaying. Unrealistic items such as wings, antlers, swords, and inappropriate accessories are prohibited.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 12 ┃ CUFF RUSHING\n` +
+        `> Cuff rushing is using handcuffs without properly roleplaying the arrest or apprehension. Proper roleplay must be conducted before placing a suspect in cuffs.\n` +
+        `> **Punishment:** Department Consequence → Kick\n\n` +
+        `### 13 ┃ COP BAITING\n` +
+        `> Intentionally provoking police to initiate a pursuit or traffic stop is prohibited. (Exception: Approved Priority scenarios).\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 14 ┃ POWERGAMING\n` +
+        `> Forcing actions, abilities, or outcomes onto another player without allowing them a chance to respond.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 15 ┃ BREAKING CHARACTER\n` +
+        `> Remain in character during roleplay. Going OOC to gain an advantage or perform an action is prohibited.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 16 ┃ NO INTENT\n` +
+        `> Actions that disrupt roleplay without a legitimate purpose (random towing, excessive drifting, disruptive behavior).\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 17 ┃ OUT-OF-STATE ROLEPLAY\n` +
+        `> You may not roleplay as a character, agency, or entity from outside the designated Alabama Roleplay jurisdiction.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 18 ┃ GAMEPASS WEAPONS\n` +
+        `> Gamepass weapons may only be used during an approved Level 3 Priority or by authorized High Staff.\n` +
+        `> **Punishment:** Kick\n\n` +
+        `### 20 ┃ EVADING STAFF\n` +
+        `> You must comply with Alabama Roleplay staff. Running from staff vehicles, leaving after being teleported, or evading staff intervention is prohibited.\n` +
+        `> **Punishment:** Kick\n\n` +
+        `### 21 ┃ HITMAN ROLEPLAY\n` +
+        `> Hitman RP must have legitimate roleplay behind it and be conducted during an approved Priority. Target must roleplay death.\n` +
+        `> **Punishment:** Kick → Permanent Ban`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 22 ┃ COMBAT LOGGING\n` +
+        `> Leaving the game to avoid arrest, death, or an ongoing roleplay situation is prohibited.\n` +
+        `> **Punishment:** Permanent Ban\n\n` +
+        `### 23 ┃ SAFE ZONES\n` +
+        `> Priority activities are prohibited in: River City / Springfield Spawn (Permanent), Fire Department (When staffed), Hospital (When staffed), Gun Store (When staffed).\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 24 ┃ LYING TO STAFF\n` +
+        `> Providing false information, intentionally misleading staff, or lying during a staff investigation is prohibited.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 25 ┃ ANIMAL ROLEPLAY\n` +
+        `> Animal roleplay requires prior approval from Moderation+.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 26 ┃ DISRESPECT\n` +
+        `> Members must remain respectful toward staff and other community members. Report issues through appropriate channels.\n` +
+        `> **Punishment:** Warning → Kick\n\n` +
+        `### 27 ┃ POLITICS & REAL-WORLD EVENTS\n` +
+        `> Political arguments, civil rights disputes, and real-world tragic events are prohibited within roleplay.\n` +
+        `> **Punishment:** Kick\n\n` +
+        `### 28 ┃ PEACETIME & PRIORITY TIMER\n` +
+        `> You may not start or participate in Priority activities while Peacetime or the Priority Timer is active.\n` +
+        `> **Punishment:** Staff Discretion\n\n` +
+        `### 29 ┃ ROBLOX TERMS OF SERVICE\n` +
+        `> All members must follow Roblox's Terms of Service while participating in Alabama Roleplay.\n` +
+        `> **Punishment:** Staff Discretion`
+      )
+    );
+  } else if (section === 'info_faq') {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## ❓ FREQUENTLY ASKED QUESTIONS (FAQ)\n` +
+        `Essential operational guidance and answers for Alabama State Roleplay members:`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 01 ┃ HOW DO I BECOME A MODERATOR?\n` +
+        `> Staff applications are reviewed exclusively by authorized High Staff. Do not ping staff regarding your application status.\n` +
+        `> **Apply for Staff:** Check **⟬👔⟭・Staff-Applications** or use our official application panel.\n\n` +
+        `### 02 ┃ WHEN WILL THE SERVER BE UP?\n` +
+        `> Check **⟬🎮⟭・Sessions** for current patrol schedules, announcements, and server start times.\n\n` +
+        `### 03 ┃ HOW DO I REPORT A MODERATOR?\n` +
+        `> If you need to report a staff member, please submit a formal report through the appropriate support ticket with unedited proof.\n` +
+        `> **Report Staff:** **⟬🎟⟭・Assistance**\n\n` +
+        `### 04 ┃ HOW DO I JOIN THE SERVER?\n` +
+        `> 1. Open **Emergency Response: Liberty County** on Roblox.\n` +
+        `> 2. Select the three lines in the top-right corner, open **Servers**, and select **Join Server**.\n` +
+        `> 3. Search: **Alabama State Roleplay** | **Server Code:** \`ALABAM\`\n\n` +
+        `### 05 ┃ DO I NEED A CALLSIGN?\n` +
+        `> Yes. All members participating in department roleplay are required to have an appropriate formatted callsign.\n\n` +
+        `### 06 ┃ DO I NEED TO APPLY FOR A DEPARTMENT?\n` +
+        `> Yes. Being in a whitelisted department requires a passing application.\n` +
+        `> **Apply Here:** **⟬👔⟭・Department-Applications**\n\n` +
+        `### 07 ┃ ARE SONORAN CAD AND SONORAN RADIO REQUIRED?\n` +
+        `> Yes. Using both CAD and Radio is required to participate in any whitelisted department patrol.`
+      )
+    );
+  } else {
+    // Overview (info_overview)
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 🏛️ ALABAMA STATE ROLEPLAY — INFORMATION\n` +
+        `Welcome to **Alabama State Roleplay**, founded exclusively for dedicated fans and players of ER:LC Roblox!\n\n` +
+        `Whether you’re here to roleplay, connect, or just hang out — you’re in the right place.\n\n` +
+        `> 👑 **Founder:** <@885315812011958313> (\`notroseplays_34\` • \`𝐃┃♡ 𝕽𝖔𝖘𝖊♡\`)\n` +
+        `> 🚔 **Based On:** **Emergency Response: Liberty County** (ER:LC)\n` +
+        `> 🎮 **Platform:** Roblox — **Game Code:** \`ALABAM\``
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 🌟 What We Offer\n` +
+        `> ➥ **Active Roleplay Community:** Constant daily patrols and immersive operations.\n` +
+        `> ➥ **Organized Server Structure:** Standardized whitelisted agencies and active staff team.\n` +
+        `> ➥ **ER:LC Events & Updates:** Regular priority scenarios, community events, and vehicle updates.\n` +
+        `> ➥ **Friendly & Supportive Members:** Welcoming atmosphere and dedicated staff support.`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### 📌 Important Server Channels\n` +
+        `Quick access to our core operational channels:`
+      )
+    );
+
+    const btnSessions = new ButtonBuilder().setCustomId('info_btn_sessions').setLabel('⟬🎮⟭ Sessions').setStyle(ButtonStyle.Secondary);
+    const btnAnnouncements = new ButtonBuilder().setCustomId('info_btn_announcements').setLabel('⟬📢⟭ Announcements').setStyle(ButtonStyle.Secondary);
+    const btnShop = new ButtonBuilder().setCustomId('info_btn_shop').setLabel('⟬🛒⟭ Shop').setStyle(ButtonStyle.Secondary);
+    const btnAssistance = new ButtonBuilder().setCustomId('info_btn_assistance').setLabel('⟬🎟⟭ Assistance').setStyle(ButtonStyle.Secondary);
+    const btnRoles = new ButtonBuilder().setCustomId('info_btn_roles').setLabel('⟬🎭⟭ Roles').setStyle(ButtonStyle.Secondary);
+
+    const rowButtons = new ActionRowBuilder().addComponents(btnSessions, btnAnnouncements, btnShop, btnAssistance, btnRoles);
+    card.addActionRowComponents(rowButtons);
+  }
+
+  card.addSeparatorComponents(thinLine());
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('info_select_section')
+    .setPlaceholder('Alabama State Roleplay Information')
+    .addOptions(
+      {
+        label: 'Alabama State Roleplay Information',
+        value: 'info_overview',
+        emoji: '🏛️',
+        description: 'Server overview, founder, game code, and channels.',
+        default: section === 'info_overview'
+      },
+      {
+        label: 'Community Rules & Regulations',
+        value: 'info_community_rules',
+        emoji: '📜',
+        description: '11 Official community conduct rules and Discord guidelines.',
+        default: section === 'info_community_rules'
+      },
+      {
+        label: 'Roleplay Rules & Regulations',
+        value: 'info_roleplay_rules',
+        emoji: '🚨',
+        description: '29 In-game ER:LC roleplay regulations and consequences.',
+        default: section === 'info_roleplay_rules'
+      },
+      {
+        label: 'Frequently Asked Questions',
+        value: 'info_faq',
+        emoji: '❓',
+        description: 'Staff applications, server joining, callsigns, CAD & radio.',
+        default: section === 'info_faq'
+      }
+    );
+
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(selectMenu));
+  return card;
+}
+
+async function handleInformationCommand(interaction) {
+  const targetChannel = interaction.options?.getChannel?.('channel');
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  const isStaff = isStaffMember(member) || member?.permissions?.has(PermissionFlagsBits.ManageGuild);
+
+  if (targetChannel) {
+    if (!isStaff) {
+      await interaction.reply({ content: '❌ You must have staff permissions to post the information panel to a channel.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+    const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
+    const card = buildInformationCard('info_overview', interaction.guild);
+
+    try {
+      await targetChannel.send({
+        components: [card.toJSON()],
+        files,
+        flags: MessageFlags.IsComponentsV2
+      });
+      await interaction.editReply({ content: `✅ Official Information panel posted to <#${targetChannel.id}>.` });
+    } catch (err) {
+      await interaction.editReply({ content: `❌ Failed to post information panel: ${err.message}` });
+    }
+    return;
+  }
+
+  const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+  const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
+  const card = buildInformationCard('info_overview', interaction.guild);
+  await interaction.reply({
+    components: [card.toJSON()],
+    files,
+    flags: MessageFlags.IsComponentsV2
+  });
+}
+
 // ═══════════════════════ Staff Application System ═══════════════════════
 const APP_PANEL_BANNER_URL = 'attachment://applications_banner.jpg';
 const APP_PASSED_BANNER_URL =
   'https://media.discordapp.net/attachments/1232495213986058283/1536858352754360392/content.png?ex=6aab12e0&is=6aa9c160&hm=236ce65b7c5709b6e05934e6c7de79760de79a4832f8e08d510ccfc9b4951425&=&format=webp&quality=lossless';
 const APP_DECISIONS_CHANNEL_ID = '1232495212333498458';
 const APP_PANEL_CHANNEL_ID = '1539681421306896476';
+const APP_SUPPORT_TEAM_ROLE_ID = '1236052056201105418';
 const APP_REVIEWER_ROLE_ID = '1548637141850918993';
+const APP_SULMAN_USER_ID = '523693281541095424';
+const APP_ROSE_USER_ID = '885315812011958313';
 
 function buildStaffApplicationPanelCard(bannerOverride) {
   const card = new ContainerBuilder().setAccentColor(0x2b2d31);
@@ -5500,7 +5816,7 @@ function buildStaffApplicationPanelCard(bannerOverride) {
 }
 
 function buildApplicantDashboard(appData) {
-  const card = new ContainerBuilder();
+  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## Alabama State Roleplay Staff Application\n` +
@@ -5515,15 +5831,13 @@ function buildApplicantDashboard(appData) {
       new TextDisplayBuilder().setContent(
         `### IN-GAME REQUIREMENTS\n` +
         `> • 14+ years of age\n` +
-        `> • Must be active within the server\n` +
-        `> • Must have a working microphone\n` +
-        `> • Must be respectful, mature, and professional\n` +
-        `> • Must understand and follow the server rules\n` +
+        `> • Must maintain an active in-game patrol presence\n` +
+        `> • Must have a working microphone & clip recording software\n` +
+        `> • Must be respectful, mature, and maintain command composure\n` +
+        `> • Must understand and enforce server rules and Safe Zones\n` +
         `> • Must be willing to attend required staff trainings and meetings\n` +
-        `> • Must be able to communicate effectively with members and staff\n` +
-        `> • Must be willing to enforce rules fairly and without favoritism\n` +
-        `> • Must be able to work as part of a team\n` +
-        `> • Prior staff experience is preferred, but not required`
+        `> • Must enforce rules objectively without favoritism or bias\n` +
+        `> • Prior moderation / staff experience is preferred, but not required`
       )
     );
   } else {
@@ -5531,15 +5845,12 @@ function buildApplicantDashboard(appData) {
       new TextDisplayBuilder().setContent(
         `### DISCORD STAFF REQUIREMENTS\n` +
         `> • 14+ years of age\n` +
-        `> • Must be active within the Discord server\n` +
-        `> • Must have a working microphone\n` +
-        `> • Must be respectful, mature, and professional\n` +
-        `> • Must understand and follow all server rules\n` +
-        `> • Must be able to communicate effectively with members and staff\n` +
-        `> • Must be willing to enforce Discord rules fairly and without favoritism\n` +
-        `> • Must be able to handle tickets, questions, and member concerns\n` +
-        `> • Must be willing to attend required staff trainings and meetings\n` +
-        `> • Must be able to work effectively as part of a team\n` +
+        `> • Must maintain active presence in the Discord server\n` +
+        `> • Must have a working microphone for voice operations\n` +
+        `> • Must be respectful, mature, and professional in all interactions\n` +
+        `> • Must understand Discord ToS and Community Rules\n` +
+        `> • Must actively assist members with tickets, questions, and reports\n` +
+        `> • Must enforce guidelines fairly without personal favoritism\n` +
         `> • Prior Discord staff experience is preferred, but not required`
       )
     );
@@ -5548,8 +5859,8 @@ function buildApplicantDashboard(appData) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> Please complete each of the three numbered steps below in order.\n` +
-      `> Buttons will turn green as you finish each section. Once all three steps are completed, click **Submit Application**.`
+      `> Please complete each of the **four numbered steps** below in order.\n` +
+      `> Buttons will turn green as you finish each section. Once all four steps are completed, click **Submit Application**.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -5567,14 +5878,20 @@ function buildApplicantDashboard(appData) {
 
   const btn3 = new ButtonBuilder()
     .setCustomId(`app_btn_step3_${appData.id}`)
-    .setLabel('3. Knowledge & Scenarios')
+    .setLabel('3. Core Knowledge')
     .setStyle(appData.step3Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step2Done);
 
-  const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3);
+  const btn4 = new ButtonBuilder()
+    .setCustomId(`app_btn_step4_${appData.id}`)
+    .setLabel('4. Realistic Scenarios')
+    .setStyle(appData.step4Done ? ButtonStyle.Success : ButtonStyle.Secondary)
+    .setDisabled(!appData.step3Done);
+
+  const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3, btn4);
   card.addActionRowComponents(stepRow);
 
-  if (appData.step1Done && appData.step2Done && appData.step3Done && appData.status !== 'pending_review') {
+  if (appData.step1Done && appData.step2Done && appData.step3Done && appData.step4Done && appData.status !== 'pending_review') {
     card.addSeparatorComponents(thinLine());
     const submitRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -5591,14 +5908,16 @@ function buildApplicantDashboard(appData) {
 function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
   const card = new ContainerBuilder();
   const gen = appData.generalInfo || {};
+  const kno = appData.knowledgeAnswers || {};
   const ans = appData.scenarioAnswers || {};
   const isDiscord = appData.appType === 'Discord Staff';
 
   if (pageIndex === 0) {
+    // Page 1: General Info
     if (isDiscord) {
       card.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `## 📋 Discord Staff Application Review — Page 1/3\n` +
+          `## 📋 Discord Staff Application Review — Page 1/4\n` +
           `### Applicant & General Information\n` +
           `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
           `> **Application Type:** **${appData.appType}**\n` +
@@ -5613,7 +5932,7 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
     } else {
       card.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `## 📋 In-Game Staff Application Review — Page 1/3\n` +
+          `## 📋 In-Game Staff Application Review — Page 1/4\n` +
           `### Applicant & General Information\n` +
           `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
           `> **Application Type:** **${appData.appType}**\n` +
@@ -5627,52 +5946,93 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
       );
     }
   } else if (pageIndex === 1) {
+    // Page 2: Core Knowledge
     if (isDiscord) {
       card.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `## 📋 Discord Staff Application Review — Page 2/3\n` +
-          `### Moderation Scenarios & Enforcement\n` +
+          `## 📋 Discord Staff Application Review — Page 2/4\n` +
+          `### Server & Moderation Knowledge\n` +
           `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
-          `**1. Mass Spam / Raids & Phishing Links:**\n` +
-          `> ${(ans.raid_spam || 'N/A').slice(0, 300)}\n\n` +
-          `**2. Heated Arguments & Harassment in Chat:**\n` +
-          `> ${(ans.harassment_toxicity || 'N/A').slice(0, 300)}\n\n` +
-          `**3. Ticket In-Game Ban Dispute & Angry Member:**\n` +
-          `> ${(ans.ticket_dispute || 'N/A').slice(0, 300)}\n\n` +
-          `**4. Friends Breaking Rules & Bias Prevention:**\n` +
-          `> ${(ans.bias_favoritism || 'N/A').slice(0, 300)}\n\n` +
-          `**5. Underage Member & Discord TOS Violation:**\n` +
-          `> ${(ans.underage_tos || 'N/A').slice(0, 300)}`
+          `**1. Discord ToS & Safety Protocols:**\n` +
+          `> ${(kno.discord_tos_safety || 'N/A').slice(0, 300)}\n\n` +
+          `**2. Punishment Escalation Ladder:**\n` +
+          `> ${(kno.discord_punishment_ladder || 'N/A').slice(0, 300)}\n\n` +
+          `**3. Ticket Etiquette & Demeanor:**\n` +
+          `> ${(kno.discord_ticket_etiquette || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Staff NDA & Confidentiality:**\n` +
+          `> ${(kno.discord_confidentiality || 'N/A').slice(0, 300)}\n\n` +
+          `**5. Security & Mass Raid Response:**\n` +
+          `> ${(kno.discord_security_raids || 'N/A').slice(0, 300)}`
         )
       );
     } else {
       card.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `## 📋 In-Game Staff Application Review — Page 2/3\n` +
-          `### In-Game Scenarios & Strict Enforcement\n` +
+          `## 📋 In-Game Staff Application Review — Page 2/4\n` +
+          `### Roleplay Regulations & Command Knowledge\n` +
           `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
-          `**1. Fail Roleplay & Mass VDM:**\n` +
-          `> ${(ans.failrp_vdm || 'N/A').slice(0, 300)}\n\n` +
-          `**2. Combat Logging & Cuff Evasion:**\n` +
-          `> ${(ans.combatlog_evade || 'N/A').slice(0, 300)}\n\n` +
-          `**3. New Life Rule (NLR) & Safe Zone Violations:**\n` +
-          `> ${(ans.nlr_safezone || 'N/A').slice(0, 300)}\n\n` +
-          `**4. Admin Commands & Abuse Prevention:**\n` +
-          `> ${(ans.admin_abuse || 'N/A').slice(0, 300)}\n\n` +
-          `**5. De-escalation & Accusations of Staff Bias:**\n` +
-          `> ${(ans.deescalation || 'N/A').slice(0, 300)}`
+          `**1. Definitions (FRP, RDM, VDM):**\n` +
+          `> ${(kno.rule_frp_rdm_vdm || 'N/A').slice(0, 300)}\n\n` +
+          `**2. New Life Rule (NLR) & Safe Zones:**\n` +
+          `> ${(kno.rule_nlr_safezones || 'N/A').slice(0, 300)}\n\n` +
+          `**3. Cop Baiting & Cuff Rushing:**\n` +
+          `> ${(kno.rule_cop_baiting || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Gamepass Weapons & Peacetime Rules:**\n` +
+          `> ${(kno.rule_gamepass_peacetime || 'N/A').slice(0, 300)}\n\n` +
+          `**5. Admin Command Protocol & Evidence:**\n` +
+          `> ${(kno.rule_admin_protocol || 'N/A').slice(0, 300)}`
+        )
+      );
+    }
+  } else if (pageIndex === 2) {
+    // Page 3: Scenarios
+    if (isDiscord) {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 Discord Staff Application Review — Page 3/4\n` +
+          `### Realistic Scenarios & Situational Judgment\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+          `**1. Mass Raid & Phishing Link Flood:**\n` +
+          `> ${(ans.scen_mass_raid || ans.raid_spam || 'N/A').slice(0, 300)}\n\n` +
+          `**2. Heated Conflict & Slurs in Chat:**\n` +
+          `> ${(ans.scen_toxic_arguments || ans.harassment_toxicity || 'N/A').slice(0, 300)}\n\n` +
+          `**3. Angry Ticket Threats & Doxx Blackmail:**\n` +
+          `> ${(ans.scen_ticket_blackmail || ans.ticket_dispute || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Staff Peer Favoritism & Bias:**\n` +
+          `> ${(ans.scen_friend_bias || ans.bias_favoritism || 'N/A').slice(0, 300)}\n\n` +
+          `**5. Underage Member Disclosure:**\n` +
+          `> ${(ans.scen_underage_member || ans.underage_tos || 'N/A').slice(0, 300)}`
+        )
+      );
+    } else {
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 In-Game Staff Application Review — Page 3/4\n` +
+          `### In-Game Realistic Scenarios & Discipline\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n\n` +
+          `**1. Mass Spawn VDM & Chaos:**\n` +
+          `> ${(ans.scen_mass_vdm || ans.failrp_vdm || 'N/A').slice(0, 300)}\n\n` +
+          `**2. High-Speed Pursuit Combat Logging:**\n` +
+          `> ${(ans.scen_combat_log || ans.combatlog_evade || 'N/A').slice(0, 300)}\n\n` +
+          `**3. Friend or Supervisor Breaking Rules:**\n` +
+          `> ${(ans.scen_friend_abuse || ans.nlr_safezone || 'N/A').slice(0, 300)}\n\n` +
+          `**4. Heated VC Disrespect & Bias Accusations:**\n` +
+          `> ${(ans.scen_disrespect_screaming || ans.deescalation || 'N/A').slice(0, 300)}\n\n` +
+          `**5. Unauthorized Hitman / Suicide RP:**\n` +
+          `> ${(ans.scen_hitman_suicide || ans.admin_abuse || 'N/A').slice(0, 300)}`
         )
       );
     }
   } else {
+    // Page 4: Final Verdict
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## 📋 Staff Application Review — Page 3/3\n` +
+        `## 📋 Staff Application Review — Page 4/4\n` +
         `### Final Verdict & Decision\n` +
         `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
         `> **Position:** **${appData.appType}**\n` +
         (isDiscord ? `> **Discord User:** \`${gen.discord_tag_user || appData.applicantTag}\`\n\n` : `> **Roblox Username:** \`${gen.roblox_user || 'N/A'}\`\n\n`) +
-        `Please review all applicant responses carefully. When ready, click **Accept Application** or **Deny Application** below to record your reason and publish the final verdict.`
+        `Please review all applicant responses carefully across all pages. When ready, click **Accept Application** or **Deny Application** below to record your reason and publish the final verdict.`
       )
     );
     card.addSeparatorComponents(thinLine());
@@ -5705,14 +6065,14 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
 
   const indicatorBtn = new ButtonBuilder()
     .setCustomId('app_rev_indicator')
-    .setLabel(`Page ${pageIndex + 1} / 3`)
+    .setLabel(`Page ${pageIndex + 1} / 4`)
     .setStyle(ButtonStyle.Secondary)
     .setDisabled(true);
 
   const rightBtn = new ButtonBuilder()
     .setCustomId(`app_rev_page_${appData.id}_${pageIndex + 1}`)
     .setStyle(ButtonStyle.Secondary)
-    .setDisabled(pageIndex >= 2);
+    .setDisabled(pageIndex >= 3);
   try {
     rightBtn.setEmoji({ id: '1549583002676236308', name: 'Right_arrow' });
   } catch {
@@ -5839,19 +6199,35 @@ async function getApplicationReviewerStaff(client) {
   const staffMembers = [];
   const checkedUsers = new Set();
 
+  // 1. Members with Support Team role 1236052056201105418 or APP_REVIEWER_ROLE_ID
   for (const guild of client.guilds.cache.values()) {
     try {
       await guild.members.fetch().catch(() => null);
-      const role = guild.roles.cache.get(APP_REVIEWER_ROLE_ID);
-      if (role) {
-        for (const member of role.members.values()) {
-          if (!member.user.bot && !checkedUsers.has(member.id)) {
-            checkedUsers.add(member.id);
-            staffMembers.push(member);
+      const targetRoles = [APP_SUPPORT_TEAM_ROLE_ID, APP_REVIEWER_ROLE_ID];
+      for (const roleId of targetRoles) {
+        const role = guild.roles.cache.get(roleId);
+        if (role) {
+          for (const member of role.members.values()) {
+            if (!member.user.bot && !checkedUsers.has(member.id)) {
+              checkedUsers.add(member.id);
+              staffMembers.push(member);
+            }
           }
         }
       }
     } catch { }
+  }
+
+  // 2. Explicitly include Sulman and Rose
+  const explicitUserIds = [APP_SULMAN_USER_ID, APP_ROSE_USER_ID];
+  for (const uid of explicitUserIds) {
+    if (!checkedUsers.has(uid)) {
+      checkedUsers.add(uid);
+      const user = await client.users.fetch(uid).catch(() => null);
+      if (user) {
+        staffMembers.push({ id: uid, user });
+      }
+    }
   }
 
   if (!staffMembers.length) {
@@ -5883,7 +6259,7 @@ async function sendNextReviewInquiry(client, appData) {
     return sendNextReviewInquiry(client, appData);
   }
 
-  const card = new ContainerBuilder();
+  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## 📋 Staff Application Review Request\n` +
@@ -5895,7 +6271,6 @@ async function sendNextReviewInquiry(client, appData) {
   );
   card.addSeparatorComponents(thinLine());
 
-  // 2 buttons all gray: <:checkmark:1549230329418485832> and <:wrong:1549230458070507552>
   const checkBtn = new ButtonBuilder()
     .setCustomId(`app_rev_claim_${appData.id}`)
     .setStyle(ButtonStyle.Secondary);
@@ -5918,10 +6293,29 @@ async function sendNextReviewInquiry(client, appData) {
   card.addActionRowComponents(row);
 
   try {
-    await staffUser.send({
+    const dmChan = await staffUser.createDM().catch(() => null);
+    if (dmChan) {
+      const recent = await dmChan.messages.fetch({ limit: 10 }).catch(() => null);
+      const dup = recent?.find(m =>
+        m.author?.id === client.user.id &&
+        (Date.now() - m.createdTimestamp < 45000) &&
+        (JSON.stringify(m.components || []).includes(appData.id) || JSON.stringify(m.components || []).includes(appData.applicantId))
+      );
+      if (dup) {
+        if (!Array.isArray(appData.reviewerDmMessages)) appData.reviewerDmMessages = [];
+        appData.reviewerDmMessages.push({ userId: staffId, messageId: dup.id });
+        return;
+      }
+    }
+
+    const dmMsg = await staffUser.send({
       components: [card.toJSON()],
       flags: MessageFlags.IsComponentsV2
     });
+    if (dmMsg) {
+      if (!Array.isArray(appData.reviewerDmMessages)) appData.reviewerDmMessages = [];
+      appData.reviewerDmMessages.push({ userId: staffId, messageId: dmMsg.id });
+    }
     console.log(`[Staff Application] Dispatched review inquiry to staff ${staffUser.tag} (${staffUser.id})`);
   } catch (err) {
     console.warn(`[Staff Application] Could not DM staff ${staffUser.tag}: ${err.message}. Skipping to next staff.`);
@@ -5932,11 +6326,82 @@ async function sendNextReviewInquiry(client, appData) {
 }
 
 async function dispatchApplicationReview(client, appData) {
+  if (appData.reviewDispatched) return;
+  appData.reviewDispatched = true;
+  appData.reviewerDmMessages = [];
+  saveApplications();
+
   const candidateStaff = await getApplicationReviewerStaff(client);
-  appData.reviewCandidates = candidateStaff.map((m) => m.user.id);
+  appData.reviewCandidates = candidateStaff.map((m) => m.user ? m.user.id : m.id);
   appData.currentReviewCandidateIdx = 0;
   saveApplications();
-  await sendNextReviewInquiry(client, appData);
+
+  for (const member of candidateStaff) {
+    const staffId = member.user ? member.user.id : member.id;
+    try {
+      const staffUser = member.user || (await client.users.fetch(staffId).catch(() => null));
+      if (!staffUser) continue;
+
+      const dmChan = await staffUser.createDM().catch(() => null);
+      if (dmChan) {
+        const recent = await dmChan.messages.fetch({ limit: 10 }).catch(() => null);
+        const dup = recent?.find(m =>
+          m.author?.id === client.user.id &&
+          (Date.now() - m.createdTimestamp < 45000) &&
+          (JSON.stringify(m.components || []).includes(appData.id) || JSON.stringify(m.components || []).includes(appData.applicantId))
+        );
+        if (dup) {
+          appData.reviewerDmMessages.push({ userId: staffId, messageId: dup.id });
+          continue;
+        }
+      }
+
+      const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 Staff Application Review Request\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+          `> **Position:** **${appData.appType}**\n` +
+          `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:R>\n\n` +
+          `Are you available to read and review this application? Click below to claim and review.`
+        )
+      );
+      card.addSeparatorComponents(thinLine());
+
+      const checkBtn = new ButtonBuilder()
+        .setCustomId(`app_rev_claim_${appData.id}`)
+        .setStyle(ButtonStyle.Secondary);
+      try {
+        checkBtn.setEmoji({ id: '1549230329418485832', name: 'checkmark' });
+      } catch {
+        checkBtn.setEmoji('✅');
+      }
+
+      const wrongBtn = new ButtonBuilder()
+        .setCustomId(`app_rev_decline_${appData.id}`)
+        .setStyle(ButtonStyle.Secondary);
+      try {
+        wrongBtn.setEmoji({ id: '1549230458070507552', name: 'wrong' });
+      } catch {
+        wrongBtn.setEmoji('❌');
+      }
+
+      const row = new ActionRowBuilder().addComponents(checkBtn, wrongBtn);
+      card.addActionRowComponents(row);
+
+      const dmMsg = await staffUser.send({
+        components: [card.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      if (dmMsg) {
+        appData.reviewerDmMessages.push({ userId: staffId, messageId: dmMsg.id });
+      }
+      console.log(`[Staff Application] Dispatched review inquiry to reviewer ${staffUser.tag} (${staffUser.id})`);
+    } catch (err) {
+      console.warn(`[Staff Application] Could not dispatch review DM to staff ${staffId}: ${err.message}`);
+    }
+  }
+  saveApplications();
 }
 
 async function editVoteMessage(client, vote) {
@@ -6253,6 +6718,7 @@ function toggleVoter(vote, userId) {
 function getSlashPayload() {
   return [
     commandsCommand.toJSON(),
+    informationCommand.toJSON(),
     retriggerCommand.toJSON(),
     sessionCommand.toJSON(),
     ticketCommand.toJSON(),
@@ -7802,29 +8268,61 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // ─────────────── Staff Application: Step 3 Modal Submit ───────────────
+    // ─────────────── Staff Application: Step 3 Modal Submit (Core Knowledge) ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step3_')) {
       const appId = interaction.customId.replace('app_modal_step3_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const isDiscord = appData.appType === 'Discord Staff';
       if (isDiscord) {
-        appData.scenarioAnswers = {
-          raid_spam: interaction.fields.getTextInputValue('raid_spam')?.trim() || 'N/A',
-          harassment_toxicity: interaction.fields.getTextInputValue('harassment_toxicity')?.trim() || 'N/A',
-          ticket_dispute: interaction.fields.getTextInputValue('ticket_dispute')?.trim() || 'N/A',
-          bias_favoritism: interaction.fields.getTextInputValue('bias_favoritism')?.trim() || 'N/A',
-          underage_tos: interaction.fields.getTextInputValue('underage_tos')?.trim() || 'N/A'
+        appData.knowledgeAnswers = {
+          discord_tos_safety: interaction.fields.getTextInputValue('discord_tos_safety')?.trim() || 'N/A',
+          discord_punishment_ladder: interaction.fields.getTextInputValue('discord_punishment_ladder')?.trim() || 'N/A',
+          discord_ticket_etiquette: interaction.fields.getTextInputValue('discord_ticket_etiquette')?.trim() || 'N/A',
+          discord_confidentiality: interaction.fields.getTextInputValue('discord_confidentiality')?.trim() || 'N/A',
+          discord_security_raids: interaction.fields.getTextInputValue('discord_security_raids')?.trim() || 'N/A'
         };
       } else {
-        appData.scenarioAnswers = {
-          failrp_vdm: interaction.fields.getTextInputValue('failrp_vdm')?.trim() || 'N/A',
-          combatlog_evade: interaction.fields.getTextInputValue('combatlog_evade')?.trim() || interaction.fields.getTextInputValue('cuff_evasion')?.trim() || 'N/A',
-          nlr_safezone: interaction.fields.getTextInputValue('nlr_safezone')?.trim() || 'N/A',
-          admin_abuse: interaction.fields.getTextInputValue('admin_abuse')?.trim() || interaction.fields.getTextInputValue('mod_commands')?.trim() || 'N/A',
-          deescalation: interaction.fields.getTextInputValue('deescalation')?.trim() || interaction.fields.getTextInputValue('disrespect_abuse')?.trim() || 'N/A'
+        appData.knowledgeAnswers = {
+          rule_frp_rdm_vdm: interaction.fields.getTextInputValue('rule_frp_rdm_vdm')?.trim() || 'N/A',
+          rule_nlr_safezones: interaction.fields.getTextInputValue('rule_nlr_safezones')?.trim() || 'N/A',
+          rule_cop_baiting: interaction.fields.getTextInputValue('rule_cop_baiting')?.trim() || 'N/A',
+          rule_gamepass_peacetime: interaction.fields.getTextInputValue('rule_gamepass_peacetime')?.trim() || 'N/A',
+          rule_admin_protocol: interaction.fields.getTextInputValue('rule_admin_protocol')?.trim() || 'N/A'
         };
       }
       appData.step3Done = true;
+      saveApplications();
+      const updatedCard = buildApplicantDashboard(appData);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    // ─────────────── Staff Application: Step 4 Modal Submit (Realistic Scenarios) ───────────────
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step4_')) {
+      const appId = interaction.customId.replace('app_modal_step4_', '');
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
+      const isDiscord = appData.appType === 'Discord Staff';
+      if (isDiscord) {
+        appData.scenarioAnswers = {
+          scen_mass_raid: interaction.fields.getTextInputValue('scen_mass_raid')?.trim() || 'N/A',
+          scen_toxic_arguments: interaction.fields.getTextInputValue('scen_toxic_arguments')?.trim() || 'N/A',
+          scen_ticket_blackmail: interaction.fields.getTextInputValue('scen_ticket_blackmail')?.trim() || 'N/A',
+          scen_friend_bias: interaction.fields.getTextInputValue('scen_friend_bias')?.trim() || 'N/A',
+          scen_underage_member: interaction.fields.getTextInputValue('scen_underage_member')?.trim() || 'N/A'
+        };
+      } else {
+        appData.scenarioAnswers = {
+          scen_mass_vdm: interaction.fields.getTextInputValue('scen_mass_vdm')?.trim() || 'N/A',
+          scen_combat_log: interaction.fields.getTextInputValue('scen_combat_log')?.trim() || 'N/A',
+          scen_friend_abuse: interaction.fields.getTextInputValue('scen_friend_abuse')?.trim() || 'N/A',
+          scen_disrespect_screaming: interaction.fields.getTextInputValue('scen_disrespect_screaming')?.trim() || 'N/A',
+          scen_hitman_suicide: interaction.fields.getTextInputValue('scen_hitman_suicide')?.trim() || 'N/A'
+        };
+      }
+      appData.step4Done = true;
       saveApplications();
       const updatedCard = buildApplicantDashboard(appData);
       await interaction.update({
@@ -7849,82 +8347,173 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const isPassed = action === 'accept';
+      appData.status = isPassed ? 'accepted' : 'denied';
+      appData.verdictBy = {
+        id: interaction.user.id,
+        tag: interaction.user.tag,
+        username: interaction.user.username,
+        avatar: interaction.user.displayAvatarURL({ dynamic: true, size: 256 })
+      };
+      appData.verdictReason = reason;
+      saveApplications();
+
+      // Update ALL review request messages in DMs so Rose, Sulman, and all reviewers see who reviewed it with their icon and username!
+      if (Array.isArray(appData.reviewerDmMessages)) {
+        for (const item of appData.reviewerDmMessages) {
+          try {
+            const reviewerUser = await interaction.client.users.fetch(item.userId).catch(() => null);
+            if (!reviewerUser) continue;
+            const dmChan = await reviewerUser.createDM().catch(() => null);
+            if (!dmChan) continue;
+            const msg = await dmChan.messages.fetch(item.messageId).catch(() => null);
+            if (!msg) continue;
+
+            const updateCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+            updateCard.addMediaGalleryComponents(
+              new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(appData.verdictBy.avatar))
+            );
+            updateCard.addTextDisplayComponents(
+              new TextDisplayBuilder().setContent(
+                `## 📋 Staff Application Review Request — ${isPassed ? 'Accepted' : 'Denied'}\n` +
+                `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+                `> **Position:** **${appData.appType}**\n` +
+                `> **Final Verdict:** ${isPassed ? '✅ **Accepted**' : '❌ **Denied**'}\n` +
+                `> **Actioned by:** **${interaction.user.tag}** (<@${interaction.user.id}>)\n` +
+                `> **Reviewer Notes:** ${reason}\n` +
+                `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
+                `-# This review request has been completed.`
+              )
+            );
+            await msg.edit({
+              components: [updateCard.toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            }).catch(() => null);
+          } catch (e) {
+            console.warn(`Could not update reviewer DM message for ${item.userId}:`, e.message);
+          }
+        }
+      }
+
+      // Publish decision to official decisions channel (STRICTLY ONE MESSAGE, never duplicate)
       const logChannel = await interaction.client.channels.fetch(APP_DECISIONS_CHANNEL_ID).catch(() => null);
-
-      if (isPassed) {
-        const passedCard = new ContainerBuilder().setAccentColor(0x57f287);
-        passedCard.addMediaGalleryComponents(
-          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
-        );
-        passedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🎉 Staff Application Passed!'));
-        passedCard.addSeparatorComponents(thinLine());
-        passedCard.addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
-            `> **Position:** **${appData.appType}**\n` +
-            `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
-            `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
-            `> **Reviewer Notes:** ${reason}\n` +
-            `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
-          )
-        );
-
-        if (logChannel) {
-          await logChannel.send({
-            content: `🎉 Congratulations <@${appData.applicantId}>! Your staff application has been approved.`
-          }).catch(console.error);
+      if (logChannel) {
+        if (isPassed) {
+          const passedCard = new ContainerBuilder().setAccentColor(0x57f287);
+          passedCard.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
+          );
+          passedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🎉 Staff Application Passed!'));
+          passedCard.addSeparatorComponents(thinLine());
+          passedCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+              `> **Position:** **${appData.appType}**\n` +
+              `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
+              `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
+              `> **Reviewer Notes:** ${reason}\n` +
+              `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n` +
+              `🎉 Congratulations <@${appData.applicantId}>! Your staff application has been approved.`
+            )
+          );
           await logChannel.send({
             components: [passedCard.toJSON()],
             flags: MessageFlags.IsComponentsV2
           }).catch(console.error);
-        }
-
-        try {
-          const applicantUser = await interaction.client.users.fetch(appData.applicantId).catch(() => null);
-          if (applicantUser) {
-            await applicantUser.send({
-              content: `🎉 **Congratulations!** Your Alabama State Roleplay **${appData.appType}** application has been **PASSED** by <@${interaction.user.id}>!\n\n**Reviewer Notes:**\n> ${reason}\n\nPlease check <#${APP_DECISIONS_CHANNEL_ID}> for details.`
-            });
+        } else {
+          const failedCard = new ContainerBuilder().setAccentColor(0xed4245);
+          const failAttachmentExists = fs.existsSync('src/assets/application_failed.png');
+          const attachment = failAttachmentExists ? [new AttachmentBuilder('src/assets/application_failed.png', { name: 'application_failed.png' })] : [];
+          if (failAttachmentExists) {
+            failedCard.addMediaGalleryComponents(
+              new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://application_failed.png'))
+            );
           }
-        } catch { }
-      } else {
-        const failedCard = new ContainerBuilder().setAccentColor(0xed4245);
-        const attachment = new AttachmentBuilder('src/assets/application_failed.png', { name: 'application_failed.png' });
-        failedCard.addMediaGalleryComponents(
-          new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://application_failed.png'))
-        );
-        failedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Staff Application Denied'));
-        failedCard.addSeparatorComponents(thinLine());
-        failedCard.addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
-            `> **Position:** **${appData.appType}**\n` +
-            `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
-            `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
-            `> **Reason for Denial:** ${reason}\n` +
-            `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
-          )
-        );
-
-        if (logChannel) {
-          await logChannel.send({
-            content: `<@${appData.applicantId}> Your staff application decision has been recorded.`
-          }).catch(console.error);
+          failedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Staff Application Denied'));
+          failedCard.addSeparatorComponents(thinLine());
+          failedCard.addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+              `> **Position:** **${appData.appType}**\n` +
+              `> **Roblox Username:** \`${appData.generalInfo?.roblox_user || 'N/A'}\`\n` +
+              `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
+              `> **Reason for Denial:** ${reason}\n` +
+              `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+            )
+          );
           await logChannel.send({
             components: [failedCard.toJSON()],
-            files: [attachment],
+            files: attachment,
             flags: MessageFlags.IsComponentsV2
           }).catch(console.error);
         }
+      }
 
-        try {
-          const applicantUser = await interaction.client.users.fetch(appData.applicantId).catch(() => null);
-          if (applicantUser) {
-            await applicantUser.send({
-              content: `❌ Your Alabama State Roleplay **${appData.appType}** application was **DENIED** by <@${interaction.user.id}>.\n\n**Reason:**\n> ${reason}`
-            });
+      // DM Applicant with verdict (STRICTLY ONE MESSAGE, never duplicate, no raw text followed by card)
+      try {
+        const applicantUser = await interaction.client.users.fetch(appData.applicantId).catch(() => null);
+        if (applicantUser) {
+          const dmChan = await applicantUser.createDM().catch(() => null);
+          let alreadySent = false;
+          if (dmChan) {
+            const recent = await dmChan.messages.fetch({ limit: 10 }).catch(() => null);
+            const dup = recent?.find(m =>
+              m.author?.id === interaction.client.user.id &&
+              (Date.now() - m.createdTimestamp < 60000) &&
+              JSON.stringify(m.components || []).includes('Staff Application')
+            );
+            if (dup) alreadySent = true;
           }
-        } catch { }
+
+          if (!alreadySent) {
+            const decisionDmCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+            if (isPassed) {
+              decisionDmCard.addMediaGalleryComponents(
+                new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
+              );
+              decisionDmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🎉 Staff Application Approved!'));
+              decisionDmCard.addSeparatorComponents(thinLine());
+              decisionDmCard.addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                  `Congratulations <@${appData.applicantId}>!\n\n` +
+                  `Your application for **${appData.appType}** has been **PASSED** by **${interaction.user.tag}** (<@${interaction.user.id}>).\n\n` +
+                  `> **Reviewer Notes:** ${reason}\n` +
+                  `> **Decision Channel:** <#${APP_DECISIONS_CHANNEL_ID}>\n\n` +
+                  `Welcome to the Alabama State Roleplay Staff Team! An administrative supervisor will be in contact with you shortly regarding onboarding and training.`
+                )
+              );
+            } else {
+              const failAttachmentExists = fs.existsSync('src/assets/application_failed.png');
+              if (failAttachmentExists) {
+                decisionDmCard.addMediaGalleryComponents(
+                  new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://application_failed.png'))
+                );
+              }
+              decisionDmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Staff Application Denied'));
+              decisionDmCard.addSeparatorComponents(thinLine());
+              decisionDmCard.addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                  `Hello <@${appData.applicantId}>,\n\n` +
+                  `Thank you for applying for **${appData.appType}** with Alabama State Roleplay.\n\n` +
+                  `After thorough review by our staff leadership, your application has been **DENIED** by **${interaction.user.tag}** (<@${interaction.user.id}>).\n\n` +
+                  `> **Reason / Feedback:** ${reason}\n\n` +
+                  `You are welcome to re-apply in future recruitment cycles once you have improved your experience and scenario responses.`
+                )
+              );
+            }
+
+            const files = (!isPassed && fs.existsSync('src/assets/application_failed.png'))
+              ? [new AttachmentBuilder('src/assets/application_failed.png', { name: 'application_failed.png' })]
+              : [];
+
+            await applicantUser.send({
+              components: [decisionDmCard.toJSON()],
+              files,
+              flags: MessageFlags.IsComponentsV2
+            }).catch(() => null);
+          }
+        }
+      } catch (dmErr) {
+        console.warn(`Could not send applicant decision DM: ${dmErr.message}`);
       }
 
       activeApplications.delete(appData.applicantId);
@@ -7952,12 +8541,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }).catch(() => null);
         } catch {}
 
-        setTimeout(async () => {
-          try {
-            await interaction.message?.delete().catch(() => null);
-          } catch {}
-        }, 300000);
-      }
+          setTimeout(async () => {
+            try {
+              await interaction.message?.delete().catch(() => null);
+            } catch {}
+          }, 300000);
+        }
 
       await interaction.editReply({
         content: `✅ Application verdict (${isPassed ? 'ACCEPTED' : 'DENIED'}) has been recorded and published in <#${APP_DECISIONS_CHANNEL_ID}>. This review message will auto-delete in 5 minutes.`
@@ -8233,6 +8822,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await panelInteraction.editReply({
         content: `✅ Live session panel posted in <#${channel.id}>.`
       });
+    }
+
+    // ─────────────────────────── /information ───────────────────────────
+    if (interaction.isChatInputCommand() && interaction.commandName === 'information') {
+      await handleInformationCommand(interaction);
+      return;
     }
 
     // ─────────────────────────── /session ───────────────────────────
@@ -8707,6 +9302,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.update({
         content: `Postponed - vote now ends <t:${Math.floor(endTs / 1000)}:R>. I'll DM you again when the timer runs out.`,
         components: []
+      });
+      return;
+    }
+
+    // ─────────────── Official Information & Regulations Interactivity ───────────────
+    if (interaction.isStringSelectMenu() && interaction.customId === 'info_select_section') {
+      const chosen = interaction.values?.[0] || 'info_overview';
+      const updatedCard = buildInformationCard(chosen, interaction.guild);
+      await interaction.update({
+        components: [updatedCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('info_btn_')) {
+      const type = interaction.customId.replace('info_btn_', '');
+      const messages = {
+        sessions: '🎮 **Patrol Sessions:** Check <#1232495212019056738> or our sessions channel for daily patrol schedules, server start announcements, and live ER:LC server statuses!',
+        announcements: '📢 **Announcements:** Stay updated on server updates, department openings, events, and community notices!',
+        shop: '🛒 **Server Shop:** Purchase custom vehicles, custom liveries, priority passes, and exclusive server perks!',
+        assistance: '🎟 **Support & Assistance:** Need help, have questions, or need to report an issue? Open an official ticket in our assistance channel!',
+        roles: '🎭 **Self Roles:** Select your notification pings, department preferences, and community roles!'
+      };
+      await interaction.reply({
+        content: messages[type] || 'Information channel shortcut.',
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
@@ -9726,13 +10348,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
         step1Done: false,
         step2Done: false,
         step3Done: false,
+        step4Done: false,
         generalInfo: null,
+        knowledgeAnswers: null,
         scenarioAnswers: null,
         createdAt: Date.now(),
-        dmMessageId: null
+        dmMessageId: null,
+        reviewerDmMessages: []
       };
 
       try {
+        const dmCh = await startInteraction.user.createDM().catch(() => null);
+        if (dmCh) {
+          const recentDms = await dmCh.messages.fetch({ limit: 10 }).catch(() => null);
+          const recentAppMsg = recentDms?.find(m =>
+            m.author?.id === startInteraction.client.user.id &&
+            (Date.now() - m.createdTimestamp < 20000) &&
+            JSON.stringify(m.components || []).includes('Staff Application')
+          );
+          if (recentAppMsg) {
+            newApp.dmMessageId = recentAppMsg.id;
+            activeApplications.set(startInteraction.user.id, newApp);
+            saveApplications();
+            if (startInteraction.replied || startInteraction.deferred) {
+              await startInteraction.followUp({ content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`, flags: MessageFlags.Ephemeral }).catch(() => null);
+            } else {
+              await startInteraction.reply({ content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`, flags: MessageFlags.Ephemeral });
+            }
+            return;
+          }
+        }
+
         const dashboard = buildApplicantDashboard(newApp);
         // NOTE: In Components V2, do NOT pass legacy 'content' field
         const dmMsg = await startInteraction.user.send({
@@ -9923,47 +10569,47 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step3_${appId}`)
-        .setTitle('Step 3: Knowledge & Scenarios');
+        .setTitle('Step 3: Core Knowledge');
 
       if (isDiscord) {
         modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('raid_spam')
-              .setLabel('Handling raid / phishing links in chat:')
-              .setPlaceholder('Immediate lockdown, purge, and ban/timeout protocol?')
+              .setCustomId('discord_tos_safety')
+              .setLabel('Discord ToS & Community Safety:')
+              .setPlaceholder('Explain rules regarding underage users, safety, and escalation protocol...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('harassment_toxicity')
-              .setLabel('Handling toxicity and slurs in chat:')
-              .setPlaceholder('De-escalation steps, warning, and timeout guidelines?')
+              .setCustomId('discord_punishment_ladder')
+              .setLabel('Punishment Escalation Protocol:')
+              .setPlaceholder('Describe the Warning → Timeout → Kick → Ban ladder and evidence logging...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('ticket_dispute')
-              .setLabel('Handling ban dispute in a ticket:')
-              .setPlaceholder('How do you remain professional and guide them?')
+              .setCustomId('discord_ticket_etiquette')
+              .setLabel('Ticket Etiquette & Professionalism:')
+              .setPlaceholder('How do you manage angry members disputing bans or reporting issues?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('bias_favoritism')
-              .setLabel('Close friend breaks rules in chat:')
-              .setPlaceholder('How do you handle them without favoritism?')
+              .setCustomId('discord_confidentiality')
+              .setLabel('Confidentiality & Staff NDA:')
+              .setPlaceholder('What internal channels, logs, or information must remain strictly private?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('underage_tos')
-              .setLabel('Underage user or TOS violation:')
-              .setPlaceholder('Safety actions taken and evidence recording?')
+              .setCustomId('discord_security_raids')
+              .setLabel('Bot Outages & Raid Mitigation:')
+              .setPlaceholder('How do you detect, contain, and lockdown sudden mass-spam or token raids?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           )
@@ -9972,41 +10618,140 @@ client.on(Events.InteractionCreate, async (interaction) => {
         modal.addComponents(
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('failrp_vdm')
-              .setLabel('Handling mass VDM & Fail RP:')
-              .setPlaceholder('Immediate moderation actions and punishment log?')
+              .setCustomId('rule_frp_rdm_vdm')
+              .setLabel('Define FRP, RDM, and VDM:')
+              .setPlaceholder('Provide exact definitions and realistic examples for each...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('combatlog_evade')
-              .setLabel('Combat logging or cuff evading:')
-              .setPlaceholder('How do you confirm logs/clip and enforce punishment?')
+              .setCustomId('rule_nlr_safezones')
+              .setLabel('New Life Rule (NLR) & Safe Zones:')
+              .setPlaceholder('Define NLR and list all official server Safe Zones and rules...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('nlr_safezone')
-              .setLabel('NLR and Safe Zone gunplay rules:')
-              .setPlaceholder('Define both rules and how you handle violators...')
+              .setCustomId('rule_cop_baiting')
+              .setLabel('Cop Baiting & Cuff Rushing:')
+              .setPlaceholder('Define Cop Baiting and Cuff Rushing under server regulations...')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('admin_abuse')
-              .setLabel('Admin Commands & Abuse Prevention:')
-              .setPlaceholder('When are :jail, :to, :bring, :return, :kick allowed/abusive?')
+              .setCustomId('rule_gamepass_peacetime')
+              .setLabel('Gamepass Weapons & Peacetime Rules:')
+              .setPlaceholder('When are gamepass weapons allowed? What rules apply during Peacetime?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
-              .setCustomId('deescalation')
-              .setLabel('Handling player screaming bias in VC:')
-              .setPlaceholder('How do you maintain strict composure and resolve this?')
+              .setCustomId('rule_admin_protocol')
+              .setLabel('Admin Command Protocol & Evidence:')
+              .setPlaceholder('When are :jail, :to, :bring, :kick allowed and how do you record clips?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+      }
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('app_btn_step4_')) {
+      const appId = interaction.customId.replace('app_btn_step4_', '');
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
+      const isDiscord = appData.appType === 'Discord Staff';
+      const modal = new ModalBuilder()
+        .setCustomId(`app_modal_step4_${appId}`)
+        .setTitle('Step 4: Realistic Scenarios');
+
+      if (isDiscord) {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_mass_raid')
+              .setLabel('Mass Raid & Phishing Flood:')
+              .setPlaceholder('Multiple accounts flood general with phishing links. Step-by-step actions?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_toxic_arguments')
+              .setLabel('Heated Chat Conflict & Slurs:')
+              .setPlaceholder('Two members start a toxic argument in chat that turns into slurs. Actions?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_ticket_blackmail')
+              .setLabel('Angry Ticket Blackmail & Threats:')
+              .setPlaceholder('A banned member threatens to raid/doxx staff unless unbanned. Actions?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_friend_bias')
+              .setLabel('Staff Peer Exhibiting Bias:')
+              .setPlaceholder('Another staff member protects their friend who broke rules. How to handle?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_underage_member')
+              .setLabel('Underage Member Disclosure:')
+              .setPlaceholder('A user explicitly states they are 11 years old in chat. Protocol under ToS?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          )
+        );
+      } else {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_mass_vdm')
+              .setLabel('Mass VDM at Spawn:')
+              .setPlaceholder('Civilian in an armored truck rams spawn and kills 4 officers. Step-by-step actions?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_combat_log')
+              .setLabel('High-Speed Combat Logging:')
+              .setPlaceholder('Suspect flips during 100mph chase, gets cuffed, and leaves game. Steps?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_friend_abuse')
+              .setLabel('Friend or Supervisor Violating Rules:')
+              .setPlaceholder('Your friend or high-ranking department member commits FRP. How do you handle?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_disrespect_screaming')
+              .setLabel('Aggressive VC Disrespect & Bias Accusation:')
+              .setPlaceholder('A jailed player aggressively screams insults and bias in VC. How do you de-escalate?')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('scen_hitman_suicide')
+              .setLabel('Unauthorized Hitman / Suicide RP:')
+              .setPlaceholder('A player attempts unauthorized hitman RP or suicide roleplay. Immediate actions?')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
           )
@@ -10020,8 +10765,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const appId = interaction.customId.replace('app_btn_submit_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
 
-      if (!appData.step1Done || !appData.step2Done || !appData.step3Done) {
-        await interaction.reply({ content: '⚠️ Please complete all 3 steps before submitting your application.', flags: MessageFlags.Ephemeral });
+      if (!appData.step1Done || !appData.step2Done || !appData.step3Done || !appData.step4Done) {
+        await interaction.reply({ content: '⚠️ Please complete all 4 steps before submitting your application.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      if (appData.status === 'pending_review') {
+        await interaction.reply({ content: '⚠️ Your application has already been submitted and is pending staff review.', flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -10035,7 +10785,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       submittedCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `Thank you <@${interaction.user.id}>! Your application for **${appData.appType}** has been submitted.\n\n` +
-          `Our staff team will review your application. You will receive a direct message notification here once a verdict has been recorded.`
+          `Our staff leadership and review team will review your application. You will receive a direct message notification here once a final decision has been recorded.`
         )
       );
 
@@ -10044,7 +10794,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         flags: MessageFlags.IsComponentsV2
       });
 
-      // Dispatch to sequential review among staff with role 1548637141850918993
+      // Dispatch to support team and designated review staff
       await dispatchApplicationReview(interaction.client, appData);
       return;
     }
@@ -10054,11 +10804,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const appId = interaction.customId.replace('app_rev_claim_', '');
       const appData = [...activeApplications.values()].find((a) => a.id === appId);
       if (!appData) {
-        await interaction.reply({ content: 'This application has already been processed or expired.', flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: '⚠️ This application has already been processed or expired.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      if (appData.status === 'accepted' || appData.status === 'denied' || appData.verdictBy) {
+        await interaction.reply({
+          content: `⚠️ This application has already been **${appData.status?.toUpperCase()}** by **${appData.verdictBy?.tag || 'another staff member'}**.`,
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (appData.claimedReviewerId && appData.claimedReviewerId !== interaction.user.id) {
-        await interaction.reply({ content: `This application has already been claimed by <@${appData.claimedReviewerId}>.`, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: `⚠️ This application has already been claimed by <@${appData.claimedReviewerId}>.`, flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -10096,7 +10853,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_rev_page_')) {
       const parts = interaction.customId.split('_');
-      const pageIndex = parseInt(parts.pop(), 10) || 0;
+      const pageIndex = Math.max(0, Math.min(3, parseInt(parts.pop(), 10) || 0));
       const appId = parts.slice(3).join('_');
       const appData = [...activeApplications.values()].find((a) => a.id === appId);
       if (!appData) {
@@ -11486,6 +12243,19 @@ client.on(Events.MessageCreate, async (message) => {
 
         await message.reply({
           components: [receivedCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        return;
+      }
+
+      // ── -information command ──
+      if (lower === 'information' || lower.startsWith('information')) {
+        const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+        const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
+        const card = buildInformationCard('info_overview', message.guild);
+        await message.channel.send({
+          components: [card.toJSON()],
+          files,
           flags: MessageFlags.IsComponentsV2
         });
         return;
