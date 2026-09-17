@@ -2699,19 +2699,43 @@ async function handleSayCommand(interaction) {
     return;
   }
 
+  // Acknowledge immediately. In Discord's architecture, only ONE running bot process can
+  // claim the interaction token. A duplicate instance will receive Error 40060 and abort.
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  } catch {
+    // Another instance already acknowledged this interaction token
+    return;
+  }
+
   const messageText = interaction.options.getString('message', true);
   const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
   const attachment = interaction.options.getAttachment('attachment') || null;
 
   try {
+    // Channel deduplication check: if the bot already sent the exact same text in the last 4s, do not resend
+    const recent = await targetChannel.messages.fetch({ limit: 4 }).catch(() => null);
+    if (
+      recent &&
+      recent.some(
+        (m) =>
+          m.author?.id === client.user.id &&
+          m.content === messageText &&
+          Date.now() - m.createdTimestamp < 4000
+      )
+    ) {
+      await interaction.editReply({ content: '✅ Message sent.' }).catch(() => null);
+      return;
+    }
+
     const payload = { content: messageText };
     if (attachment) {
       payload.files = [attachment.url];
     }
     await targetChannel.send(payload);
-    await interaction.reply({ content: '✅ Message sent successfully.', flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: '✅ Message sent successfully.' });
   } catch (err) {
-    await interaction.reply({ content: `❌ Failed to send message: ${err.message}`, flags: MessageFlags.Ephemeral });
+    await interaction.editReply({ content: `❌ Failed to send message: ${err.message}` });
   }
 }
 
@@ -7269,9 +7293,16 @@ async function createTicketForUser(client, interaction, catKey, reason) {
   }
 }
 
+const processedInteractionIds = new Set();
 client.on(Events.InteractionCreate, async (interaction) => {
   // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
   if (interaction.guildId === '1530147023754367006') return;
+  if (!interaction?.id || processedInteractionIds.has(interaction.id)) return;
+  processedInteractionIds.add(interaction.id);
+  if (processedInteractionIds.size > 250) {
+    const oldest = processedInteractionIds.values().next().value;
+    processedInteractionIds.delete(oldest);
+  }
   try {
     // ─────────────── postpone: custom duration modal ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vote_delay_custom_')) {
@@ -10950,7 +10981,10 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   setTimeout(() => repliedCommandMessageIds.delete(userMessage.id), 15000);
 
   // Cross-instance and double-event deduplication:
-  // If the bot has already replied to this message in the channel, suppress duplicate
+  // Random jitter (40ms - 220ms) staggers simultaneous instances so the first instance's reply is visible to the second
+  const jitter = Math.floor(Math.random() * 180) + 40;
+  await new Promise((r) => setTimeout(r, jitter));
+
   try {
     const channelMsgs = await userMessage.channel?.messages.fetch({ limit: 8 }).catch(() => null);
     if (channelMsgs) {
@@ -11737,6 +11771,25 @@ client.on(Events.MessageCreate, async (message) => {
       }
       try {
         await message.delete().catch(() => null);
+
+        // Micro-jitter to desync multiple instances
+        const jitter = Math.floor(Math.random() * 180) + 40;
+        await new Promise((r) => setTimeout(r, jitter));
+
+        // Check if bot already posted this text in the channel in the last 4 seconds
+        const recent = await message.channel.messages.fetch({ limit: 4 }).catch(() => null);
+        if (
+          recent &&
+          recent.some(
+            (m) =>
+              m.author?.id === client.user.id &&
+              m.content === text &&
+              Date.now() - m.createdTimestamp < 4000
+          )
+        ) {
+          return;
+        }
+
         await message.channel.send({ content: text || undefined, files: files.length > 0 ? files : undefined });
       } catch (err) {
         console.error('Failed in -say:', err.message);
