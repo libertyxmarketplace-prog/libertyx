@@ -10396,42 +10396,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (startInteraction.replied || startInteraction.deferred) {
           await startInteraction.followUp({ content: '⚠️ This application type is currently closed.', flags: MessageFlags.Ephemeral }).catch(() => null);
         } else {
-          await startInteraction.reply({ content: '⚠️ This application type is currently closed.', flags: MessageFlags.Ephemeral });
+          await startInteraction.reply({ content: '⚠️ This application type is currently closed.', flags: MessageFlags.Ephemeral }).catch(() => null);
         }
         return;
       }
 
-      if (startingApplications.has(startInteraction.user.id)) {
-        if (startInteraction.replied || startInteraction.deferred) {
-          await startInteraction.followUp({ content: '⏳ Please wait a moment, your application is being opened.', flags: MessageFlags.Ephemeral }).catch(() => null);
-        } else {
-          await startInteraction.reply({ content: '⏳ Please wait a moment, your application is being opened.', flags: MessageFlags.Ephemeral });
+      // Step 1: Discord API Atomic Interaction Lock
+      // When multiple instances or rapid clicks happen, Discord permits ONLY ONE instance to claim the interaction.
+      if (!startInteraction.deferred && !startInteraction.replied) {
+        try {
+          await startInteraction.deferReply({ flags: MessageFlags.Ephemeral });
+        } catch (err) {
+          // If another instance already acknowledged this interaction, bail out immediately!
+          if (err.code === 40060 || err.code === 10062 || err.message?.includes('already been acknowledged')) {
+            console.log('[Deduplication] Interaction already claimed by another bot instance. Aborting duplicate.');
+            return;
+          }
         }
+      }
+
+      // In-process debounce lock
+      if (startingApplications.has(startInteraction.user.id)) {
+        await startInteraction.editReply({ content: '⏳ Please wait a moment, your application is already being opened.' }).catch(() => null);
         return;
       }
       startingApplications.add(startInteraction.user.id);
-      setTimeout(() => startingApplications.delete(startInteraction.user.id), 5000);
+      setTimeout(() => startingApplications.delete(startInteraction.user.id), 8000);
 
+      loadApplications();
       const existing = activeApplications.get(startInteraction.user.id);
       if (existing) {
         if (existing.status === 'pending_review') {
-          if (startInteraction.replied || startInteraction.deferred) {
-            await startInteraction.followUp({ content: '⚠️ You already have an active application under review by our staff team. You will be notified in your DMs once a decision is reached.', flags: MessageFlags.Ephemeral }).catch(() => null);
-          } else {
-            await startInteraction.reply({ content: '⚠️ You already have an active application under review by our staff team. You will be notified in your DMs once a decision is reached.', flags: MessageFlags.Ephemeral });
-          }
+          await startInteraction.editReply({
+            content: '⚠️ You already have an active application under review by our staff team. You will be notified in your DMs once a decision is reached.'
+          }).catch(() => null);
           return;
-        }
-
-        // If an application already exists in progress, delete previous DM card if possible
-        if (existing.dmMessageId) {
-          try {
-            const dmCh = await startInteraction.user.createDM().catch(() => null);
-            if (dmCh) {
-              const oldMsg = await dmCh.messages.fetch(existing.dmMessageId).catch(() => null);
-              if (oldMsg) await oldMsg.delete().catch(() => null);
-            }
-          } catch {}
         }
       }
 
@@ -10458,28 +10457,49 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       try {
         const dmCh = await startInteraction.user.createDM().catch(() => null);
-        if (dmCh) {
-          const recentDms = await dmCh.messages.fetch({ limit: 10 }).catch(() => null);
-          const recentAppMsg = recentDms?.find(m =>
-            m.author?.id === startInteraction.client.user.id &&
-            (Date.now() - m.createdTimestamp < 20000) &&
-            JSON.stringify(m.components || []).includes('Staff Application')
+        if (!dmCh) {
+          await startInteraction.editReply({
+            content: '❌ I could not open a Direct Message channel with you. Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.'
+          }).catch(() => null);
+          return;
+        }
+
+        const isAppMessage = (m) => {
+          if (m.author?.id !== startInteraction.client.user?.id) return false;
+          const compStr = JSON.stringify(m.components || []);
+          return (
+            compStr.includes('app_btn_step') ||
+            compStr.includes('Staff Application') ||
+            compStr.includes('Rules & Requirements') ||
+            (m.content && m.content.includes('Staff Application'))
           );
-          if (recentAppMsg) {
-            newApp.dmMessageId = recentAppMsg.id;
+        };
+
+        // Step 2: DM Channel Pre-Send Deduplication & Old Card Cleanup
+        const recentDms = await dmCh.messages.fetch({ limit: 15 }).catch(() => null);
+        if (recentDms) {
+          // If an application card was sent in the last 15 seconds, DO NOT SEND ANOTHER!
+          const veryRecentCard = recentDms.find(m => isAppMessage(m) && (Date.now() - m.createdTimestamp < 15000));
+          if (veryRecentCard) {
+            console.log(`[Deduplication] Application card ${veryRecentCard.id} already exists in DM. Reusing.`);
+            newApp.dmMessageId = veryRecentCard.id;
             activeApplications.set(startInteraction.user.id, newApp);
             saveApplications();
-            if (startInteraction.replied || startInteraction.deferred) {
-              await startInteraction.followUp({ content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`, flags: MessageFlags.Ephemeral }).catch(() => null);
-            } else {
-              await startInteraction.reply({ content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`, flags: MessageFlags.Ephemeral });
-            }
+            await startInteraction.editReply({
+              content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`
+            }).catch(() => null);
             return;
+          }
+
+          // Clean up old stale application cards so the user has only 1 fresh application card in DMs
+          const oldAppCards = recentDms.filter(m => isAppMessage(m));
+          for (const oldCard of oldAppCards.values()) {
+            await oldCard.delete().catch(() => null);
           }
         }
 
+        // Step 3: Send the clean single application card
         const dashboard = buildApplicantDashboard(newApp);
-        // NOTE: In Components V2, do NOT pass legacy 'content' field
         const dmMsg = await startInteraction.user.send({
           components: [dashboard.toJSON()],
           flags: MessageFlags.IsComponentsV2
@@ -10488,30 +10508,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
         activeApplications.set(startInteraction.user.id, newApp);
         saveApplications();
 
-        if (startInteraction.replied || startInteraction.deferred) {
-          await startInteraction.followUp({
-            content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
-            flags: MessageFlags.Ephemeral
-          }).catch(() => null);
-        } else {
-          await startInteraction.reply({
-            content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
-            flags: MessageFlags.Ephemeral
-          });
+        await startInteraction.editReply({
+          content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`
+        }).catch(() => null);
+
+        // Step 4: Post-Send Verification & Twin Duplicate Elimination
+        try {
+          await new Promise(r => setTimeout(r, 450));
+          const postFetch = await dmCh.messages.fetch({ limit: 6 }).catch(() => null);
+          if (postFetch) {
+            const duplicates = postFetch.filter(m =>
+              isAppMessage(m) &&
+              m.id !== dmMsg.id &&
+              (Date.now() - m.createdTimestamp < 15000)
+            );
+            for (const dup of duplicates.values()) {
+              console.log(`[Deduplication] Deleted twin duplicate application DM ${dup.id}`);
+              await dup.delete().catch(() => null);
+            }
+          }
+        } catch (postErr) {
+          console.warn('Post-send DM deduplication check error:', postErr.message);
         }
       } catch (err) {
         console.error('Failed to send application DM:', err);
-        if (startInteraction.replied || startInteraction.deferred) {
-          await startInteraction.followUp({
-            content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
-            flags: MessageFlags.Ephemeral
-          }).catch(() => null);
-        } else {
-          await startInteraction.reply({
-            content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
-            flags: MessageFlags.Ephemeral
-          });
-        }
+        await startInteraction.editReply({
+          content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`
+        }).catch(() => null);
       }
     }
 
@@ -12178,17 +12201,19 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   setTimeout(() => repliedCommandMessageIds.delete(userMessage.id), 15000);
 
   // Cross-instance and double-event deduplication:
-  // Random jitter (40ms - 220ms) staggers simultaneous instances so the first instance's reply is visible to the second
-  const jitter = Math.floor(Math.random() * 180) + 40;
+  // Stagger simultaneous instances so the first instance's reply is saved and visible to subsequent instances
+  const jitter = Math.floor(Math.random() * 280) + 120;
   await new Promise((r) => setTimeout(r, jitter));
 
+  const targetText = typeof replyOptions === 'string' ? replyOptions : replyOptions?.content;
+
   try {
-    const channelMsgs = await userMessage.channel?.messages.fetch({ limit: 8 }).catch(() => null);
+    const channelMsgs = await userMessage.channel?.messages.fetch({ limit: 10 }).catch(() => null);
     if (channelMsgs) {
       const alreadyAnswered = channelMsgs.some(
         (m) => m.author?.id === client.user?.id && (
           m.reference?.messageId === userMessage.id ||
-          (Date.now() - m.createdTimestamp < 4000 && m.content === (typeof replyOptions === 'string' ? replyOptions : replyOptions?.content))
+          (Date.now() - m.createdTimestamp < 8000 && targetText && (m.content === targetText || m.content?.includes(targetText.slice(0, 20))))
         )
       );
       if (alreadyAnswered) {
@@ -12209,12 +12234,35 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
     console.warn(`Could not send command reply: ${err.message}`);
     return;
   }
+
+  // Post-send deduplication check: delete any twin duplicates that managed to send in the same window
+  try {
+    await new Promise((r) => setTimeout(r, 450));
+    const postMsgs = await userMessage.channel?.messages.fetch({ limit: 6 }).catch(() => null);
+    if (postMsgs) {
+      const dups = postMsgs.filter(
+        (m) => m.author?.id === client.user?.id &&
+          m.id !== sent?.id &&
+          (
+            m.reference?.messageId === userMessage.id ||
+            (Date.now() - m.createdTimestamp < 6000 && targetText && (m.content === targetText || m.content?.includes(targetText.slice(0, 20))))
+          )
+      );
+      for (const dup of dups.values()) {
+        console.log(`[Deduplication] Deleted duplicate command reply ${dup.id}`);
+        await dup.delete().catch(() => null);
+      }
+    }
+  } catch (dupErr) {
+    console.warn('Post-reply deduplication error:', dupErr.message);
+  }
+
   setTimeout(async () => {
     try {
       await userMessage.delete().catch(() => null);
     } catch { }
     try {
-      await sent.delete().catch(() => null);
+      await sent?.delete().catch(() => null);
     } catch { }
   }, ms);
 }
