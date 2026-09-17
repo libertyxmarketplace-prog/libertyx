@@ -5806,8 +5806,7 @@ function buildApplicantDashboard(appData) {
   const card = new ContainerBuilder().setAccentColor(0x2b2d31);
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Alabama State Roleplay Staff Application\n` +
-      `> **Position:** **${appData.appType}**\n` +
+      `## ${appData.appType} Application\n` +
       `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)`
     )
   );
