@@ -4644,6 +4644,7 @@ const activeTickets = new Map(); // channelId -> ticketData
 const APPLICATIONS_FILE = fileURLToPath(new URL('../applications.json', import.meta.url));
 const activeApplications = new Map(); // applicantId -> applicationData
 const activeReviewSessions = new Map(); // reviewerId -> { appId, pageIndex }
+const startingApplications = new Set(); // applicantId -> in-flight application startup
 
 function loadApplications() {
   try {
@@ -4664,6 +4665,35 @@ function saveApplications() {
   } catch (err) {
     console.error('Failed to save applications.json:', err.message);
   }
+}
+
+function getOrCreateApplication(user, appId = null, customIdHint = '') {
+  let appData = null;
+  if (appId) {
+    appData = [...activeApplications.values()].find((a) => a.id === appId);
+  }
+  if (!appData && user?.id) {
+    appData = activeApplications.get(user.id);
+  }
+  if (!appData && user?.id) {
+    const isDiscord = (customIdHint || '').toLowerCase().includes('discord');
+    appData = {
+      id: appId || `${Date.now().toString(36)}_${user.id.slice(-4)}`,
+      applicantId: user.id,
+      applicantTag: user.tag || user.username || 'Applicant',
+      appType: isDiscord ? 'Discord Staff' : 'In-Game Staff',
+      step1Done: false,
+      step2Done: false,
+      step3Done: false,
+      generalInfo: null,
+      scenarioAnswers: null,
+      createdAt: Date.now(),
+      dmMessageId: null
+    };
+    activeApplications.set(user.id, appData);
+    saveApplications();
+  }
+  return appData;
 }
 
 const APPEALS_FILE = fileURLToPath(new URL('../appeals.json', import.meta.url));
@@ -7355,11 +7385,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 1 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step1_')) {
       const appId = interaction.customId.replace('app_modal_step1_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       appData.step1Done = true;
       saveApplications();
       const updatedCard = buildApplicantDashboard(appData);
@@ -7373,11 +7399,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 2 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step2_')) {
       const appId = interaction.customId.replace('app_modal_step2_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const robloxUser = interaction.fields.getTextInputValue('roblox_user')?.trim() || interaction.fields.getTextInputValue('discord_tag_user')?.trim() || 'N/A';
       const timezoneAge = interaction.fields.getTextInputValue('timezone_age')?.trim() || interaction.fields.getTextInputValue('timezone')?.trim() || 'N/A';
       const micSoftware = interaction.fields.getTextInputValue('mic_software')?.trim() || interaction.fields.getTextInputValue('bot_knowledge')?.trim() || 'N/A';
@@ -7407,11 +7429,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 3 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step3_')) {
       const appId = interaction.customId.replace('app_modal_step3_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const isDiscord = appData.appType === 'Discord Staff';
       if (isDiscord) {
         appData.scenarioAnswers = {
@@ -9079,14 +9097,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // ─────────────── Staff Application: Start Application (Select Menu & Buttons) ───────────────
-    const startingApplications = new Set();
     async function startStaffApplication(startInteraction, chosenOption) {
-      if (startingApplications.has(startInteraction.user.id)) return;
+      if (startingApplications.has(startInteraction.user.id)) {
+        if (startInteraction.replied || startInteraction.deferred) {
+          await startInteraction.followUp({ content: '⏳ Please wait a moment, your application is being opened.', flags: MessageFlags.Ephemeral }).catch(() => null);
+        } else {
+          await startInteraction.reply({ content: '⏳ Please wait a moment, your application is being opened.', flags: MessageFlags.Ephemeral });
+        }
+        return;
+      }
       startingApplications.add(startInteraction.user.id);
       setTimeout(() => startingApplications.delete(startInteraction.user.id), 5000);
 
       const existing = activeApplications.get(startInteraction.user.id);
       if (existing) {
+        if (existing.status === 'pending_review') {
+          if (startInteraction.replied || startInteraction.deferred) {
+            await startInteraction.followUp({ content: '⚠️ You already have an active application under review by our staff team. You will be notified in your DMs once a decision is reached.', flags: MessageFlags.Ephemeral }).catch(() => null);
+          } else {
+            await startInteraction.reply({ content: '⚠️ You already have an active application under review by our staff team. You will be notified in your DMs once a decision is reached.', flags: MessageFlags.Ephemeral });
+          }
+          return;
+        }
+
         // If an application already exists in progress, delete previous DM card if possible
         if (existing.dmMessageId) {
           try {
@@ -9169,11 +9202,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step Buttons (Applicant DM) ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step1_')) {
       const appId = interaction.customId.replace('app_btn_step1_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step1_${appId}`)
@@ -9210,11 +9239,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step2_')) {
       const appId = interaction.customId.replace('app_btn_step2_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step2_${appId}`)
@@ -9312,11 +9337,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step3_')) {
       const appId = interaction.customId.replace('app_btn_step3_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
       const isDiscord = appData.appType === 'Discord Staff';
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step3_${appId}`)
@@ -9415,11 +9436,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_submit_')) {
       const appId = interaction.customId.replace('app_btn_submit_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
-      if (!appData) {
-        await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
-        return;
-      }
+      const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
 
       if (!appData.step1Done || !appData.step2Done || !appData.step3Done) {
         await interaction.reply({ content: '⚠️ Please complete all 3 steps before submitting your application.', flags: MessageFlags.Ephemeral });
@@ -11065,14 +11082,36 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (raw === 'ticket panel' || raw === 'ticketpanel') {
+      const chanKey = `${message.guild.id}:${message.channel.id}`;
+      const existingMsgId = lastTicketPanelByChannel.get(chanKey);
+      let existingMsg = null;
+      if (existingMsgId) {
+        existingMsg = await message.channel.messages.fetch(existingMsgId).catch(() => null);
+      }
+
       const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
-      const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.jpg' })] : [];
+      const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
+      const card = buildTicketPanelContainer(bannerExists ? 'attachment://assistance_banner.png' : null);
+
+      if (existingMsg) {
+        try {
+          await existingMsg.edit({
+            components: [card.toJSON()],
+            files,
+            flags: MessageFlags.IsComponentsV2
+          });
+          await autoDeleteReply(message, '✅ Updated existing live assistance ticket panel in this channel.', 15000);
+          return;
+        } catch (editErr) {
+          console.warn('Could not edit existing ticket panel, posting new one:', editErr.message);
+        }
+      }
+
       const panelMsg = await message.channel.send({
-        components: [buildTicketPanelContainer(bannerExists ? 'attachment://assistance_banner.jpg' : null).toJSON()],
+        components: [card.toJSON()],
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      const chanKey = `${message.guild.id}:${message.channel.id}`;
       lastTicketPanelByChannel.set(chanKey, panelMsg.id);
       saveTicketPanels();
       await autoDeleteReply(message, '✅ Live assistance ticket panel posted and tracked in this channel.', 15000);
