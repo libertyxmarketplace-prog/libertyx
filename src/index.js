@@ -4714,6 +4714,28 @@ const activeApplications = new Map(); // applicantId -> applicationData
 const activeReviewSessions = new Map(); // reviewerId -> { appId, pageIndex }
 const startingApplications = new Set(); // applicantId -> in-flight application startup
 
+const APP_GATE_FILE = fileURLToPath(new URL('../app_gate.json', import.meta.url));
+const appGateState = { ingame: true, discord: true };
+
+function loadAppGateState() {
+  try {
+    if (!fs.existsSync(APP_GATE_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(APP_GATE_FILE, 'utf8'));
+    appGateState.ingame = raw.ingame ?? true;
+    appGateState.discord = raw.discord ?? true;
+  } catch (err) {
+    console.error('Failed to load app_gate.json:', err.message);
+  }
+}
+
+function saveAppGateState() {
+  try {
+    fs.writeFileSync(APP_GATE_FILE, JSON.stringify(appGateState, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save app_gate.json:', err.message);
+  }
+}
+
 function loadApplications() {
   try {
     if (!fs.existsSync(APPLICATIONS_FILE)) return;
@@ -5777,7 +5799,7 @@ const APP_PASSED_BANNER_URL =
 const APP_DECISIONS_CHANNEL_ID = '1232495212333498458';
 const APP_PANEL_CHANNEL_ID = '1539681421306896476';
 const APP_SUPPORT_TEAM_ROLE_ID = '1236052056201105418';
-const APP_REVIEWER_ROLE_ID = '1548637141850918993';
+const APP_REVIEWER_ROLE_ID = '1550007366261543012';
 const APP_SULMAN_USER_ID = '523693281541095424';
 const APP_ROSE_USER_ID = '885315812011958313';
 
@@ -5806,25 +5828,69 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   );
 
   card.addSeparatorComponents(thinLine());
+  
+  const options = [];
+  if (appGateState.ingame) {
+    options.push({
+      label: 'In-Game Staff Application',
+      value: 'app_start_ingame',
+      description: 'Apply to join the Alabama State Roleplay in-game staff team.'
+    });
+  } else {
+    options.push({
+      label: 'In-Game Staff (Closed)',
+      value: 'app_closed_ingame',
+      description: 'In-game staff applications are currently closed.'
+    });
+  }
+
+  if (appGateState.discord) {
+    options.push({
+      label: 'Discord Staff Application',
+      value: 'app_start_discord',
+      description: 'Apply to join the Discord moderation and ticket support team.'
+    });
+  } else {
+    options.push({
+      label: 'Discord Staff (Closed)',
+      value: 'app_closed_discord',
+      description: 'Discord staff applications are currently closed.'
+    });
+  }
+
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('app_select_position')
     .setPlaceholder('Select an application position...')
-    .addOptions(
-      {
-        label: 'In-Game Staff Application',
-        value: 'app_start_ingame',
-        description: 'Apply to join the Alabama State Roleplay in-game staff team.'
-      },
-      {
-        label: 'Discord Staff Application',
-        value: 'app_start_discord',
-        description: 'Apply to join the Discord moderation and ticket support team.'
-      }
-    );
+    .addOptions(options);
+
   const row = new ActionRowBuilder().addComponents(selectMenu);
   card.addActionRowComponents(row);
 
   return card;
+}
+
+async function refreshAllAppPanels(discordClient) {
+  const bannerExists = fs.existsSync(APP_BANNER_PATH);
+  const bannerUrl = bannerExists ? 'attachment://applications_banner.jpg' : null;
+  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.jpg' })] : [];
+
+  for (const [chanKey, msgId] of [...lastAppPanelByChannel]) {
+    const parts = chanKey.split(':');
+    if (parts.length !== 2) continue;
+    const channelId = parts[1];
+    try {
+      const ch = await discordClient.channels.fetch(channelId).catch(() => null);
+      if (!ch) continue;
+      const msg = await ch.messages.fetch(msgId).catch(() => null);
+      if (msg) {
+        await msg.edit({
+          components: [buildStaffApplicationPanelCard(bannerUrl).toJSON()],
+          files,
+          flags: MessageFlags.IsComponentsV2
+        }).catch(() => null);
+      }
+    } catch {}
+  }
 }
 
 function buildApplicantDashboard(appData) {
@@ -6795,6 +6861,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadAppPanels();
     loadVerifyPanels();
     loadInfoPanels();
+    loadAppGateState();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadApplications();
@@ -10325,6 +10392,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ─────────────── Staff Application: Start Application (Select Menu & Buttons) ───────────────
     async function startStaffApplication(startInteraction, chosenOption) {
+      if (chosenOption === 'app_closed_ingame' || chosenOption === 'app_closed_discord') {
+        if (startInteraction.replied || startInteraction.deferred) {
+          await startInteraction.followUp({ content: '⚠️ This application type is currently closed.', flags: MessageFlags.Ephemeral }).catch(() => null);
+        } else {
+          await startInteraction.reply({ content: '⚠️ This application type is currently closed.', flags: MessageFlags.Ephemeral });
+        }
+        return;
+      }
+
       if (startingApplications.has(startInteraction.user.id)) {
         if (startInteraction.replied || startInteraction.deferred) {
           await startInteraction.followUp({ content: '⏳ Please wait a moment, your application is being opened.', flags: MessageFlags.Ephemeral }).catch(() => null);
@@ -11933,6 +12009,7 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
     loadAppPanels();
     loadVerifyPanels();
     loadInfoPanels();
+    loadAppGateState();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadVotes();
@@ -12643,6 +12720,28 @@ client.on(Events.MessageCreate, async (message) => {
         await autoDeleteReply(message, '🔒 **Partnership Operations** is now closed.', 30000);
         return;
       }
+      if (/^ingame(\s*apps?|\s*applications?)?$/i.test(target)) {
+        appGateState.ingame = false;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔒 **In-Game Staff Applications** are now closed.', 30000);
+        return;
+      }
+      if (/^discord(\s*apps?|\s*applications?)?$/i.test(target)) {
+        appGateState.discord = false;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔒 **Discord Staff Applications** are now closed.', 30000);
+        return;
+      }
+      if (/^apps?(\s*all)?$/i.test(target)) {
+        appGateState.ingame = false;
+        appGateState.discord = false;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔒 **All Staff Applications** are now closed.', 30000);
+        return;
+      }
     }
 
     // Flexible -open <department>
@@ -12702,6 +12801,28 @@ client.on(Events.MessageCreate, async (message) => {
         saveTicketDeskState();
         await refreshAllTicketPanels(client);
         await autoDeleteReply(message, '🔓 **Partnership Operations** is now open.', 30000);
+        return;
+      }
+      if (/^ingame(\s*apps?|\s*applications?)?$/i.test(target)) {
+        appGateState.ingame = true;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔓 **In-Game Staff Applications** are now open.', 30000);
+        return;
+      }
+      if (/^discord(\s*apps?|\s*applications?)?$/i.test(target)) {
+        appGateState.discord = true;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔓 **Discord Staff Applications** are now open.', 30000);
+        return;
+      }
+      if (/^apps?(\s*all)?$/i.test(target)) {
+        appGateState.ingame = true;
+        appGateState.discord = true;
+        saveAppGateState();
+        await refreshAllAppPanels(client);
+        await autoDeleteReply(message, '🔓 **All Staff Applications** are now open.', 30000);
         return;
       }
     }
@@ -13388,6 +13509,7 @@ function handleGracefulShutdown(signal) {
     saveAppPanels();
     saveVerifyPanels();
     saveInfoPanels();
+    saveAppGateState();
     saveSafeZoneStrikes();
     saveSuggestions();
     savePanels();
