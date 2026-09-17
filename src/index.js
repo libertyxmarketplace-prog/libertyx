@@ -383,6 +383,19 @@ const purgeCommand = new SlashCommandBuilder()
     opt.setName('user').setDescription('Only delete messages from this user (optional)').setRequired(false)
   );
 
+const sayCommand = new SlashCommandBuilder()
+  .setName('say')
+  .setDescription('Send a message as the bot.')
+  .addStringOption((opt) =>
+    opt.setName('message').setDescription('The message to send').setRequired(true)
+  )
+  .addAttachmentOption((opt) =>
+    opt.setName('attachment').setDescription('Optional image or file to attach').setRequired(false)
+  )
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Optional channel to send to (defaults to current channel)').setRequired(false)
+  );
+
 const antiNukeCommand = new SlashCommandBuilder()
   .setName('antinuke')
   .setDescription('Server security and anti-nuke management.')
@@ -1978,11 +1991,7 @@ async function handleVerifyCommand(interaction) {
   const container = buildVerificationContainer(bannerName);
 
   const chanKey = `${interaction.guildId}:${interaction.channelId}`;
-  const existingMsgId = lastVerifyPanelByChannel.get(chanKey);
-  let existingMsg = null;
-  if (existingMsgId) {
-    existingMsg = await interaction.channel.messages.fetch(existingMsgId).catch(() => null);
-  }
+  let existingMsg = await findExistingPanelMessage(interaction.channel, 'verify');
 
   if (existingMsg) {
     try {
@@ -1991,7 +2000,9 @@ async function handleVerifyCommand(interaction) {
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      await interaction.editReply({ content: `✅ Updated existing verification dashboard in <#${interaction.channelId}>!` });
+      lastVerifyPanelByChannel.set(chanKey, existingMsg.id);
+      saveVerifyPanels();
+      await interaction.editReply({ content: `✅ Refreshed existing verification dashboard in <#${interaction.channelId}>!` });
       return;
     } catch (editErr) {
       console.warn('Could not edit existing verification panel, sending new one:', editErr.message);
@@ -2623,6 +2634,12 @@ async function handlePurgeCommand(interaction) {
     return;
   }
 
+  const botMember = interaction.guild?.members?.me || (await interaction.guild?.members?.fetchMe().catch(() => null));
+  if (botMember && !interaction.channel.permissionsFor(botMember)?.has(PermissionFlagsBits.ManageMessages)) {
+    await interaction.reply({ content: '❌ I do not have the **Manage Messages** permission in this channel.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
   const amount = interaction.options.getInteger('amount', true);
   const filterUser = interaction.options.getUser('user') || null;
 
@@ -2631,9 +2648,31 @@ async function handlePurgeCommand(interaction) {
     const fetched = await interaction.channel.messages.fetch({ limit: amount });
     const toDelete = filterUser ? fetched.filter((m) => m.author.id === filterUser.id) : fetched;
 
-    const deleted = await interaction.channel.bulkDelete(toDelete, true);
+    if (toDelete.size === 0) {
+      await interaction.editReply({ content: '⚠️ No eligible messages found to purge.' });
+      return;
+    }
+
+    let deletedCount = 0;
+    if (toDelete.size === 1) {
+      await toDelete.first().delete().catch(() => null);
+      deletedCount = 1;
+    } else {
+      const bulkRes = await interaction.channel.bulkDelete(toDelete, true).catch(async () => {
+        let count = 0;
+        for (const msg of toDelete.values()) {
+          try {
+            await msg.delete();
+            count++;
+          } catch {}
+        }
+        return { size: count };
+      });
+      deletedCount = bulkRes?.size || 0;
+    }
+
     await interaction.editReply({
-      content: `🧹 Successfully purged **${deleted.size}** message(s)${filterUser ? ` from <@${filterUser.id}>` : ''}.`
+      content: `🧹 Successfully purged **${deletedCount}** message(s)${filterUser ? ` from <@${filterUser.id}>` : ''}.`
     });
 
     const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
@@ -2642,7 +2681,7 @@ async function handlePurgeCommand(interaction) {
     logCard.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `> **Channel:** <#${interaction.channelId}>\n` +
-        `> **Amount:** **${deleted.size}** messages\n` +
+        `> **Amount:** **${deletedCount}** messages\n` +
         `> **Moderator:** <@${interaction.user.id}>\n` +
         `> **Target Filter:** ${filterUser ? `<@${filterUser.id}>` : '*All users*'}`
       )
@@ -2650,6 +2689,29 @@ async function handlePurgeCommand(interaction) {
     await sendSecurityLog(interaction.guild, logCard);
   } catch (err) {
     await interaction.editReply({ content: `❌ Failed to purge messages: ${err.message}` });
+  }
+}
+
+async function handleSayCommand(interaction) {
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  if (!isStaffMember(member)) {
+    await interaction.reply({ content: '❌ You do not have permission to use `/say`.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const messageText = interaction.options.getString('message', true);
+  const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+  const attachment = interaction.options.getAttachment('attachment') || null;
+
+  try {
+    const payload = { content: messageText };
+    if (attachment) {
+      payload.files = [attachment.url];
+    }
+    await targetChannel.send(payload);
+    await interaction.reply({ content: '✅ Message sent successfully.', flags: MessageFlags.Ephemeral });
+  } catch (err) {
+    await interaction.reply({ content: `❌ Failed to send message: ${err.message}`, flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -4867,6 +4929,50 @@ function saveVerifyPanels() {
   }
 }
 
+async function findExistingPanelMessage(channel, type) {
+  if (!channel || !channel.guild) return null;
+  const chanKey = `${channel.guild.id}:${channel.id}`;
+  let map = null;
+  if (type === 'ticket') map = lastTicketPanelByChannel;
+  else if (type === 'verify') map = lastVerifyPanelByChannel;
+  else if (type === 'app') map = lastAppPanelByChannel;
+
+  const savedId = map?.get(chanKey);
+  if (savedId) {
+    const msg = await channel.messages.fetch(savedId).catch(() => null);
+    if (msg) return msg;
+  }
+
+  // Scan recent 50 messages in the channel to find an existing panel posted by this bot
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!recent) return null;
+
+  for (const msg of recent.values()) {
+    if (msg.author?.id !== client.user?.id) continue;
+    const str = JSON.stringify(msg.components || []);
+    if (type === 'ticket') {
+      if (str.includes('ticket_select_department') || str.includes('ticket_open_') || str.includes('Support Desk') || str.includes('Assistance Ticket')) {
+        map?.set(chanKey, msg.id);
+        saveTicketPanels();
+        return msg;
+      }
+    } else if (type === 'verify') {
+      if (str.includes('verify_start') || str.includes('verification') || str.includes('Verification')) {
+        map?.set(chanKey, msg.id);
+        saveVerifyPanels();
+        return msg;
+      }
+    } else if (type === 'app') {
+      if (str.includes('staff_app_open') || str.includes('Staff Application') || str.includes('app_type_select')) {
+        map?.set(chanKey, msg.id);
+        saveAppPanels();
+        return msg;
+      }
+    }
+  }
+  return null;
+}
+
 async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
   const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
   const bannerUrl = bannerExists ? 'attachment://assistance_banner.png' : (TICKET_CONFIG?.bannerUrl || null);
@@ -5196,7 +5302,73 @@ function buildPartnershipGuideContainer() {
     )
   );
 
+  container.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('part_copy_our_ad')
+        .setLabel('Copy Our Advertisement')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('📋')
+    )
+  );
+
   return container;
+}
+
+const ASRP_OFFICIAL_AD = `**Alabama State Roleplay** | *Emergency Response: Liberty County*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Welcome to **Alabama State Roleplay**, a premier ER:LC community dedicated to realistic, immersive, and high-standard roleplay operations!
+
+**What We Offer:**
+> 🚓 Realistic & Active Law Enforcement Operations
+> 🚒 Dedicated Fire & Emergency Medical Services
+> 👥 Welcoming, Friendly & Highly Active Community
+> 🛡️ Experienced, Mature & Fair Staff Team
+> 🎁 Daily In-Game Server Start-Ups & Events
+
+**Join Our Community Today:**
+https://discord.gg/asrp
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+
+function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
+  const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
+  selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
+  selectTypeCard.addSeparatorComponents(thinLine());
+  selectTypeCard.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      (userId ? `Welcome <@${userId}>! ` : 'Welcome! ') +
+      `Please choose which partnership path you would like to pursue:\n\n` +
+      `• **Regular Partnership**\n` +
+      `> Mutual advertisement exchange for communities meeting our 120+ member requirement.\n\n` +
+      `• **Paid Partnership**\n` +
+      `> Direct promotion game passes for communities seeking advertising with here or everyone ping tiers.\n\n` +
+      `• **Staff Partnership & Transfers**\n` +
+      `> Reciprocal staff transfers and rank correlation for partner community staff members.`
+    )
+  );
+  selectTypeCard.addSeparatorComponents(thinLine());
+  const selectTypeRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`part_type_regular_${channelId}`)
+      .setLabel('Regular Partnership')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`part_type_paid_${channelId}`)
+      .setLabel('Paid Partnership')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`part_type_staff_${channelId}`)
+      .setLabel(staffOpen ? 'Staff Partnership' : 'Staff Partnership (Closed)')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!staffOpen),
+    new ButtonBuilder()
+      .setCustomId('part_copy_our_ad')
+      .setLabel('Copy Our Ad')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('📋')
+  );
+  selectTypeCard.addActionRowComponents(selectTypeRow);
+  return selectTypeCard;
 }
 
 // ═══════════════════════ Staff Application System ═══════════════════════
@@ -5502,11 +5674,7 @@ async function handleStaffApplicationPanelCommand(interaction) {
   const card = buildStaffApplicationPanelCard(bannerExists ? 'attachment://applications_banner.jpg' : null);
 
   const chanKey = `${interaction.guildId}:${targetChannel.id}`;
-  const existingMsgId = lastAppPanelByChannel.get(chanKey);
-  let existingMsg = null;
-  if (existingMsgId) {
-    existingMsg = await targetChannel.messages.fetch(existingMsgId).catch(() => null);
-  }
+  let existingMsg = await findExistingPanelMessage(targetChannel, 'app');
 
   if (existingMsg) {
     try {
@@ -5515,7 +5683,9 @@ async function handleStaffApplicationPanelCommand(interaction) {
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      await interaction.editReply({ content: `✅ Updated existing Staff Application Panel in <#${targetChannel.id}>.` });
+      lastAppPanelByChannel.set(chanKey, existingMsg.id);
+      saveAppPanels();
+      await interaction.editReply({ content: `✅ Refreshed existing Staff Application Panel in <#${targetChannel.id}>.` });
       return;
     } catch (editErr) {
       console.warn('Could not edit existing application panel, sending new one:', editErr.message);
@@ -6020,6 +6190,7 @@ function getSlashPayload() {
     kickCommand.toJSON(),
     timeoutCommand.toJSON(),
     purgeCommand.toJSON(),
+    sayCommand.toJSON(),
     antiNukeCommand.toJSON(),
     verifyCommand.toJSON(),
     erlcCommand.toJSON(),
@@ -7043,39 +7214,8 @@ async function createTicketForUser(client, interaction, catKey, reason) {
 
     // If partnership ticket, post the interactive Regular vs Paid vs Staff selector
     if (isPartnership) {
-      const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
-      selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
-      selectTypeCard.addSeparatorComponents(thinLine());
-      selectTypeCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `Welcome <@${interaction.user.id}>! Please choose which partnership path you would like to pursue:\n\n` +
-          `• **Regular Partnership**\n` +
-          `> Mutual advertisement exchange for communities meeting our 120+ member requirement.\n\n` +
-          `• **Paid Partnership**\n` +
-          `> Direct promotion game passes for communities seeking advertising with here or everyone ping tiers.\n\n` +
-          `• **Staff Partnership & Transfers**\n` +
-          `> Reciprocal staff transfers and rank correlation for partner community staff members.`
-        )
-      );
-      selectTypeCard.addSeparatorComponents(thinLine());
       const staffPartOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
-      const selectTypeRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`part_type_regular_${ticketChannel.id}`)
-          .setLabel('Regular Partnership')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(`part_type_paid_${ticketChannel.id}`)
-          .setLabel('Paid Partnership')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(`part_type_staff_${ticketChannel.id}`)
-          .setLabel(staffPartOpen ? 'Staff Partnership' : 'Staff Partnership (Closed)')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(!staffPartOpen)
-      );
-      selectTypeCard.addActionRowComponents(selectTypeRow);
-
+      const selectTypeCard = buildPartnershipSelectCard(ticketChannel.id, staffPartOpen, interaction.user.id);
       await ticketChannel.send({
         components: [selectTypeCard.toJSON()],
         flags: MessageFlags.IsComponentsV2
@@ -7975,11 +8115,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const chanKey = `${interaction.guildId}:${targetChannel.id}`;
-        const prevMsgId = lastTicketPanelByChannel.get(chanKey);
-        let existingMsg = null;
-        if (prevMsgId) {
-          existingMsg = await targetChannel.messages.fetch(prevMsgId).catch(() => null);
-        }
+        let existingMsg = await findExistingPanelMessage(targetChannel, 'ticket');
 
         const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
         const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
@@ -7991,8 +8127,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
               components: [buildTicketPanelContainer().toJSON()],
               flags: MessageFlags.IsComponentsV2
             });
+            lastTicketPanelByChannel.set(chanKey, existingMsg.id);
+            saveTicketPanels();
             await interaction.editReply({
-              content: `✅ Updated existing assistance ticket panel in <#${targetChannel.id}>.`
+              content: `✅ Refreshed existing assistance ticket panel in <#${targetChannel.id}>.`
             });
             return;
           } catch (editErr) {
@@ -8088,6 +8226,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       } else if (interaction.commandName === 'purge') {
         await handlePurgeCommand(interaction);
+        return;
+      } else if (interaction.commandName === 'say') {
+        await handleSayCommand(interaction);
         return;
       } else if (interaction.commandName === 'antinuke') {
         await handleAntiNukeCommand(interaction);
@@ -8591,6 +8732,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId === 'part_copy_our_ad') {
+      await interaction.reply({
+        content:
+          `### 📋 Official Server Advertisement — Alabama State Roleplay\n` +
+          `Copy the text inside the code block below to post in your server's partnership channel:\n\n` +
+          `\`\`\`\n` +
+          `${ASRP_OFFICIAL_AD}\n` +
+          `\`\`\`\n` +
+          `> 💡 **Tip:** On mobile and desktop Discord, hover over or tap the code block to click **Copy**.\n` +
+          `> After posting in your server, submit screenshot proof in this ticket via \`/proof partnership\` or by uploading your image here!`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     // ─────────────── Partnership Type Selection Buttons ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('part_type_regular_')) {
       const channelId = interaction.customId.replace('part_type_regular_', '');
@@ -8626,7 +8782,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         new ButtonBuilder()
           .setCustomId(`ticket_part_reqs_${channelId}`)
           .setLabel('View Partnership Requirements')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId('part_copy_our_ad')
+          .setLabel('Copy Our Advertisement')
           .setStyle(ButtonStyle.Secondary)
+          .setEmoji('📋')
       );
       regularCard.addActionRowComponents(regularRow);
 
@@ -8644,22 +8805,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const staffPartOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
       if (!staffPartOpen) {
         try {
-          const updatedRows = interaction.message.components.map((row) => {
-            const rb = ActionRowBuilder.from(row);
-            rb.components = rb.components.map((c) => {
-              const btn = ButtonBuilder.from(c);
-              if (btn.data.custom_id?.startsWith('part_type_staff_')) {
-                btn.setStyle(ButtonStyle.Secondary);
-                btn.setDisabled(true);
-                btn.setLabel('Staff Partnership (Closed)');
-              }
-              return btn;
-            });
-            return rb;
+          const card = buildPartnershipSelectCard(channelId, false, ticket?.userId);
+          await interaction.update({
+            components: [card.toJSON()],
+            flags: MessageFlags.IsComponentsV2
           });
-          await interaction.update({ components: updatedRows });
-        } catch {}
-        await interaction.followUp({ content: '🔒 **Staff Partnership** is currently closed by staff.', flags: MessageFlags.Ephemeral });
+          await interaction.followUp({
+            content: '🔒 **Staff Partnership** is currently closed by staff.',
+            flags: MessageFlags.Ephemeral
+          });
+        } catch (updateErr) {
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: '🔒 **Staff Partnership** is currently closed by staff.',
+              flags: MessageFlags.Ephemeral
+            }).catch(() => null);
+          } else {
+            await interaction.followUp({
+              content: '🔒 **Staff Partnership** is currently closed by staff.',
+              flags: MessageFlags.Ephemeral
+            }).catch(() => null);
+          }
+        }
         return;
       }
 
@@ -9092,13 +9259,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const u = await client.users.fetch(targetUserId).catch(() => null);
         if (u) {
-          await u.send({
-            content:
-              `⚠️ **Partnership Blacklist Notice — Alabama State Roleplay**\n\n` +
-              `You have been issued a warning and are **banned from partnering with us for 1 month** until <t:${Math.floor(bannedUntil / 1000)}:F>.\n` +
-              `> **Reason:** Submitting fraudulent or fake proof of advertisement.\n` +
-              `> **Action Taken:** Any active advertisements deleted and partnership blacklisted for 1 month.`
-          }).catch(() => null);
+          const dmChan = await u.createDM().catch(() => null);
+          if (dmChan) {
+            const recentDms = await dmChan.messages.fetch({ limit: 6 }).catch(() => null);
+            const alreadySent = recentDms && recentDms.some((m) =>
+              m.author?.id === client.user.id &&
+              m.content?.includes('Partnership Blacklist Notice') &&
+              Date.now() - m.createdTimestamp < 15000
+            );
+            if (!alreadySent) {
+              await dmChan.send({
+                content:
+                  `⚠️ **Partnership Blacklist Notice — Alabama State Roleplay**\n\n` +
+                  `You have been issued a warning and are **banned from partnering with us for 1 month** until <t:${Math.floor(bannedUntil / 1000)}:F>.\n` +
+                  `> **Reason:** Submitting fraudulent or fake proof of advertisement.\n` +
+                  `> **Action Taken:** Any active advertisements deleted and partnership blacklisted for 1 month.`
+              }).catch(() => null);
+            }
+          }
         }
       } catch {}
 
@@ -10006,13 +10184,15 @@ function inspectAdContent(text) {
 
 async function processPartnershipProof({ guild, channel, author, ticket, imageUrl, replyTarget, isInteraction = false }) {
   // ── Step 1: Send initial 30-second AI review notice ──
-  const reviewCard = new ContainerBuilder().setAccentColor(0x3498db);
+  const finishTs = Math.floor(Date.now() / 1000) + 30;
+  const reviewCard = new ContainerBuilder().setAccentColor(0x2b2d31);
   reviewCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔍 AI Verification In Progress'));
   reviewCard.addSeparatorComponents(thinLine());
   reviewCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `> **Analyzing Submission:** Our AI is now inspecting your server advertisement, validating formatting, and screening for prohibited content and community safety rules.\n\n` +
-      `-# Review inspection window: ~30 seconds. Please wait...`
+      `⏳ **Review Inspection Window:** Completes <t:${finishTs}:R> (<t:${finishTs}:T>)\n` +
+      `-# Please wait while our system analyzes your submission...`
     )
   );
 
@@ -10145,17 +10325,33 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
   saveTickets();
 
   // ── Step 6: Remodeled Partnership Approved & Published card (BLUE, NO GREEN, Close Button, 5-min auto close) ──
+  const autoCloseTs = Math.floor(Date.now() / 1000) + 300;
   const confirmCard = new ContainerBuilder().setAccentColor(0x3498db); // Blue accent, NO green!
-  confirmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Approved & Published!'));
+  confirmCard.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('## 🤝 Partnership Approved & Published!')
+  );
   confirmCard.addSeparatorComponents(thinLine());
   confirmCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> **AI Verification:** Passed & Approved\n` +
-      `> Your proof screenshot has been recorded and archived in <#${PROOF_CHANNEL_ID}>.\n` +
-      `> Your server advertisement has been published to <#${PARTNERSHIP_PUBLISH_CHANNEL_ID}>.\n\n` +
-      `> ⚠️ **Important Requirement:** You must remain a member of **Alabama State Roleplay** for your advertisement to stay active. If you leave the server, your advertisement will automatically be deleted.\n\n` +
-      `**Thank you for partnering with Alabama State Roleplay!**\n\n` +
-      `⏱️ *This ticket is finished and will automatically close in **5 minutes** if not closed below.*`
+      `### Partnership Summary\n` +
+      `• **Partner Community:** **${partnerName}**\n` +
+      `• **Representative:** <@${author.id}>\n` +
+      `• **AI Safety Inspection:** <:Check:1549944835299868702> **Passed & Verified**\n` +
+      `• **Ad Published To:** <#${PARTNERSHIP_PUBLISH_CHANNEL_ID}>\n` +
+      `• **Proof Archive:** Recorded in <#${PROOF_CHANNEL_ID}>`
+    )
+  );
+  confirmCard.addSeparatorComponents(thinLine());
+  confirmCard.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Community Guidelines & Retention Notice\n` +
+      `> ⚠️ **Important:** Community representatives must remain in **Alabama State Roleplay**. If you leave the server, our automated system will immediately remove your advertisement from our partnership channel.`
+    )
+  );
+  confirmCard.addSeparatorComponents(thinLine());
+  confirmCard.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `⏱️ *This ticket has concluded and will automatically archive and close <t:${autoCloseTs}:R>.*`
     )
   );
 
@@ -10165,6 +10361,7 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
         .setCustomId('ticket_close')
         .setLabel('Close Ticket')
         .setStyle(ButtonStyle.Danger)
+        .setEmoji('🔒')
     )
   );
 
@@ -10880,7 +11077,21 @@ client.on(Events.MessageCreate, async (message) => {
         ticket.partnershipStep = 'awaiting_screenshot';
         saveTickets();
 
-        const receivedCard = new ContainerBuilder().setAccentColor(0xd69a5c);
+        // Deduplicate cross-instance or rapid submissions
+        const recentAppReplies = await message.channel.messages.fetch({ limit: 6 }).catch(() => null);
+        if (
+          recentAppReplies &&
+          recentAppReplies.some(
+            (m) =>
+              m.author?.id === client.user.id &&
+              Date.now() - m.createdTimestamp < 10000 &&
+              (JSON.stringify(m.components || []).includes('Partnership Application & Advertisement Received') || m.content?.includes('Partnership Application & Advertisement Received'))
+          )
+        ) {
+          return;
+        }
+
+        const receivedCard = new ContainerBuilder().setAccentColor(0x2b2d31);
         receivedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Application & Advertisement Received!'));
         receivedCard.addSeparatorComponents(thinLine());
         receivedCard.addTextDisplayComponents(
@@ -10891,6 +11102,15 @@ client.on(Events.MessageCreate, async (message) => {
             `-# if not uploaded partnership will be removed and you will be blacklisted`
           )
         );
+
+        const copyRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('part_copy_our_ad')
+            .setLabel('Copy Our Advertisement')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('📋')
+        );
+        receivedCard.addActionRowComponents(copyRow);
 
         await message.reply({
           components: [receivedCard.toJSON()],
@@ -11135,11 +11355,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     if (raw === 'ticket panel' || raw === 'ticketpanel') {
       const chanKey = `${message.guild.id}:${message.channel.id}`;
-      const existingMsgId = lastTicketPanelByChannel.get(chanKey);
-      let existingMsg = null;
-      if (existingMsgId) {
-        existingMsg = await message.channel.messages.fetch(existingMsgId).catch(() => null);
-      }
+      let existingMsg = await findExistingPanelMessage(message.channel, 'ticket');
 
       const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
       const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
@@ -11152,7 +11368,9 @@ client.on(Events.MessageCreate, async (message) => {
             files,
             flags: MessageFlags.IsComponentsV2
           });
-          await autoDeleteReply(message, '✅ Updated existing live assistance ticket panel in this channel.', 15000);
+          lastTicketPanelByChannel.set(chanKey, existingMsg.id);
+          saveTicketPanels();
+          await autoDeleteReply(message, '✅ Refreshed existing live assistance ticket panel in this channel.', 15000);
           return;
         } catch (editErr) {
           console.warn('Could not edit existing ticket panel, posting new one:', editErr.message);
@@ -11238,21 +11456,12 @@ client.on(Events.MessageCreate, async (message) => {
           const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
           if (recent) {
             for (const msg of recent.values()) {
-              if (msg.author?.id === client.user.id && msg.components?.some((r) => r.components?.some((c) => c.customId?.startsWith('part_type_staff_')))) {
-                const updatedRows = msg.components.map((row) => {
-                  const rb = ActionRowBuilder.from(row);
-                  rb.components = rb.components.map((c) => {
-                    const btn = ButtonBuilder.from(c);
-                    if (btn.data.custom_id?.startsWith('part_type_staff_')) {
-                      btn.setStyle(ButtonStyle.Secondary);
-                      btn.setDisabled(true);
-                      btn.setLabel('Staff Partnership (Closed)');
-                    }
-                    return btn;
-                  });
-                  return rb;
-                });
-                await msg.edit({ components: updatedRows }).catch(() => null);
+              if (msg.author?.id === client.user.id && JSON.stringify(msg.components || []).includes('part_type_')) {
+                const updatedCard = buildPartnershipSelectCard(message.channel.id, false);
+                await msg.edit({
+                  components: [updatedCard.toJSON()],
+                  flags: MessageFlags.IsComponentsV2
+                }).catch(() => null);
               }
             }
           }
@@ -11307,21 +11516,12 @@ client.on(Events.MessageCreate, async (message) => {
           const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
           if (recent) {
             for (const msg of recent.values()) {
-              if (msg.author?.id === client.user.id && msg.components?.some((r) => r.components?.some((c) => c.customId?.startsWith('part_type_staff_')))) {
-                const updatedRows = msg.components.map((row) => {
-                  const rb = ActionRowBuilder.from(row);
-                  rb.components = rb.components.map((c) => {
-                    const btn = ButtonBuilder.from(c);
-                    if (btn.data.custom_id?.startsWith('part_type_staff_')) {
-                      btn.setStyle(ButtonStyle.Secondary);
-                      btn.setDisabled(false);
-                      btn.setLabel('Staff Partnership');
-                    }
-                    return btn;
-                  });
-                  return rb;
-                });
-                await msg.edit({ components: updatedRows }).catch(() => null);
+              if (msg.author?.id === client.user.id && JSON.stringify(msg.components || []).includes('part_type_')) {
+                const updatedCard = buildPartnershipSelectCard(message.channel.id, true);
+                await msg.edit({
+                  components: [updatedCard.toJSON()],
+                  flags: MessageFlags.IsComponentsV2
+                }).catch(() => null);
               }
             }
           }
@@ -11523,20 +11723,62 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
+    if (raw.startsWith('say ') || raw === 'say') {
+      const member = message.member || (await message.guild?.members.fetch(message.author.id).catch(() => null));
+      if (!isStaffMember(member)) {
+        await autoDeleteReply(message, '❌ You must have staff permissions to use `-say`.', 15000);
+        return;
+      }
+      const text = message.content.replace(/^[-!?.](?:say)\s*/i, '').trim();
+      const files = message.attachments.map((a) => a.url);
+      if (!text && files.length === 0) {
+        await autoDeleteReply(message, '❌ Please provide a message: `-say <text>`', 15000);
+        return;
+      }
+      try {
+        await message.delete().catch(() => null);
+        await message.channel.send({ content: text || undefined, files: files.length > 0 ? files : undefined });
+      } catch (err) {
+        console.error('Failed in -say:', err.message);
+      }
+      return;
+    }
+
     if (raw.startsWith('purge ') || raw === 'purge') {
+      const member = message.member || (await message.guild?.members.fetch(message.author.id).catch(() => null));
+      if (!isStaffMember(member) && !member?.permissions?.has(PermissionFlagsBits.ManageMessages)) {
+        await autoDeleteReply(message, '❌ You do not have permission to purge messages.', 15000);
+        return;
+      }
       const parts = message.content.slice(1).trim().split(/\s+/);
       const amount = Math.min(Math.max(parseInt(parts[1], 10) || 10, 1), 100);
       try {
         await message.delete().catch(() => null);
         const fetched = await message.channel.messages.fetch({ limit: amount });
-        const deleted = await message.channel.bulkDelete(fetched, true);
+        let deletedCount = 0;
+        if (fetched.size === 1) {
+          await fetched.first().delete().catch(() => null);
+          deletedCount = 1;
+        } else if (fetched.size > 1) {
+          const res = await message.channel.bulkDelete(fetched, true).catch(async () => {
+            let count = 0;
+            for (const msg of fetched.values()) {
+              try {
+                await msg.delete();
+                count++;
+              } catch {}
+            }
+            return { size: count };
+          });
+          deletedCount = res ? res.size : 0;
+        }
         const card = new ContainerBuilder().setAccentColor(0x2b2d31);
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🧹 Messages Purged'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
             `> **Channel:** <#${message.channelId}>\n` +
-            `> **Amount:** **${deleted.size}** messages\n` +
+            `> **Amount:** **${deletedCount}** messages\n` +
             `> **Moderator:** <@${message.author.id}>`
           )
         );
@@ -12005,6 +12247,7 @@ export {
   kickCommand,
   timeoutCommand,
   purgeCommand,
+  sayCommand,
   antiNukeCommand,
   ANTINUKE_CONFIG,
   backupGuildState,
