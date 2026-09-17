@@ -572,12 +572,17 @@ const unaddCommand = new SlashCommandBuilder()
 
 const informationCommand = new SlashCommandBuilder()
   .setName('information')
-  .setDescription('Display or post official Alabama State Roleplay information, rules, and FAQ.')
-  .addChannelOption((opt) =>
-    opt
-      .setName('channel')
-      .setDescription('Target channel to post the information panel to (Staff only)')
-      .setRequired(false)
+  .setDescription('Official Alabama State Roleplay information system.')
+  .addSubcommand((sub) =>
+    sub
+      .setName('panel')
+      .setDescription('Post or view the official information panel.')
+      .addChannelOption((opt) =>
+        opt
+          .setName('channel')
+          .setDescription('Target channel to post the information panel to (Staff only)')
+          .setRequired(false)
+      )
   );
 
 const STAFF_CONFIG = {
@@ -5458,10 +5463,10 @@ function buildStaffTransferOverviewCard(ticket, channelId) {
 // ═══════════════════════ Official Information & Rules System ═══════════════════════
 const INFORMATION_BANNER_PATH = fileURLToPath(new URL('./assets/information_banner.png', import.meta.url));
 
-function buildInformationCard(section = 'info_overview', guild = null) {
-  const card = new ContainerBuilder().setAccentColor(0xe67e22); // Warm glowing orange matching banner
+function buildInformationCard(section = 'info_overview', guild = null, includeBanner = true) {
+  const card = new ContainerBuilder().setAccentColor(0xe67e22);
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
-  const bannerUrl = bannerExists ? 'attachment://information_banner.png' : null;
+  const bannerUrl = (includeBanner && bannerExists) ? 'attachment://information_banner.png' : null;
 
   if (bannerUrl) {
     card.addMediaGalleryComponents(
@@ -5472,209 +5477,129 @@ function buildInformationCard(section = 'info_overview', guild = null) {
   if (section === 'info_community_rules') {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## 📜 COMMUNITY RULES & REGULATIONS\n` +
-        `Welcome to **Alabama State Roleplay**. Our community values absolute professionalism, respect, and high-fidelity roleplay. By participating in this server, you strictly agree to abide by these regulations, Discord’s Terms of Service, and all community policies.`
+        `## COMMUNITY RULES & REGULATIONS\n` +
+        `All members must adhere to server regulations and Discord Terms of Service.`
       )
     );
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### 01 ┃ ENGLISH ONLY PROTOCOL\n` +
-        `> English is the strictly mandated language across all text channels and voice sessions to guarantee effective moderation, operational clarity, and community oversight.\n\n` +
-        `### 02 ┃ HIGH-RANK RESTRICTION\n` +
-        `> Unwarranted, disruptive, or repeated direct pings to High Ranks, Ownership, and Executive leadership are strictly prohibited. For assistance, submit an official inquiry via **⟬🎟⟭・Assistance**.\n\n` +
-        `### 03 ┃ ZERO DRAMA & EXTERNAL HOSTILITY\n` +
-        `> Inciting unnecessary drama, arguments, or toxic disputes is forbidden. Disagreements or hostilities from external communities or servers must never be imported into Alabama State Roleplay.\n\n` +
-        `### 04 ┃ SPAM & COMMUNICATION DISRUPTION\n` +
-        `> Chat flooding, automated script spam, copypastas, or repeatedly posting unnecessary content is prohibited. Channels must remain cleanly organized and utilized for their intended purposes.\n\n` +
-        `### 05 ┃ ZERO-TOLERANCE EXPLICIT CONTENT\n` +
-        `> NSFW, sexually explicit, gory, obscene, or graphic content is under zero tolerance. Violations result in instantaneous permanent ban and immediate reporting to Discord Trust & Safety.\n\n` +
-        `### 06 ┃ UNAUTHORIZED ADVERTISING\n` +
-        `> Advertising external Discord servers, social handles, commercial ventures, or unsolicited direct message promotions without explicit SHR authorization is strictly prohibited.\n\n` +
-        `### 07 ┃ MANDATORY VOICE CHAT PROTOCOL\n` +
-        `> Alabama State Roleplay operates as a **VC-governed** community during official patrols. Professional microphone etiquette is required at all times. Ear-rape, soundboards, and rapid channel hops are prohibited. Voice changers are permitted strictly for immersive RP.\n\n` +
-        `### 08 ┃ PUNISHMENT EVASION\n` +
-        `> Leaving the guild or utilizing alternate accounts to evade administrative discipline constitutes evasion. All existing punishments will be escalated to a permanent blacklist. Sanctions may only be contested via **⟬🎟⟭・Assistance**.\n\n` +
-        `### 09 ┃ THREATS, INTIMIDATION & HARASSMENT\n` +
-        `> Targeted harassment, cyberbullying, malicious threats, doxxing intimations, or toxic personal attacks will result in immediate, non-negotiable permanent expulsion from the community.\n\n` +
-        `### 10 ┃ PROFANITY & DISCRIMINATORY SPEECH\n` +
-        `> Moderate conversational profanity is tolerated. Racial slurs, hate speech, homophobic slurs, and discriminatory remarks trigger immediate and permanent removal.\n\n` +
-        `### 11 ┃ MANDATORY IDENTITY SYNCHRONIZATION\n` +
-        `> Your Discord server nickname or display identity must clearly reflect or match your active Roblox username while participating in Alabama State Roleplay.`
+        `01. English Only: English is strictly required in all text and voice channels.\n` +
+        `02. High-Rank Pings: Do not ping High Ranks, Ownership, or Executives. Use <#1360798150910021735>.\n` +
+        `03. Zero Drama: Disagreements, toxicity, and importing outside drama are prohibited.\n` +
+        `04. No Spam: Flooding channels, automated spam, and mass copypastas are forbidden.\n` +
+        `05. Explicit Content: NSFW, sexually explicit, or graphic content triggers an immediate permanent ban.\n` +
+        `06. Advertising: Advertising external servers, social links, or DM promotions is strictly prohibited.\n` +
+        `07. Voice Etiquette: Screaming, soundboards, and microphone disruption are forbidden during patrols.\n` +
+        `08. Punishment Evasion: Leaving or using alternate accounts to avoid discipline results in a permanent blacklist.\n` +
+        `09. Harassment & Threats: Bullying, doxxing, toxic attacks, or threats result in immediate expulsion.\n` +
+        `10. Discriminatory Speech: Hate speech, slurs, and discrimination carry zero tolerance.\n` +
+        `11. Nickname Policy: Your server nickname must reflect your active Roblox username.`
       )
     );
   } else if (section === 'info_roleplay_rules') {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## 🚨 ROLEPLAY RULES & REGULATIONS\n` +
-        `These regulations govern all active roleplay sessions within **Alabama State Roleplay**. Members are expected to uphold maximum realism, professionalism, and scenario continuity. Staff discretion applies based on severity.`
+        `## ROLEPLAY RULES & REGULATIONS\n` +
+        `These regulations govern all active roleplay sessions within Alabama State Roleplay.`
       )
     );
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### 01 ┃ METAGAMING\n` +
-        `> Using information your character could not realistically know during roleplay is prohibited.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 02 ┃ FEAR ROLEPLAY\n` +
-        `> You must value your character's life and react realistically to dangerous situations.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 03 ┃ FAIL ROLEPLAY (FRP)\n` +
-        `> Performing actions that are unrealistic or could not reasonably occur in real life.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 04 ┃ INTERFERING WITH ROLEPLAY\n` +
-        `> Do not interfere with an ongoing roleplay situation that you are not involved in unless you are called or required to participate.\n` +
-        `> **Punishment:** Kick\n\n` +
-        `### 05 ┃ RANDOM DEATHMATCH (RDM)\n` +
-        `> Attacking or killing another player without a valid roleplay reason.\n` +
-        `> **Punishment:** Warning → Kick → Ban\n\n` +
-        `### 06 ┃ VEHICLE DEATHMATCH (VDM)\n` +
-        `> Intentionally hitting or running over players without a valid roleplay reason.\n` +
-        `> **Punishment:** Warning → Kick → Ban\n\n` +
-        `### 07 ┃ NEW LIFE RULE (NLR)\n` +
-        `> Requires you to forget previous events after your character dies. Returning to scene is prohibited.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 08 ┃ CRASH ROLEPLAY\n` +
-        `> All crashes must be roleplayed realistically, regardless of severity. One-way crashes may not be voided. Two-way crashes may only be voided if both parties agree.\n` +
-        `> **Punishment:** Warning\n\n` +
-        `### 09 ┃ SUICIDE ROLEPLAY\n` +
-        `> Depicting suicide or self-harm in roleplay is strictly prohibited.\n` +
-        `> **Punishment:** Permanent Ban\n\n` +
-        `### 10 ┃ GANG ROLEPLAY\n` +
-        `> Gang roleplay is prohibited. Organized criminal groups, mafias, and approved crime groups may operate when properly authorized.\n` +
-        `> **Punishment:** Kick → Ban`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### 11 ┃ REALISTIC OUTFITS\n` +
-        `> All players must use realistic avatars while roleplaying. Unrealistic items such as wings, antlers, swords, and inappropriate accessories are prohibited.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 12 ┃ CUFF RUSHING\n` +
-        `> Cuff rushing is using handcuffs without properly roleplaying the arrest or apprehension. Proper roleplay must be conducted before placing a suspect in cuffs.\n` +
-        `> **Punishment:** Department Consequence → Kick\n\n` +
-        `### 13 ┃ COP BAITING\n` +
-        `> Intentionally provoking police to initiate a pursuit or traffic stop is prohibited. (Exception: Approved Priority scenarios).\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 14 ┃ POWERGAMING\n` +
-        `> Forcing actions, abilities, or outcomes onto another player without allowing them a chance to respond.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 15 ┃ BREAKING CHARACTER\n` +
-        `> Remain in character during roleplay. Going OOC to gain an advantage or perform an action is prohibited.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 16 ┃ NO INTENT\n` +
-        `> Actions that disrupt roleplay without a legitimate purpose (random towing, excessive drifting, disruptive behavior).\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 17 ┃ OUT-OF-STATE ROLEPLAY\n` +
-        `> You may not roleplay as a character, agency, or entity from outside the designated Alabama Roleplay jurisdiction.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 18 ┃ GAMEPASS WEAPONS\n` +
-        `> Gamepass weapons may only be used during an approved Level 3 Priority or by authorized High Staff.\n` +
-        `> **Punishment:** Kick\n\n` +
-        `### 20 ┃ EVADING STAFF\n` +
-        `> You must comply with Alabama Roleplay staff. Running from staff vehicles, leaving after being teleported, or evading staff intervention is prohibited.\n` +
-        `> **Punishment:** Kick\n\n` +
-        `### 21 ┃ HITMAN ROLEPLAY\n` +
-        `> Hitman RP must have legitimate roleplay behind it and be conducted during an approved Priority. Target must roleplay death.\n` +
-        `> **Punishment:** Kick → Permanent Ban`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### 22 ┃ COMBAT LOGGING\n` +
-        `> Leaving the game to avoid arrest, death, or an ongoing roleplay situation is prohibited.\n` +
-        `> **Punishment:** Permanent Ban\n\n` +
-        `### 23 ┃ SAFE ZONES\n` +
-        `> Priority activities are prohibited in: River City / Springfield Spawn (Permanent), Fire Department (When staffed), Hospital (When staffed), Gun Store (When staffed).\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 24 ┃ LYING TO STAFF\n` +
-        `> Providing false information, intentionally misleading staff, or lying during a staff investigation is prohibited.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 25 ┃ ANIMAL ROLEPLAY\n` +
-        `> Animal roleplay requires prior approval from Moderation+.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 26 ┃ DISRESPECT\n` +
-        `> Members must remain respectful toward staff and other community members. Report issues through appropriate channels.\n` +
-        `> **Punishment:** Warning → Kick\n\n` +
-        `### 27 ┃ POLITICS & REAL-WORLD EVENTS\n` +
-        `> Political arguments, civil rights disputes, and real-world tragic events are prohibited within roleplay.\n` +
-        `> **Punishment:** Kick\n\n` +
-        `### 28 ┃ PEACETIME & PRIORITY TIMER\n` +
-        `> You may not start or participate in Priority activities while Peacetime or the Priority Timer is active.\n` +
-        `> **Punishment:** Staff Discretion\n\n` +
-        `### 29 ┃ ROBLOX TERMS OF SERVICE\n` +
-        `> All members must follow Roblox's Terms of Service while participating in Alabama Roleplay.\n` +
-        `> **Punishment:** Staff Discretion`
+        `01. Metagaming: Using knowledge your character could not realistically possess. (Warn -> Kick)\n` +
+        `02. FearRP: You must value your character's life in dangerous situations. (Warn -> Kick)\n` +
+        `03. FailRP: Actions that are unrealistic or cannot occur in real life. (Warn -> Kick)\n` +
+        `04. RP Interference: Do not disrupt roleplay situations you are not involved in. (Kick)\n` +
+        `05. RDM: Attacking or killing another player without valid roleplay context. (Warn -> Kick -> Ban)\n` +
+        `06. VDM: Intentionally running over players with a vehicle without roleplay. (Warn -> Kick -> Ban)\n` +
+        `07. NLR (New Life Rule): Forget prior events upon death; returning to scene is prohibited. (Warn -> Kick)\n` +
+        `08. Crash RP: All vehicle crashes must be roleplayed realistically. (Warning)\n` +
+        `09. Suicide RP: Depicting suicide or self-harm is strictly forbidden. (Permanent Ban)\n` +
+        `10. Gang RP: Unauthorized gang roleplay is prohibited. (Kick -> Ban)\n` +
+        `11. Realistic Outfits: Inappropriate items, wings, and unrealistic accessories are forbidden. (Warn -> Kick)\n` +
+        `12. Cuff Rushing: Using handcuffs without properly roleplaying the apprehension. (Dept Consequence)\n` +
+        `13. Cop Baiting: Intentionally provoking officers to initiate a chase is prohibited. (Warn -> Kick)\n` +
+        `14. Powergaming: Forcing outcomes onto other players without giving them a chance to respond. (Warn -> Kick)\n` +
+        `15. Breaking Character: Going out of character during active roleplay is prohibited. (Warn -> Kick)\n` +
+        `16. No Intent: Disrupting roleplay without purpose (random towing, reckless griefing). (Warn -> Kick)\n` +
+        `17. Out-of-State RP: Roleplaying agencies or jurisdictions outside Alabama is prohibited. (Warn -> Kick)\n` +
+        `18. Gamepass Weapons: Permitted only during Level 3 Priority or authorized staff. (Kick)\n` +
+        `19. Evading Staff: You must comply with staff. Fleeing staff intervention is prohibited. (Kick)\n` +
+        `20. Hitman RP: Must have valid roleplay background and an approved Priority. (Kick -> Ban)\n` +
+        `21. Combat Logging: Leaving the game to avoid arrest, death, or active roleplay. (Permanent Ban)\n` +
+        `22. Safe Zones: No priority crimes in Spawns, Fire Dept, Hospital, or Gun Store. (Warn -> Kick)\n` +
+        `23. Lying to Staff: Misleading staff or providing false statements during investigations. (Warn -> Kick)\n` +
+        `24. Animal RP: Animal roleplay requires prior moderation approval. (Warn -> Kick)\n` +
+        `25. Disrespect: Disrespect toward staff or members is prohibited. (Warn -> Kick)\n` +
+        `26. Politics & Real Events: Political debates and real-world tragedies are forbidden in RP. (Kick)\n` +
+        `27. Peacetime: Priority crime is prohibited during Peacetime or active Priority Timers. (Staff Discretion)\n` +
+        `28. Speed Limits: Follow realistic driving standards unless involved in an active chase. (Warning)\n` +
+        `29. Roblox TOS: All Roblox Terms of Service must be strictly followed. (Staff Discretion)`
       )
     );
   } else if (section === 'info_faq') {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## ❓ FREQUENTLY ASKED QUESTIONS (FAQ)\n` +
-        `Essential operational guidance and answers for Alabama State Roleplay members:`
+        `## FREQUENTLY ASKED QUESTIONS\n` +
+        `Essential guidance and operational answers for all community members.`
       )
     );
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### 01 ┃ HOW DO I BECOME A MODERATOR?\n` +
-        `> Staff applications are reviewed exclusively by authorized High Staff. Do not ping staff regarding your application status.\n` +
-        `> **Apply for Staff:** Check **⟬👔⟭・Staff-Applications** or use our official application panel.\n\n` +
-        `### 02 ┃ WHEN WILL THE SERVER BE UP?\n` +
-        `> Check **⟬🎮⟭・Sessions** for current patrol schedules, announcements, and server start times.\n\n` +
-        `### 03 ┃ HOW DO I REPORT A MODERATOR?\n` +
-        `> If you need to report a staff member, please submit a formal report through the appropriate support ticket with unedited proof.\n` +
-        `> **Report Staff:** **⟬🎟⟭・Assistance**\n\n` +
-        `### 04 ┃ HOW DO I JOIN THE SERVER?\n` +
-        `> 1. Open **Emergency Response: Liberty County** on Roblox.\n` +
-        `> 2. Select the three lines in the top-right corner, open **Servers**, and select **Join Server**.\n` +
-        `> 3. Search: **Alabama State Roleplay** | **Server Code:** \`ALABAM\`\n\n` +
-        `### 05 ┃ DO I NEED A CALLSIGN?\n` +
-        `> Yes. All members participating in department roleplay are required to have an appropriate formatted callsign.\n\n` +
-        `### 06 ┃ DO I NEED TO APPLY FOR A DEPARTMENT?\n` +
-        `> Yes. Being in a whitelisted department requires a passing application.\n` +
-        `> **Apply Here:** **⟬👔⟭・Department-Applications**\n\n` +
-        `### 07 ┃ ARE SONORAN CAD AND SONORAN RADIO REQUIRED?\n` +
-        `> Yes. Using both CAD and Radio is required to participate in any whitelisted department patrol.`
+        `01. How to Apply for Staff\n` +
+        `Staff recruitment is handled via our official application panel in <#1539681421306896476>. Do not ping staff regarding your application status.\n\n` +
+        `02. Support & Assistance\n` +
+        `Need help, have questions, or need to report a player or staff member? Open an official ticket in <#1360798150910021735>.\n\n` +
+        `03. Department Applications\n` +
+        `To join a whitelisted law enforcement, medical, or fire agency, submit an application in <#1360792977181769768>.\n\n` +
+        `04. Patrol Schedule & Sessions\n` +
+        `Patrol schedules, session votes, and server announcements are posted in <#1232495212333498455>.\n\n` +
+        `05. How to Join the Server\n` +
+        `Open Emergency Response: Liberty County on Roblox. Navigate to Servers -> Join Server -> enter code \`ALABAM\`.\n\n` +
+        `06. Callsigns & Radio\n` +
+        `Department officers must display an approved callsign and join the active Sonoran CAD & Radio during patrols.`
       )
     );
   } else {
     // Overview (info_overview)
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## 🏛️ ALABAMA STATE ROLEPLAY — INFORMATION\n` +
-        `Welcome to **Alabama State Roleplay**, founded exclusively for dedicated fans and players of ER:LC Roblox!\n\n` +
-        `Whether you’re here to roleplay, connect, or just hang out — you’re in the right place.\n\n` +
-        `> 👑 **Founder:** <@885315812011958313> (\`notroseplays_34\` • \`𝐃┃♡ 𝕽𝖔𝖘𝖊♡\`)\n` +
-        `> 🚔 **Based On:** **Emergency Response: Liberty County** (ER:LC)\n` +
-        `> 🎮 **Platform:** Roblox — **Game Code:** \`ALABAM\``
+        `## ALABAMA STATE ROLEPLAY\n` +
+        `Welcome to **Alabama State Roleplay**, founded for fans and players of ER:LC Roblox. Whether you are here to roleplay, connect, or hang out, you are in the right place.\n\n` +
+        `> **Founder:** <@885315812011958313>\n` +
+        `> **Based On:** Emergency Response: Liberty County\n` +
+        `> **Platform:** Roblox (Server Code: \`ALABAM\`)`
       )
     );
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### 🌟 What We Offer\n` +
-        `> ➥ **Active Roleplay Community:** Constant daily patrols and immersive operations.\n` +
-        `> ➥ **Organized Server Structure:** Standardized whitelisted agencies and active staff team.\n` +
-        `> ➥ **ER:LC Events & Updates:** Regular priority scenarios, community events, and vehicle updates.\n` +
-        `> ➥ **Friendly & Supportive Members:** Welcoming atmosphere and dedicated staff support.`
+        `### Server Features\n` +
+        `• Active Roleplay Community — Daily patrols and structured operations\n` +
+        `• Organized Server Structure — Standardized departments and active staff\n` +
+        `• ER:LC Events & Updates — Priority scenarios and community events\n` +
+        `• Welcoming Community — Friendly and supportive members`
       )
     );
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### 📌 Important Server Channels\n` +
-        `Quick access to our core operational channels:`
+        `### Operational Channels\n` +
+        `• Sessions: <#1232495212333498455>\n` +
+        `• Announcements: <#1234009587703742504>\n` +
+        `• Shop: <#1539680102449680495>\n` +
+        `• Assistance: <#1360798150910021735>\n` +
+        `• Roles: <#1234228145796808755>`
       )
     );
 
-    const btnSessions = new ButtonBuilder().setCustomId('info_btn_sessions').setLabel('⟬🎮⟭ Sessions').setStyle(ButtonStyle.Secondary);
-    const btnAnnouncements = new ButtonBuilder().setCustomId('info_btn_announcements').setLabel('⟬📢⟭ Announcements').setStyle(ButtonStyle.Secondary);
-    const btnShop = new ButtonBuilder().setCustomId('info_btn_shop').setLabel('⟬🛒⟭ Shop').setStyle(ButtonStyle.Secondary);
-    const btnAssistance = new ButtonBuilder().setCustomId('info_btn_assistance').setLabel('⟬🎟⟭ Assistance').setStyle(ButtonStyle.Secondary);
-    const btnRoles = new ButtonBuilder().setCustomId('info_btn_roles').setLabel('⟬🎭⟭ Roles').setStyle(ButtonStyle.Secondary);
+    const btnSessions = new ButtonBuilder().setCustomId('info_btn_sessions').setLabel('Sessions').setStyle(ButtonStyle.Secondary);
+    const btnAnnouncements = new ButtonBuilder().setCustomId('info_btn_announcements').setLabel('Announcements').setStyle(ButtonStyle.Secondary);
+    const btnShop = new ButtonBuilder().setCustomId('info_btn_shop').setLabel('Shop').setStyle(ButtonStyle.Secondary);
+    const btnAssistance = new ButtonBuilder().setCustomId('info_btn_assistance').setLabel('Assistance').setStyle(ButtonStyle.Secondary);
+    const btnRoles = new ButtonBuilder().setCustomId('info_btn_roles').setLabel('Roles').setStyle(ButtonStyle.Secondary);
 
     const rowButtons = new ActionRowBuilder().addComponents(btnSessions, btnAnnouncements, btnShop, btnAssistance, btnRoles);
     card.addActionRowComponents(rowButtons);
@@ -5684,34 +5609,30 @@ function buildInformationCard(section = 'info_overview', guild = null) {
 
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('info_select_section')
-    .setPlaceholder('Alabama State Roleplay Information')
+    .setPlaceholder('Select an information section...')
     .addOptions(
       {
-        label: 'Alabama State Roleplay Information',
+        label: 'Information Overview',
         value: 'info_overview',
-        emoji: '🏛️',
-        description: 'Server overview, founder, game code, and channels.',
+        description: 'Server overview, founder, platform, and channels.',
         default: section === 'info_overview'
       },
       {
-        label: 'Community Rules & Regulations',
+        label: 'Community Rules',
         value: 'info_community_rules',
-        emoji: '📜',
-        description: '11 Official community conduct rules and Discord guidelines.',
+        description: 'Server conduct guidelines and Discord policies.',
         default: section === 'info_community_rules'
       },
       {
-        label: 'Roleplay Rules & Regulations',
+        label: 'Roleplay Rules',
         value: 'info_roleplay_rules',
-        emoji: '🚨',
-        description: '29 In-game ER:LC roleplay regulations and consequences.',
+        description: '29 in-game ER:LC roleplay regulations and consequences.',
         default: section === 'info_roleplay_rules'
       },
       {
         label: 'Frequently Asked Questions',
         value: 'info_faq',
-        emoji: '❓',
-        description: 'Staff applications, server joining, callsigns, CAD & radio.',
+        description: 'Staff applications, assistance, and department info.',
         default: section === 'info_faq'
       }
     );
@@ -5721,19 +5642,23 @@ function buildInformationCard(section = 'info_overview', guild = null) {
 }
 
 async function handleInformationCommand(interaction) {
-  const targetChannel = interaction.options?.getChannel?.('channel');
+  let targetChannel = null;
+  try {
+    targetChannel = interaction.options?.getChannel?.('channel');
+  } catch {}
+
   const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
   const isStaff = isStaffMember(member) || member?.permissions?.has(PermissionFlagsBits.ManageGuild);
 
   if (targetChannel) {
     if (!isStaff) {
-      await interaction.reply({ content: '❌ You must have staff permissions to post the information panel to a channel.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: 'You must have staff permissions to post the information panel to a channel.', flags: MessageFlags.Ephemeral });
       return;
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
     const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildInformationCard('info_overview', interaction.guild);
+    const card = buildInformationCard('info_overview', interaction.guild, true);
 
     try {
       await targetChannel.send({
@@ -5741,20 +5666,41 @@ async function handleInformationCommand(interaction) {
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      await interaction.editReply({ content: `✅ Official Information panel posted to <#${targetChannel.id}>.` });
+      await interaction.editReply({ content: `Official Information panel posted to <#${targetChannel.id}>.` });
     } catch (err) {
-      await interaction.editReply({ content: `❌ Failed to post information panel: ${err.message}` });
+      await interaction.editReply({ content: `Failed to post information panel: ${err.message}` });
     }
     return;
   }
 
+  // If staff ran /information panel without specifying channel, post to current channel
+  if (isStaff) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+    const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
+    const card = buildInformationCard('info_overview', interaction.guild, true);
+
+    try {
+      await interaction.channel.send({
+        components: [card.toJSON()],
+        files,
+        flags: MessageFlags.IsComponentsV2
+      });
+      await interaction.editReply({ content: `Official Information panel posted in <#${interaction.channelId}>.` });
+    } catch (err) {
+      await interaction.editReply({ content: `Failed to post information panel: ${err.message}` });
+    }
+    return;
+  }
+
+  // Non-staff running /information gets a private ephemeral view
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-  const card = buildInformationCard('info_overview', interaction.guild);
+  const card = buildInformationCard('info_overview', interaction.guild, true);
   await interaction.reply({
     components: [card.toJSON()],
     files,
-    flags: MessageFlags.IsComponentsV2
+    flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
   });
 }
 
@@ -9309,22 +9255,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Official Information & Regulations Interactivity ───────────────
     if (interaction.isStringSelectMenu() && interaction.customId === 'info_select_section') {
       const chosen = interaction.values?.[0] || 'info_overview';
-      const updatedCard = buildInformationCard(chosen, interaction.guild);
-      await interaction.update({
-        components: [updatedCard.toJSON()],
-        flags: MessageFlags.IsComponentsV2
-      });
+      const isEphemeral = Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral));
+      const updatedCard = buildInformationCard(chosen, interaction.guild, false);
+
+      if (isEphemeral) {
+        await interaction.update({
+          components: [updatedCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+      } else {
+        // User interacted with the public panel: reply EPHEMERALLY so ONLY THEY see the chosen section!
+        await interaction.reply({
+          components: [updatedCard.toJSON()],
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
+        });
+      }
       return;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('info_btn_')) {
       const type = interaction.customId.replace('info_btn_', '');
       const messages = {
-        sessions: '🎮 **Patrol Sessions:** Check <#1232495212019056738> or our sessions channel for daily patrol schedules, server start announcements, and live ER:LC server statuses!',
-        announcements: '📢 **Announcements:** Stay updated on server updates, department openings, events, and community notices!',
-        shop: '🛒 **Server Shop:** Purchase custom vehicles, custom liveries, priority passes, and exclusive server perks!',
-        assistance: '🎟 **Support & Assistance:** Need help, have questions, or need to report an issue? Open an official ticket in our assistance channel!',
-        roles: '🎭 **Self Roles:** Select your notification pings, department preferences, and community roles!'
+        sessions: 'Sessions: Daily patrol schedules, server announcements, and session statuses are posted in <#1232495212333498455>.',
+        announcements: 'Announcements: Server updates, department openings, and official notices are posted in <#1234009587703742504>.',
+        shop: 'Shop: Custom vehicles, liveries, priority passes, and server perks can be purchased in <#1539680102449680495>.',
+        assistance: 'Assistance: Need help, have questions, or need to report an issue? Open a support ticket in <#1360798150910021735>.',
+        roles: 'Roles: Select your notification pings and community roles in <#1234228145796808755>.'
       };
       await interaction.reply({
         content: messages[type] || 'Information channel shortcut.',
@@ -13434,5 +13390,8 @@ export {
   addCommand,
   unaddCommand,
   handleRetriggerCommand,
-  buildCommandsGuidePage
+  buildCommandsGuidePage,
+  informationCommand,
+  buildInformationCard,
+  handleInformationCommand
 };
