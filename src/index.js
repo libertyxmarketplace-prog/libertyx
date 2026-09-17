@@ -582,9 +582,11 @@ const STAFF_CONFIG = {
 };
 
 
+const TICKET_BANNER_PATH = fileURLToPath(new URL('./assets/assistance_banner.png', import.meta.url));
+const APP_BANNER_PATH = fileURLToPath(new URL('./assets/applications_banner.jpg', import.meta.url));
+
 const TICKET_CONFIG = {
-  bannerUrl:
-    'https://media.discordapp.net/attachments/1360798150910021735/1548379423554666608/Assistance.webp?ex=6aa780f6&is=6aa62f76&hm=901437d700dad110b02fb8363c482457e212cc5b7c9031fa411c739884a4b410&=&format=webp',
+  bannerUrl: 'https://i.ibb.co/5gf3LYvD/content.webp',
   categories: {
     general: {
       id: 'general',
@@ -612,7 +614,7 @@ const TICKET_CONFIG = {
       name: 'Alabama Partnership Operations',
       shortName: 'Partnership',
       categoryId: '1548838707530833970',
-      desc: 'Server partnerships, mutual advertising, and community affiliations.'
+      desc: 'Server partnerships, mutual advertising, paid promotions, and staff transfers.'
     },
     staff_partnership: {
       id: 'staff_partnership',
@@ -1055,8 +1057,12 @@ const liveSessions = new Map();
 // Remembers the newest panel per guild:channel so a fresh /session panel
 // replaces (deletes) the previous one instead of piling up dead cards.
 const lastPanelByChannel = new Map();
-// Remembers newest ticket panel per guild:channel so a fresh /ticket panel replaces the old one.
+// Remembers newest ticket panel per guild:channel so a fresh /ticket panel updates the old one.
 const lastTicketPanelByChannel = new Map();
+// Remembers newest staff application panel per guild:channel
+const lastAppPanelByChannel = new Map();
+// Remembers newest verification dashboard per guild:channel
+const lastVerifyPanelByChannel = new Map();
 // Remembers spoiler ping mention per panel so live refresh preserves it until shutdown.
 const panelPingMentionByChannel = new Map();
 // Panels flipped green by a started session - the refresh loop keeps them
@@ -1971,12 +1977,35 @@ async function handleVerifyCommand(interaction) {
 
   const container = buildVerificationContainer(bannerName);
 
+  const chanKey = `${interaction.guildId}:${interaction.channelId}`;
+  const existingMsgId = lastVerifyPanelByChannel.get(chanKey);
+  let existingMsg = null;
+  if (existingMsgId) {
+    existingMsg = await interaction.channel.messages.fetch(existingMsgId).catch(() => null);
+  }
+
+  if (existingMsg) {
+    try {
+      await existingMsg.edit({
+        components: [container.toJSON()],
+        files,
+        flags: MessageFlags.IsComponentsV2
+      });
+      await interaction.editReply({ content: `✅ Updated existing verification dashboard in <#${interaction.channelId}>!` });
+      return;
+    } catch (editErr) {
+      console.warn('Could not edit existing verification panel, sending new one:', editErr.message);
+    }
+  }
+
   try {
-    await interaction.channel.send({
+    const sent = await interaction.channel.send({
       components: [container.toJSON()],
       files,
       flags: MessageFlags.IsComponentsV2
     });
+    lastVerifyPanelByChannel.set(chanKey, sent.id);
+    saveVerifyPanels();
     await interaction.editReply({ content: '✅ Verification dashboard successfully posted!' });
   } catch (err) {
     console.error('Failed to post verification panel:', err);
@@ -4606,6 +4635,8 @@ async function handleSafeZoneCommand(interaction) {
 const TICKETS_FILE = fileURLToPath(new URL('../tickets.json', import.meta.url));
 const TICKET_DESK_FILE = fileURLToPath(new URL('../ticket_desk.json', import.meta.url));
 const TICKET_PANELS_FILE = fileURLToPath(new URL('../ticket_panels.json', import.meta.url));
+const APP_PANELS_FILE = fileURLToPath(new URL('../app_panels.json', import.meta.url));
+const VERIFY_PANELS_FILE = fileURLToPath(new URL('../verify_panels.json', import.meta.url));
 const TRANSCRIPTS_CHANNEL_ID = '1236052058059309108';
 const closedTranscripts = new Map(); // msgId -> transcriptInfo
 
@@ -4657,6 +4688,54 @@ function saveAppeals() {
     fs.writeFileSync(APPEALS_FILE, JSON.stringify(flat, null, 2), 'utf8');
   } catch (err) {
     console.error('Failed to save appeals.json:', err.message);
+  }
+}
+
+const PARTNERSHIPS_FILE = fileURLToPath(new URL('../partnerships.json', import.meta.url));
+const publishedPartnerships = new Map(); // userId -> { messageId, channelId, partnerName, timestamp }
+
+function loadPartnerships() {
+  try {
+    if (!fs.existsSync(PARTNERSHIPS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(PARTNERSHIPS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) publishedPartnerships.set(k, v);
+    console.log(`Restored ${publishedPartnerships.size} active partnership(s) from partnerships.json.`);
+  } catch (err) {
+    console.error('Failed to load partnerships.json:', err.message);
+  }
+}
+
+function savePartnerships() {
+  try {
+    const flat = {};
+    for (const [k, v] of publishedPartnerships) flat[k] = v;
+    fs.writeFileSync(PARTNERSHIPS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save partnerships.json:', err.message);
+  }
+}
+
+const PARTNER_BANS_FILE = fileURLToPath(new URL('../partner_bans.json', import.meta.url));
+const partnerBans = new Map(); // userId -> { bannedUntil, bannedBy, bannedAt, reason }
+
+function loadPartnerBans() {
+  try {
+    if (!fs.existsSync(PARTNER_BANS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(PARTNER_BANS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) partnerBans.set(k, v);
+    console.log(`Restored ${partnerBans.size} partner ban(s) from partner_bans.json.`);
+  } catch (err) {
+    console.error('Failed to load partner_bans.json:', err.message);
+  }
+}
+
+function savePartnerBans() {
+  try {
+    const flat = {};
+    for (const [k, v] of partnerBans) flat[k] = v;
+    fs.writeFileSync(PARTNER_BANS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save partner_bans.json:', err.message);
   }
 }
 
@@ -4716,7 +4795,53 @@ function saveTicketPanels() {
   }
 }
 
+function loadAppPanels() {
+  try {
+    if (!fs.existsSync(APP_PANELS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(APP_PANELS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) lastAppPanelByChannel.set(k, v);
+    console.log(`Restored ${lastAppPanelByChannel.size} staff app panel location(s).`);
+  } catch (err) {
+    console.error('Failed to load app_panels.json:', err.message);
+  }
+}
+
+function saveAppPanels() {
+  try {
+    const flat = {};
+    for (const [k, v] of lastAppPanelByChannel) flat[k] = v;
+    fs.writeFileSync(APP_PANELS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save app_panels.json:', err.message);
+  }
+}
+
+function loadVerifyPanels() {
+  try {
+    if (!fs.existsSync(VERIFY_PANELS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(VERIFY_PANELS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) lastVerifyPanelByChannel.set(k, v);
+    console.log(`Restored ${lastVerifyPanelByChannel.size} verify panel location(s).`);
+  } catch (err) {
+    console.error('Failed to load verify_panels.json:', err.message);
+  }
+}
+
+function saveVerifyPanels() {
+  try {
+    const flat = {};
+    for (const [k, v] of lastVerifyPanelByChannel) flat[k] = v;
+    fs.writeFileSync(VERIFY_PANELS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save verify_panels.json:', err.message);
+  }
+}
+
 async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
+  const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
+  const bannerUrl = bannerExists ? 'attachment://assistance_banner.png' : (TICKET_CONFIG?.bannerUrl || null);
+  const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
+
   let updatedAny = false;
   for (const [chanKey, msgId] of [...lastTicketPanelByChannel]) {
     const parts = chanKey.split(':');
@@ -4728,7 +4853,8 @@ async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
       const msg = await ch.messages.fetch(msgId).catch(() => null);
       if (msg) {
         await msg.edit({
-          components: [buildTicketPanelContainer().toJSON()],
+          components: [buildTicketPanelContainer(bannerUrl).toJSON()],
+          files,
           flags: MessageFlags.IsComponentsV2
         });
         updatedAny = true;
@@ -4739,7 +4865,8 @@ async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
           const found = recent.find((m) => m.author?.id === discordClient.user?.id && m.flags?.has(MessageFlags.IsComponentsV2));
           if (found) {
             await found.edit({
-              components: [buildTicketPanelContainer().toJSON()],
+              components: [buildTicketPanelContainer(bannerUrl).toJSON()],
+              files,
               flags: MessageFlags.IsComponentsV2
             });
             lastTicketPanelByChannel.set(chanKey, found.id);
@@ -4761,7 +4888,8 @@ async function refreshAllTicketPanels(discordClient, fallbackChannel = null) {
         const found = recent.find((m) => m.author?.id === discordClient.user?.id && m.flags?.has(MessageFlags.IsComponentsV2));
         if (found) {
           await found.edit({
-            components: [buildTicketPanelContainer().toJSON()],
+            components: [buildTicketPanelContainer(bannerUrl).toJSON()],
+            files,
             flags: MessageFlags.IsComponentsV2
           });
           const chanKey = `${fallbackChannel.guildId || fallbackChannel.guild?.id}:${fallbackChannel.id}`;
@@ -4795,18 +4923,17 @@ function saveTickets() {
   }
 }
 
-function buildTicketPanelContainer() {
-  const accentColor =
-    ticketDeskState.status === 'online'
-      ? 0x57f287
-      : ticketDeskState.status === 'busy'
-        ? 0xf1c40f
-        : 0xed4245;
+function buildTicketPanelContainer(bannerOverride) {
+  const accentColor = 0x2b2d31; // side gray accent
 
   const container = new ContainerBuilder().setAccentColor(accentColor);
-  if (TICKET_CONFIG.bannerUrl) {
+  const bannerUrl = (bannerOverride !== undefined)
+    ? bannerOverride
+    : (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.png' : (TICKET_CONFIG?.bannerUrl || 'https://i.ibb.co/5gf3LYvD/content.webp'));
+
+  if (bannerUrl) {
     container.addMediaGalleryComponents(
-      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(TICKET_CONFIG.bannerUrl))
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl))
     );
   }
   container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Assistance Support'));
@@ -4819,25 +4946,23 @@ function buildTicketPanelContainer() {
 
   const statusBanner =
     ticketDeskState.status === 'online'
-      ? '> **Operational Status:** 🟢 **Online** — Staff are actively responding to inquiries.\n\n'
+      ? '> **Operational Status:** 🟢 **Online** Staff are actively responding to inquiries.\n\n'
       : ticketDeskState.status === 'busy'
-        ? '> **Operational Status:** 🟡 **Busy** — Staff are actively assisting; response times may be slower.\n\n'
-        : '> **Operational Status:** 🔴 **Closed** — Support desk is currently closed.\n\n';
+        ? '> **Operational Status:** 🟡 **Busy** Staff are actively assisting; response times may be slower.\n\n'
+        : '> **Operational Status:** 🔴 **Closed** Support desk is currently closed.\n\n';
 
   const generalOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.general;
   const iaOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.ia;
   const hrOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.highrank;
   const partnershipOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.partnership !== false);
-  const staffPartnershipOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       statusBanner +
-      `**General Support** — ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
-      `**Internal Affairs** — ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
-      `**High Rank Support** — ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
-      `**Partnership** — ${partnershipOpen ? 'Community partnerships, mutual advertising, and affiliations.' : '[Closed by staff] Currently unavailable.'}\n` +
-      `**Staff Partnership** — ${staffPartnershipOpen ? 'Partner server staff transfers and reciprocal rank requests.' : '[Closed by staff] Currently unavailable.'}`
+      `**General Support:** ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Internal Affairs:** ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**High Rank Support:** ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Partnership:** ${partnershipOpen ? 'Server partnerships, mutual advertising, paid promotions, and staff transfers.' : '[Closed by staff] Currently unavailable.'}`
     )
   );
 
@@ -4845,10 +4970,10 @@ function buildTicketPanelContainer() {
 
   const deskLabel =
     ticketDeskState.status === 'online'
-      ? '🟢 Online'
+      ? '🟢'
       : ticketDeskState.status === 'busy'
-        ? '🟡 Busy'
-        : '🔴 Closed';
+        ? '🟡'
+        : '🔴';
 
   const pillStyle =
     ticketDeskState.status === 'online'
@@ -4888,11 +5013,7 @@ function buildTicketPanelContainer() {
       new StringSelectMenuOptionBuilder()
         .setLabel('Partnership')
         .setValue('partnership')
-        .setDescription(partnershipOpen ? 'Server partnerships, mutual advertising, and affiliations' : '[Closed by staff] Currently unavailable'),
-      new StringSelectMenuOptionBuilder()
-        .setLabel('Staff Partnership')
-        .setValue('staff_partnership')
-        .setDescription(staffPartnershipOpen ? 'Partner server staff transfers and reciprocal rank requests' : '[Closed by staff] Currently unavailable')
+        .setDescription(partnershipOpen ? 'Server partnerships, staff transfers, and paid promotions' : '[Closed by staff] Currently unavailable')
     );
 
   container.addActionRowComponents(new ActionRowBuilder().addComponents(selectMenu));
@@ -4904,14 +5025,18 @@ function buildTicketPanelContainer() {
   return container;
 }
 
-function buildTicketControlContainer(ticket) {
+function buildTicketControlContainer(ticket, bannerOverride) {
   const isAiClaimed = ticket.categoryKey === 'partnership' && (ticket.claimedBy === client.user.id || !ticket.claimedBy);
   const isClaimed = !!ticket.claimedBy;
   const accentColor = isAiClaimed ? 0x3498db : (isClaimed ? 0x57f287 : 0xd35400);
   const container = new ContainerBuilder().setAccentColor(accentColor);
-  if (TICKET_CONFIG.bannerUrl) {
+  const bannerUrl = (bannerOverride !== undefined)
+    ? bannerOverride
+    : (TICKET_CONFIG?.bannerUrl || (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.jpg' : null));
+
+  if (bannerUrl) {
     container.addMediaGalleryComponents(
-      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(TICKET_CONFIG.bannerUrl))
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl))
     );
   }
   container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## ${ticket.categoryName}`));
@@ -4943,6 +5068,15 @@ function buildTicketControlContainer(ticket) {
     container.addSeparatorComponents(thinLine());
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(`> **Reason for Opening:** ${ticket.reason}`)
+    );
+  }
+
+  if (ticket.categoryKey === 'partnership') {
+    container.addSeparatorComponents(thinLine());
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `> ⚠️ **Server Requirement:** Community partners must remain in **Alabama State Roleplay** for their advertisement to stay active. If you leave the server, our system will automatically delete your advertisement.`
+      )
     );
   }
 
@@ -4999,7 +5133,9 @@ function buildPartnershipGuideContainer() {
       `**4. Community Rules**\n` +
       `Your server must follow our community rules and partnership standards.\n\n` +
       `**5. Professional Environment**\n` +
-      `Your server must maintain a respectful and welcoming environment.`
+      `Your server must maintain a respectful and welcoming environment.\n\n` +
+      `**6. Server Retention Requirement**\n` +
+      `You must remain in Alabama State Roleplay for your advertisement to stay active. If you leave the server, our system automatically deletes your advertisement.`
     )
   );
 
@@ -5025,7 +5161,8 @@ function buildPartnershipGuideContainer() {
     new TextDisplayBuilder().setContent(
       `> **How to Apply:** Send \`-partnership\` followed by your completed form and server advertisement in this ticket.\n` +
       `> Once verified, you will be prompted to run \`/proof partnership\` (with a screenshot proving our advertisement is posted in your server's partnership channel).\n` +
-      `-# if not uploaded partnership will be removed and you will be blacklisted`
+      `> ⚠️ **Notice:** You must remain a member of this server. If you leave, your advertisement will be deleted automatically.\n` +
+      `-# If proof is not uploaded, the partnership will be removed and you may be blacklisted.`
     )
   );
 
@@ -5033,19 +5170,24 @@ function buildPartnershipGuideContainer() {
 }
 
 // ═══════════════════════ Staff Application System ═══════════════════════
-const APP_PANEL_BANNER_URL =
-  'https://media.discordapp.net/attachments/1539681421306896476/1547364175469355119/Applications.png?ex=6aab0fb0&is=6aa9be30&hm=7508cef429f53226df5621afe56da7ca214377f69c43cd96d0710927752743a2&=&format=webp&quality=lossless&width=2048&height=684';
+const APP_PANEL_BANNER_URL = 'attachment://applications_banner.jpg';
 const APP_PASSED_BANNER_URL =
   'https://media.discordapp.net/attachments/1232495213986058283/1536858352754360392/content.png?ex=6aab12e0&is=6aa9c160&hm=236ce65b7c5709b6e05934e6c7de79760de79a4832f8e08d510ccfc9b4951425&=&format=webp&quality=lossless';
 const APP_DECISIONS_CHANNEL_ID = '1232495212333498458';
 const APP_PANEL_CHANNEL_ID = '1539681421306896476';
 const APP_REVIEWER_ROLE_ID = '1548637141850918993';
 
-function buildStaffApplicationPanelCard() {
-  const card = new ContainerBuilder();
-  card.addMediaGalleryComponents(
-    new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PANEL_BANNER_URL))
-  );
+function buildStaffApplicationPanelCard(bannerOverride) {
+  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const bannerUrl = (bannerOverride !== undefined)
+    ? bannerOverride
+    : (fs.existsSync(APP_BANNER_PATH) ? 'attachment://applications_banner.jpg' : null);
+
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl))
+    );
+  }
 
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay Staff Applications'));
   card.addSeparatorComponents(thinLine());
@@ -5325,13 +5467,44 @@ async function handleStaffApplicationPanelCommand(interaction) {
     return;
   }
 
-  const card = buildStaffApplicationPanelCard();
-  await targetChannel.send({
-    components: [card.toJSON()],
-    flags: MessageFlags.IsComponentsV2
-  });
+  const bannerExists = fs.existsSync(APP_BANNER_PATH);
+  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.jpg' })] : [];
+  const card = buildStaffApplicationPanelCard(bannerExists ? 'attachment://applications_banner.jpg' : null);
 
-  await interaction.editReply({ content: `✅ Staff Application Panel posted in <#${targetChannel.id}>.` });
+  const chanKey = `${interaction.guildId}:${targetChannel.id}`;
+  const existingMsgId = lastAppPanelByChannel.get(chanKey);
+  let existingMsg = null;
+  if (existingMsgId) {
+    existingMsg = await targetChannel.messages.fetch(existingMsgId).catch(() => null);
+  }
+
+  if (existingMsg) {
+    try {
+      await existingMsg.edit({
+        components: [card.toJSON()],
+        files,
+        flags: MessageFlags.IsComponentsV2
+      });
+      await interaction.editReply({ content: `✅ Updated existing Staff Application Panel in <#${targetChannel.id}>.` });
+      return;
+    } catch (editErr) {
+      console.warn('Could not edit existing application panel, sending new one:', editErr.message);
+    }
+  }
+
+  try {
+    const sent = await targetChannel.send({
+      components: [card.toJSON()],
+      files,
+      flags: MessageFlags.IsComponentsV2
+    });
+    lastAppPanelByChannel.set(chanKey, sent.id);
+    saveAppPanels();
+    await interaction.editReply({ content: `✅ Staff Application Panel posted in <#${targetChannel.id}>.` });
+  } catch (err) {
+    console.error('Failed to post application panel:', err);
+    await interaction.editReply({ content: `❌ Failed to post application panel: ${err.message}` });
+  }
 }
 
 async function handleAppealCommand(interaction) {
@@ -5867,10 +6040,14 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadTickets();
     loadTicketDeskState();
     loadTicketPanels();
+    loadAppPanels();
+    loadVerifyPanels();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadApplications();
     loadAppeals();
+    loadPartnerships();
+    loadPartnerBans();
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
       if (g) await backupGuildState(g);
@@ -6166,6 +6343,33 @@ client.on(Events.GuildBanRemove, async (ban) => {
 client.on(Events.GuildMemberRemove, async (member) => {
   try {
     if (!member.guild) return;
+
+    // Delete partner ad if this departing member had an active community partnership
+    try {
+      const activeAd = publishedPartnerships.get(member.id);
+      const publishChan = await member.guild.channels.fetch(PARTNERSHIP_PUBLISH_CHANNEL_ID).catch(() => null);
+      if (publishChan) {
+        if (activeAd?.messageId) {
+          const adMsg = await publishChan.messages.fetch(activeAd.messageId).catch(() => null);
+          if (adMsg) await adMsg.delete().catch(() => null);
+        }
+        const recentAds = await publishChan.messages.fetch({ limit: 50 }).catch(() => null);
+        if (recentAds) {
+          for (const m of recentAds.values()) {
+            if (m.author?.id === client.user.id && m.content?.includes(`<@${member.id}>`)) {
+              await m.delete().catch(() => null);
+            }
+          }
+        }
+      }
+      if (activeAd) {
+        publishedPartnerships.delete(member.id);
+        savePartnerships();
+        console.log(`[Partnerships] Deleted advertisement for departing member ${member.id}.`);
+      }
+    } catch (partErr) {
+      console.warn(`[Partnerships] Member leave cleanup error: ${partErr.message}`);
+    }
     setTimeout(async () => {
       try {
         const auditLogs = await member.guild.fetchAuditLogs({
@@ -6791,8 +6995,11 @@ async function createTicketForUser(client, interaction, catKey, reason) {
     }
 
     // Pinned control card
+    const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
+    const controlFiles = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.jpg' })] : [];
     const controlMsg = await ticketChannel.send({
-      components: [buildTicketControlContainer(ticketData).toJSON()],
+      components: [buildTicketControlContainer(ticketData, bannerExists ? 'attachment://assistance_banner.jpg' : null).toJSON()],
+      files: controlFiles,
       flags: MessageFlags.IsComponentsV2
     });
 
@@ -7148,7 +7355,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 1 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step1_')) {
       const appId = interaction.customId.replace('app_modal_step1_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -7166,7 +7373,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 2 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step2_')) {
       const appId = interaction.customId.replace('app_modal_step2_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -7200,7 +7407,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step 3 Modal Submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step3_')) {
       const appId = interaction.customId.replace('app_modal_step3_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -7570,15 +7777,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const panelKey = `${panelInteraction.guildId}:${channel.id}`;
       const existing = lastPanelByChannel.get(panelKey);
+      let existingMsg = null;
       if (existing) {
-        stopLive(liveKey(panelInteraction.guildId, channel.id, existing));
-        try {
-          const oldMsg = await channel.messages.fetch(existing).catch(() => null);
-          if (oldMsg) await oldMsg.delete().catch(() => null);
-        } catch {
-          // Already gone - fine.
-        }
-        lastPanelByChannel.delete(panelKey);
+        existingMsg = await channel.messages.fetch(existing).catch(() => null);
       }
       sessionShutdownByChannel.delete(panelKey);
 
@@ -7591,6 +7792,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else {
         panelPingMentionByChannel.delete(panelKey);
       }
+
+      if (existingMsg) {
+        try {
+          await existingMsg.edit({
+            components: [buildContainer(stats, { pingMention }).toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+          startLiveRefresh(
+            liveKey(panelInteraction.guildId, channel.id, existingMsg.id),
+            existingMsg,
+            channel.id
+          );
+          await panelInteraction.editReply({
+            content: `✅ Updated existing live session panel in <#${channel.id}>.`
+          });
+          return;
+        } catch (editErr) {
+          console.warn('Could not edit existing session panel, posting new:', editErr.message);
+          stopLive(liveKey(panelInteraction.guildId, channel.id, existing));
+          lastPanelByChannel.delete(panelKey);
+        }
+      }
+
       let sent;
       try {
         sent = await channel.send({
@@ -7730,19 +7954,34 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         const chanKey = `${interaction.guildId}:${targetChannel.id}`;
         const prevMsgId = lastTicketPanelByChannel.get(chanKey);
+        let existingMsg = null;
         if (prevMsgId) {
+          existingMsg = await targetChannel.messages.fetch(prevMsgId).catch(() => null);
+        }
+
+        const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
+        const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
+
+        if (existingMsg) {
           try {
-            const prevMsg = await targetChannel.messages.fetch(prevMsgId).catch(() => null);
-            if (prevMsg) await prevMsg.delete().catch(() => null);
-          } catch {
-            // Already deleted
+            await existingMsg.edit({
+              files,
+              components: [buildTicketPanelContainer().toJSON()],
+              flags: MessageFlags.IsComponentsV2
+            });
+            await interaction.editReply({
+              content: `✅ Updated existing assistance ticket panel in <#${targetChannel.id}>.`
+            });
+            return;
+          } catch (editErr) {
+            console.warn('Could not edit existing ticket panel, posting new:', editErr.message);
+            lastTicketPanelByChannel.delete(chanKey);
           }
-          lastTicketPanelByChannel.delete(chanKey);
-          saveTicketPanels();
         }
 
         try {
           const sent = await targetChannel.send({
+            files,
             components: [buildTicketPanelContainer().toJSON()],
             flags: MessageFlags.IsComponentsV2
           });
@@ -8673,15 +8912,191 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // ─────────────── Partnership Proof: Staff Delete & Warn Buttons ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('proof_del_part_')) {
+      const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      const isStaff = member && (
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        member.roles?.cache?.some((r) => /(moderator|mod|admin|supervisor|high\s*rank|executive|director|staff|management)/i.test(r.name))
+      );
+      if (!isStaff) {
+        await interaction.reply({ content: '❌ You must be a staff member to manage partnerships.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const parts = interaction.customId.replace('proof_del_part_', '').split('_');
+      const targetUserId = parts[0];
+      const targetMsgId = parts[1];
+
+      try {
+        const publishChan = await interaction.guild.channels.fetch(PARTNERSHIP_PUBLISH_CHANNEL_ID).catch(() => null);
+        if (publishChan) {
+          if (targetMsgId && targetMsgId !== 'none') {
+            const m = await publishChan.messages.fetch(targetMsgId).catch(() => null);
+            if (m) await m.delete().catch(() => null);
+          }
+          const recentAds = await publishChan.messages.fetch({ limit: 50 }).catch(() => null);
+          if (recentAds) {
+            for (const m of recentAds.values()) {
+              if (m.author?.id === client.user.id && m.content?.includes(`<@${targetUserId}>`)) {
+                await m.delete().catch(() => null);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not delete published partnership ad:', err.message);
+      }
+
+      publishedPartnerships.delete(targetUserId);
+      savePartnerships();
+
+      try {
+        const u = await client.users.fetch(targetUserId).catch(() => null);
+        if (u) {
+          await u.send({
+            content: `⚠️ **Partnership Notice:** Your community partnership with **Alabama State Roleplay** has been revoked and your advertisement was removed by staff member <@${interaction.user.id}>.`
+          }).catch(() => null);
+        }
+      } catch {}
+
+      const updatedCard = new ContainerBuilder().setAccentColor(0xed4245);
+      updatedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Partnership Proof — Revoked & Deleted'));
+      updatedCard.addSeparatorComponents(thinLine());
+      updatedCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Applicant:** <@${targetUserId}>\n` +
+          `> **Status:** 🔴 Partnership Revoked & Advertisement Deleted\n` +
+          `> **Actioned by:** <@${interaction.user.id}>\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`
+        )
+      );
+
+      const disabledRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('proof_disabled_del')
+          .setLabel('Partnership Deleted')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(true)
+      );
+
+      await interaction.update({
+        components: [updatedCard.toJSON(), disabledRow],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('proof_warn_part_')) {
+      const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      const isStaff = member && (
+        member.permissions.has(PermissionFlagsBits.Administrator) ||
+        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        member.roles?.cache?.some((r) => /(moderator|mod|admin|supervisor|high\s*rank|executive|director|staff|management)/i.test(r.name))
+      );
+      if (!isStaff) {
+        await interaction.reply({ content: '❌ You must be a staff member to manage partnerships.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
+      const parts = interaction.customId.replace('proof_warn_part_', '').split('_');
+      const targetUserId = parts[0];
+      const targetMsgId = parts[1];
+
+      try {
+        const publishChan = await interaction.guild.channels.fetch(PARTNERSHIP_PUBLISH_CHANNEL_ID).catch(() => null);
+        if (publishChan) {
+          if (targetMsgId && targetMsgId !== 'none') {
+            const m = await publishChan.messages.fetch(targetMsgId).catch(() => null);
+            if (m) await m.delete().catch(() => null);
+          }
+          const recentAds = await publishChan.messages.fetch({ limit: 50 }).catch(() => null);
+          if (recentAds) {
+            for (const m of recentAds.values()) {
+              if (m.author?.id === client.user.id && m.content?.includes(`<@${targetUserId}>`)) {
+                await m.delete().catch(() => null);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not delete published partnership ad:', err.message);
+      }
+
+      publishedPartnerships.delete(targetUserId);
+      savePartnerships();
+
+      const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
+      const bannedUntil = Date.now() + oneMonthMs;
+      partnerBans.set(targetUserId, {
+        bannedUntil,
+        bannedBy: interaction.user.id,
+        bannedAt: Date.now(),
+        reason: 'Submitting fake or fraudulent partnership proof'
+      });
+      savePartnerBans();
+
+      try {
+        const u = await client.users.fetch(targetUserId).catch(() => null);
+        if (u) {
+          await u.send({
+            content:
+              `⚠️ **Partnership Blacklist Notice — Alabama State Roleplay**\n\n` +
+              `You have been issued a warning and are **banned from partnering with us for 1 month** until <t:${Math.floor(bannedUntil / 1000)}:F>.\n` +
+              `> **Reason:** Submitting fraudulent or fake proof of advertisement.\n` +
+              `> **Action Taken:** Any active advertisements deleted and partnership blacklisted for 1 month.`
+          }).catch(() => null);
+        }
+      } catch {}
+
+      const updatedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+      updatedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⚠️ Partnership Proof — Warned & Blacklisted'));
+      updatedCard.addSeparatorComponents(thinLine());
+      updatedCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Applicant:** <@${targetUserId}>\n` +
+          `> **Status:** ⚠️ Warned & Banned from Partnering (1 Month)\n` +
+          `> **Banned Until:** <t:${Math.floor(bannedUntil / 1000)}:f>\n` +
+          `> **Actioned by:** <@${interaction.user.id}>\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>`
+        )
+      );
+
+      const disabledRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('proof_disabled_warn')
+          .setLabel('Warned & Banned (1 Month)')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      );
+
+      await interaction.update({
+        components: [updatedCard.toJSON(), disabledRow],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return;
+    }
+
     // ─────────────── Staff Application: Start Application (Select Menu & Buttons) ───────────────
+    const startingApplications = new Set();
     async function startStaffApplication(startInteraction, chosenOption) {
+      if (startingApplications.has(startInteraction.user.id)) return;
+      startingApplications.add(startInteraction.user.id);
+      setTimeout(() => startingApplications.delete(startInteraction.user.id), 5000);
+
       const existing = activeApplications.get(startInteraction.user.id);
       if (existing) {
-        await startInteraction.reply({
-          content: '⚠️ You already have an active application in progress. Please check your Direct Messages with me to complete it.',
-          flags: MessageFlags.Ephemeral
-        });
-        return;
+        // If an application already exists in progress, delete previous DM card if possible
+        if (existing.dmMessageId) {
+          try {
+            const dmCh = await startInteraction.user.createDM().catch(() => null);
+            if (dmCh) {
+              const oldMsg = await dmCh.messages.fetch(existing.dmMessageId).catch(() => null);
+              if (oldMsg) await oldMsg.delete().catch(() => null);
+            }
+          } catch {}
+        }
       }
 
       const isIngame = chosenOption === 'app_start_ingame';
@@ -8713,16 +9128,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
         activeApplications.set(startInteraction.user.id, newApp);
         saveApplications();
 
-        await startInteraction.reply({
-          content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
-          flags: MessageFlags.Ephemeral
-        });
+        if (startInteraction.replied || startInteraction.deferred) {
+          await startInteraction.followUp({
+            content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
+            flags: MessageFlags.Ephemeral
+          }).catch(() => null);
+        } else {
+          await startInteraction.reply({
+            content: `✅ I have opened your **${appType}** application in your Direct Messages! Please check your DMs to begin.`,
+            flags: MessageFlags.Ephemeral
+          });
+        }
       } catch (err) {
         console.error('Failed to send application DM:', err);
-        await startInteraction.reply({
-          content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
-          flags: MessageFlags.Ephemeral
-        });
+        if (startInteraction.replied || startInteraction.deferred) {
+          await startInteraction.followUp({
+            content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
+            flags: MessageFlags.Ephemeral
+          }).catch(() => null);
+        } else {
+          await startInteraction.reply({
+            content: `❌ I could not send you a DM (${err.message}). Please ensure your Direct Messages from server members are enabled in **Privacy & Safety** settings, then try again.`,
+            flags: MessageFlags.Ephemeral
+          });
+        }
       }
     }
 
@@ -8740,7 +9169,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Step Buttons (Applicant DM) ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step1_')) {
       const appId = interaction.customId.replace('app_btn_step1_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -8781,7 +9210,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step2_')) {
       const appId = interaction.customId.replace('app_btn_step2_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -8883,7 +9312,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step3_')) {
       const appId = interaction.customId.replace('app_btn_step3_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -8986,7 +9415,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_submit_')) {
       const appId = interaction.customId.replace('app_btn_submit_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = [...activeApplications.values()].find((a) => a.id === appId) || activeApplications.get(interaction.user.id);
       if (!appData) {
         await interaction.reply({ content: 'Application session expired. Please start again from the panel.', flags: MessageFlags.Ephemeral });
         return;
@@ -9582,35 +10011,8 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
     return;
   }
 
-  // ── Step 4: Archive proof screenshot to channel 1548646534944530582 ──
-  const proofChan = await guild.channels.fetch(PROOF_CHANNEL_ID).catch(() => null);
-  if (proofChan) {
-    try {
-      const proofCard = new ContainerBuilder().setAccentColor(0x3498db);
-      proofCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Proof Submitted'));
-      proofCard.addSeparatorComponents(thinLine());
-      proofCard.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `> **Applicant:** <@${author.id}> (${author.tag || author.username})\n` +
-          `> **Partner Community:** ${partnerName}\n` +
-          `> **Ticket Channel:** <#${channel.id}>\n` +
-          `> **AI Verification:** Passed (Content Safety Approved)\n` +
-          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
-        )
-      );
-      proofCard.addMediaGalleryComponents(
-        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(imageUrl))
-      );
-      await proofChan.send({
-        components: [proofCard.toJSON()],
-        flags: MessageFlags.IsComponentsV2
-      });
-    } catch (err) {
-      console.error('Failed to post to proof channel:', err.message);
-    }
-  }
-
-  // ── Step 5: Publish advertisement in channel 1548815558525583380 (NO EMBED, CLEAN TEXT WITH >, NO PINGS) ──
+  // ── Step 4: Publish advertisement in channel 1234265981250179072 (NO EMBED, CLEAN TEXT WITH >, NO PINGS) ──
+  let publishedMsgId = 'none';
   const publishChan = await guild.channels.fetch(PARTNERSHIP_PUBLISH_CHANNEL_ID).catch(() => null);
   if (publishChan && partnerAd) {
     try {
@@ -9629,12 +10031,62 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
         `───────────────────────────────────────\n` +
         `-# Alabama State Roleplay • Official Partnership`;
 
-      await publishChan.send({
+      const sentAd = await publishChan.send({
         content: plainAd.slice(0, 2000),
         allowedMentions: { parse: [] }
       });
+      publishedMsgId = sentAd.id;
+      publishedPartnerships.set(author.id, {
+        messageId: sentAd.id,
+        channelId: publishChan.id,
+        partnerName,
+        timestamp: Date.now()
+      });
+      savePartnerships();
     } catch (pubErr) {
       console.error('Failed to post ad to publish channel:', pubErr.message);
+    }
+  }
+
+  // ── Step 5: Archive proof screenshot to channel 1548840322438791178 WITH Delete & Warn buttons ──
+  const proofChan = await guild.channels.fetch(PROOF_CHANNEL_ID).catch(() => null);
+  if (proofChan) {
+    try {
+      const proofCard = new ContainerBuilder().setAccentColor(0x3498db);
+      proofCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Proof Submitted'));
+      proofCard.addSeparatorComponents(thinLine());
+      proofCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Applicant:** <@${author.id}> (${author.tag || author.username})\n` +
+          `> **Partner Community:** ${partnerName}\n` +
+          `> **Ticket Channel:** <#${channel.id}>\n` +
+          `> **AI Verification:** Passed (Content Safety Approved)\n` +
+          `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:F>`
+        )
+      );
+      proofCard.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(imageUrl))
+      );
+
+      const staffButtonsRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`proof_del_part_${author.id}_${publishedMsgId}`)
+          .setLabel('Delete Partnership')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🗑️'),
+        new ButtonBuilder()
+          .setCustomId(`proof_warn_part_${author.id}_${publishedMsgId}`)
+          .setLabel('Warn')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('⚠️')
+      );
+
+      await proofChan.send({
+        components: [proofCard.toJSON(), staffButtonsRow],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (err) {
+      console.error('Failed to post to proof channel:', err.message);
     }
   }
 
@@ -9650,6 +10102,7 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
       `> **AI Verification:** Passed & Approved\n` +
       `> Your proof screenshot has been recorded and archived in <#${PROOF_CHANNEL_ID}>.\n` +
       `> Your server advertisement has been published to <#${PARTNERSHIP_PUBLISH_CHANNEL_ID}>.\n\n` +
+      `> ⚠️ **Important Requirement:** You must remain a member of **Alabama State Roleplay** for your advertisement to stay active. If you leave the server, your advertisement will automatically be deleted.\n\n` +
       `**Thank you for partnering with Alabama State Roleplay!**\n\n` +
       `⏱️ *This ticket is finished and will automatically close in **5 minutes** if not closed below.*`
     )
@@ -9693,6 +10146,15 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
 }
 
 async function handleProofPartnershipCommand(interaction) {
+  const ban = partnerBans.get(interaction.user.id);
+  if (ban && ban.bannedUntil > Date.now()) {
+    await interaction.reply({
+      content: `❌ You are currently banned from partnering with Alabama State Roleplay until <t:${Math.floor(ban.bannedUntil / 1000)}:f>.\n> **Reason:** ${ban.reason}`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
   const ticket = activeTickets.get(interaction.channelId);
   if (!ticket || ticket.categoryKey !== 'partnership') {
     await interaction.reply({
@@ -9880,14 +10342,12 @@ function buildCommandsGuidePage(pageIndex = 0) {
   if (page === 0) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Command Directory — Session & Server Operations\n` +
+        `## Command Directory — Session Operations\n` +
         `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
-        `### /session panel [ping_role]\n` +
-        `> Post the live session panel with real-time in-game player counts and direct join buttons.\n\n` +
-        `### /session vote <required> <duration> [ping_role]\n` +
-        `> Open an interactive community vote for a new session with customizable vote targets.\n\n` +
-        `### /session shutdown\n` +
-        `> Safely shut down the active session, update panel status to closed, and alert voters via DM.`
+        `</session panel:1549298204271448167> </session vote:1549298204271448167> </session shutdown:1549298204271448167>\n\n` +
+        `> • **Session Panel:** Post live session panel with player counts & direct join\n` +
+        `> • **Session Vote:** Open an interactive session startup vote with goal & timer\n` +
+        `> • **Session Shutdown:** Safely end session, lock panel & notify voters`
       )
     );
   } else if (page === 1) {
@@ -9895,16 +10355,12 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Staff & Management\n` +
         `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
-        `### /staff panel [ping_role]\n` +
-        `> Post the live staff control and session management panel.\n\n` +
-        `### /staff promotion <user> <new_rank> <prev_rank> [roles] [reason]\n` +
-        `> Post an official staff promotion notice and update member roles.\n\n` +
-        `### /staff derank <user> <remove_role> <new_rank> <reason>\n` +
-        `> Demote a staff member and remove old staff roles.\n\n` +
-        `### /staff feedback <staff> <rating> <comments> [anonymous]\n` +
-        `> Submit a 1 to 5 star rating and feedback review for a staff member.\n\n` +
-        `### /staff application panel [channel]\n` +
-        `> Post the interactive staff application desk panel.`
+        `</staff panel:1549298204271448169> </staff promotion:1549298204271448169> </staff derank:1549298204271448169> </staff feedback:1549298204271448169> </staff application panel:1549298204271448169>\n\n` +
+        `> • **Staff Panel:** Post live staff control & session management panel\n` +
+        `> • **Staff Promotion:** Issue promotion announcement & update user roles\n` +
+        `> • **Staff Derank:** Demote staff member & strip designated roles\n` +
+        `> • **Staff Feedback:** Submit a 1–5 star rating & review for a staff member\n` +
+        `> • **Application Desk:** Post the interactive staff application panel`
       )
     );
   } else if (page === 2) {
@@ -9912,22 +10368,10 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Moderation & Server Security\n` +
         `*Page 3 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
-        `### /ban <target> [reason] [delete_days]\n` +
-        `> Ban a user from the Discord server.\n\n` +
-        `### /kick <target> [reason]\n` +
-        `> Kick a member from the Discord server.\n\n` +
-        `### /timeout <target> <duration> [reason]\n` +
-        `> Mute or timeout a member (60s, 5m, 10m, 1h, 1d, 1w).\n\n` +
-        `### /unban <target> [reason]\n` +
-        `> Unban a user from the Discord server or in-game ER:LC server.\n\n` +
-        `### /purge <amount> [user]\n` +
-        `> Bulk-delete 1 to 100 recent messages in the current channel.\n\n` +
-        `### /antinuke status\n` +
-        `> View anti-nuke defense status, thresholds, and recent incident logs.\n\n` +
-        `### /antinuke snapshot\n` +
-        `> Save an instant backup snapshot of all channels and roles.\n\n` +
-        `### /antinuke restore <channels|roles>\n` +
-        `> Instantly recreate deleted channels or roles from snapshot.`
+        `</ban:1549298204271448173> </kick:1549298204724691004> </timeout:1549298204724691005> </unban:1549298204724691012> </purge:1549298204724691006>\n` +
+        `</antinuke status:1549298204724691007> </antinuke snapshot:1549298204724691007> </antinuke restore:1549298204724691007>\n\n` +
+        `> • **Moderation Actions:** Ban, kick, timeout, unban, and bulk-delete recent messages\n` +
+        `> • **Anti-Nuke Defense:** Defense status, snapshot backups, and restore channels/roles`
       )
     );
   } else if (page === 3) {
@@ -9935,20 +10379,12 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
         `*Page 4 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
-        `### /erlc scan\n` +
-        `> Scan in-game players for default avatar outfits and Discord VC compliance.\n\n` +
-        `### /erlc status\n` +
-        `> View live in-game enforcer tracking statistics and non-Discord players.\n\n` +
-        `### /erlc pm <player> <message>\n` +
-        `> Send a private in-game message to a player.\n\n` +
-        `### /erlc jail <player> / /erlc unjail <player>\n` +
-        `> Jail or unjail a player in the ER:LC private server.\n\n` +
-        `### /erlc kick <player> / /erlc ban <player>\n` +
-        `> Kick or ban a player from the private server.\n\n` +
-        `### /erlc message <msg> / /erlc hint <msg>\n` +
-        `> Broadcast a server announcement (:m) or top hint (:h).\n\n` +
-        `### /safezone strike | status | clear\n` +
-        `> Manage Safe Zone shooting strikes and auto-escalations.`
+        `</erlc scan:1549298204724691009> </erlc status:1549298204724691009> </erlc pm:1549298204724691009> </erlc message:1549298204724691009> </erlc hint:1549298204724691009>\n` +
+        `</erlc jail:1549298204724691009> </erlc unjail:1549298204724691009> </erlc kick:1549298204724691009> </erlc ban:1549298204724691009>\n` +
+        `</safezone strike:1549298204724691013> </safezone status:1549298204724691013> </safezone clear:1549298204724691013>\n\n` +
+        `> • **In-Game Commands:** Scan avatar outfits, send PMs, broadcasts (:m), and top hints (:h)\n` +
+        `> • **Player Punishments:** In-game jail, unjail, kick, and ban from private server\n` +
+        `> • **Safe Zone Enforcer:** Track shooting infractions, auto-escalations, and strike resets`
       )
     );
   } else if (page === 4) {
@@ -9956,25 +10392,19 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Tickets, Roblox & Community\n` +
         `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
-        `### /ticket panel\n` +
-        `> Post the interactive assistance ticket desk panel for support requests.\n\n` +
-        `### /add <user> / /unadd <user>\n` +
-        `> Add or remove a member from the active ticket channel.\n\n` +
-        `### /verify panel\n` +
-        `> Post the official Roblox account verification panel.\n\n` +
-        `### /proof partnership <screenshot>\n` +
-        `> Submit screenshot proof of our server advertisement.\n\n` +
-        `### /suggest <suggestion>\n` +
-        `> Submit a community suggestion for public voting.\n\n` +
+        `</ticket panel:1549298204271448168> </add:1549610085385240646> </unadd:1549610085385240647> </verify panel:1549298204724691008> </proof partnership:1549298204271448172> </suggest:1549298204271448171>\n\n` +
+        `> • **Ticket Desk:** Post assistance support panel & manage ticket participants\n` +
+        `> • **Roblox & Proof:** Post verification panel and upload partnership proof\n` +
+        `> • **Community:** Submit interactive suggestions with voter cards\n\n` +
         `### Prefix Controls (-)\n` +
-        `> • **-busy** — Set ticket desk to 🟡 Busy (panel turns yellow)\n` +
-        `> • **-open** / **-open all** — Set desk to 🟢 Online (all categories open)\n` +
-        `> • **-close all** — Set desk to 🔴 Closed (all categories locked)\n` +
-        `> • **-close <dept>** / **-open <dept>** — Lock / unlock specific department\n` +
-        `> • **-add @user** / **-unadd @user** — Manage ticket channel members\n` +
-        `> • **-partnership <text>** — Submit partnership application inside ticket\n` +
-        `> • **-confirm** — Staff verification for paid partnership payments\n` +
-        `> • **-status** — Display current operational availability of ticket desk`
+        `> • **-busy** Set ticket desk to 🟡 Busy (panel turns yellow)\n` +
+        `> • **-open** / **-open all** Set desk to 🟢 Online (all categories open)\n` +
+        `> • **-close all** Set desk to 🔴 Closed (all categories locked)\n` +
+        `> • **-close <dept>** / **-open <dept>** Lock / unlock specific department\n` +
+        `> • **-add @user** / **-unadd @user** Manage ticket channel members\n` +
+        `> • **-partnership <text>** Submit partnership application inside ticket\n` +
+        `> • **-confirm** Staff verification for paid partnership payments\n` +
+        `> • **-status** Display current operational availability of ticket desk`
       )
     );
   } else {
@@ -9982,12 +10412,10 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Emergency Controls & Appeals\n` +
         `*Page 6 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
-        `### /appeal\n` +
-        `> Open an official in-game ban appeal form for staff review.\n\n` +
-        `### /retrigger\n` +
-        `> Emergency reboot & re-sync: re-registers slash commands with Discord API, restarts frozen live panel refresh timers, reboots enforcer loops, and unblocks stuck buttons.\n\n` +
-        `### /commands\n` +
-        `> Display this interactive multi-page command directory.`
+        `</appeal:1549597649848766495> </retrigger:1549298204271448166> </commands:1549298204271448164>\n\n` +
+        `> • **Appeal:** Open official private server ban appeal\n` +
+        `> • **Retrigger:** Emergency reboot & re-sync (re-registers commands, restarts timers, unblocks buttons)\n` +
+        `> • **Commands Directory:** Open this interactive multi-page command directory`
       )
     );
   }
@@ -10104,11 +10532,13 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
     loadTickets();
     loadTicketDeskState();
     loadTicketPanels();
+    loadAppPanels();
+    loadVerifyPanels();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadVotes();
     loadPanels();
-    logs.push(`✅ Datastores successfully reloaded from disk (Tickets, Panels, Votes, Strikes, Suggestions).`);
+    logs.push(`✅ Datastores successfully reloaded from disk (Tickets, App Panels, Verify Panels, Panels, Votes, Strikes, Suggestions).`);
   } catch (dataErr) {
     logs.push(`⚠️ Datastore reload notice: ${dataErr.message}`);
   }
@@ -10264,7 +10694,13 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
   }
 }
 
+const repliedCommandMessageIds = new Set();
 async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
+  if (!userMessage?.id) return;
+  if (repliedCommandMessageIds.has(userMessage.id)) return;
+  repliedCommandMessageIds.add(userMessage.id);
+  setTimeout(() => repliedCommandMessageIds.delete(userMessage.id), 10000);
+
   let sent = null;
   try {
     if (typeof replyOptions === 'string') {
@@ -10286,9 +10722,16 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   }, ms);
 }
 
+const processedMessageIds = new Set();
 client.on(Events.MessageCreate, async (message) => {
   // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
   if (message.guildId === '1530147023754367006') return;
+  if (!message?.id || processedMessageIds.has(message.id)) return;
+  processedMessageIds.add(message.id);
+  if (processedMessageIds.size > 250) {
+    const oldest = processedMessageIds.values().next().value;
+    processedMessageIds.delete(oldest);
+  }
   try {
     if (message.author?.bot || !message.guild) return;
 
@@ -10301,6 +10744,12 @@ client.on(Events.MessageCreate, async (message) => {
       const lower = trimmed.toLowerCase();
 
       if (lower.startsWith('partnership')) {
+        const ban = partnerBans.get(message.author.id);
+        if (ban && ban.bannedUntil > Date.now()) {
+          await autoDeleteReply(message, `❌ You are currently banned from partnering with Alabama State Roleplay until <t:${Math.floor(ban.bannedUntil / 1000)}:f>.\n> **Reason:** ${ban.reason}`, 30000);
+          return;
+        }
+
         if (!isPartnershipTicket) {
           await autoDeleteReply(message, '❌ The `-partnership` command can only be used inside an active partnership ticket.', 30000);
           return;
@@ -10616,8 +11065,11 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (raw === 'ticket panel' || raw === 'ticketpanel') {
+      const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
+      const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.jpg' })] : [];
       const panelMsg = await message.channel.send({
-        components: [buildTicketPanelContainer().toJSON()],
+        components: [buildTicketPanelContainer(bannerExists ? 'attachment://assistance_banner.jpg' : null).toJSON()],
+        files,
         flags: MessageFlags.IsComponentsV2
       });
       const chanKey = `${message.guild.id}:${message.channel.id}`;
