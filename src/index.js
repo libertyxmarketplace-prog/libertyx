@@ -4703,6 +4703,7 @@ const TICKETS_FILE = fileURLToPath(new URL('../tickets.json', import.meta.url));
 const TICKET_DESK_FILE = fileURLToPath(new URL('../ticket_desk.json', import.meta.url));
 const TICKET_PANELS_FILE = fileURLToPath(new URL('../ticket_panels.json', import.meta.url));
 const APP_PANELS_FILE = fileURLToPath(new URL('../app_panels.json', import.meta.url));
+const INFO_PANELS_FILE = fileURLToPath(new URL('../info_panels.json', import.meta.url));
 const VERIFY_PANELS_FILE = fileURLToPath(new URL('../verify_panels.json', import.meta.url));
 const TRANSCRIPTS_CHANNEL_ID = '1236052058059309108';
 const closedTranscripts = new Map(); // msgId -> transcriptInfo
@@ -5462,8 +5463,30 @@ function buildStaffTransferOverviewCard(ticket, channelId) {
 
 // ═══════════════════════ Official Information & Rules System ═══════════════════════
 const INFORMATION_BANNER_PATH = fileURLToPath(new URL('./assets/information_banner.png', import.meta.url));
+const lastInfoPanelByChannel = new Map();
 
-function buildInformationCard(section = 'info_overview', guild = null, includeBanner = true) {
+function loadInfoPanels() {
+  try {
+    if (!fs.existsSync(INFO_PANELS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(INFO_PANELS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) lastInfoPanelByChannel.set(k, v);
+    console.log(`Restored ${lastInfoPanelByChannel.size} info panel location(s).`);
+  } catch (err) {
+    console.error('Failed to load info_panels.json:', err.message);
+  }
+}
+
+function saveInfoPanels() {
+  try {
+    const flat = {};
+    for (const [k, v] of lastInfoPanelByChannel) flat[k] = v;
+    fs.writeFileSync(INFO_PANELS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save info_panels.json:', err.message);
+  }
+}
+
+function buildInformationCard(section = 'info_community_rules', guild = null, includeBanner = true) {
   const card = new ContainerBuilder().setAccentColor(0xe67e22);
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const bannerUrl = (includeBanner && bannerExists) ? 'attachment://information_banner.png' : null;
@@ -5612,36 +5635,11 @@ function buildInformationCard(section = 'info_overview', guild = null, includeBa
       )
     );
   } else {
-    // Overview (info_overview)
+    // Fallback — show community rules if unknown section
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## ALABAMA STATE ROLEPLAY\n` +
-        `Welcome to **Alabama State Roleplay**, founded for fans and players of ER:LC Roblox!\n\n` +
-        `Whether you're here to roleplay, connect, or just hang out – you're in the right place.\n\n` +
-        `> **Founder:** <@885315812011958313>\n` +
-        `> **Based On:** ER:LC\n` +
-        `> **Platform:** Roblox - (Alabama State Roleplay game code: \`ALABAM\`)`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### What We Offer:\n` +
-        `> ➥ Active Roleplay Community\n` +
-        `> ➥ Organized Server Structure\n` +
-        `> ➥ ER:LC-related Events & Updates\n` +
-        `> ➥ Friendly & supportive Members`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### Important Channels:\n` +
-        `> ➥ <#1232495212333498455>\n` +
-        `> ➥ <#1234009587703742504>\n` +
-        `> ➥ <#1539680102449680495>\n` +
-        `> ➥ <#1360798150910021735>\n` +
-        `> ➥ <#1234228145796808755>`
+        `## COMMUNITY RULES & REGULATIONS\n` +
+        `> Welcome to **Alabama State Roleplay**. All members are required to strictly follow the community regulations below and Discord Terms of Service.`
       )
     );
   }
@@ -5685,53 +5683,61 @@ async function handleInformationCommand(interaction) {
   const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
   const isStaff = isStaffMember(member) || member?.permissions?.has(PermissionFlagsBits.ManageGuild);
 
-  if (targetChannel) {
-    if (!isStaff) {
-      await interaction.reply({ content: 'You must have staff permissions to post the information panel to a channel.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
-    const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildInformationCard('info_overview', interaction.guild, true);
+  const postChannel = targetChannel || interaction.channel;
 
-    try {
-      await targetChannel.send({
-        components: [card.toJSON()],
-        files,
-        flags: MessageFlags.IsComponentsV2
-      });
-      await interaction.editReply({ content: `Official Information panel posted to <#${targetChannel.id}>.` });
-    } catch (err) {
-      await interaction.editReply({ content: `Failed to post information panel: ${err.message}` });
-    }
+  if (targetChannel && !isStaff) {
+    await interaction.reply({ content: 'You must have staff permissions to post the information panel to a channel.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  // If staff ran /information panel without specifying channel, post to current channel
   if (isStaff) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
     const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildInformationCard('info_overview', interaction.guild, true);
+    const card = buildInformationCard('info_community_rules', interaction.guild, true);
+    const chanKey = `${interaction.guild.id}:${postChannel.id}`;
+    const existingId = lastInfoPanelByChannel.get(chanKey);
 
+    // Try to edit the existing panel message first
+    if (existingId) {
+      try {
+        const existingMsg = await postChannel.messages.fetch(existingId).catch(() => null);
+        if (existingMsg) {
+          await existingMsg.edit({
+            components: [card.toJSON()],
+            files,
+            flags: MessageFlags.IsComponentsV2
+          });
+          lastInfoPanelByChannel.set(chanKey, existingMsg.id);
+          saveInfoPanels();
+          await interaction.editReply({ content: `✅ Refreshed existing Information panel in <#${postChannel.id}>.` });
+          return;
+        }
+      } catch (editErr) {
+        console.warn('Could not edit existing info panel, sending new one:', editErr.message);
+      }
+    }
+
+    // Send fresh panel
     try {
-      await interaction.channel.send({
+      const sent = await postChannel.send({
         components: [card.toJSON()],
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      await interaction.editReply({ content: `Official Information panel posted in <#${interaction.channelId}>.` });
+      lastInfoPanelByChannel.set(chanKey, sent.id);
+      saveInfoPanels();
+      await interaction.editReply({ content: `✅ Information panel posted in <#${postChannel.id}>.` });
     } catch (err) {
-      await interaction.editReply({ content: `Failed to post information panel: ${err.message}` });
+      await interaction.editReply({ content: `❌ Failed to post information panel: ${err.message}` });
     }
     return;
   }
 
-  // Non-staff running /information gets a private ephemeral view
+  // Non-staff: private ephemeral view
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-  const card = buildInformationCard('info_overview', interaction.guild, true);
+  const card = buildInformationCard('info_community_rules', interaction.guild, true);
   await interaction.reply({
     components: [card.toJSON()],
     files,
@@ -6764,6 +6770,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadTicketPanels();
     loadAppPanels();
     loadVerifyPanels();
+    loadInfoPanels();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadApplications();
@@ -8223,11 +8230,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step2_')) {
       const appId = interaction.customId.replace('app_modal_step2_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const robloxUser = interaction.fields.getTextInputValue('roblox_user')?.trim() || interaction.fields.getTextInputValue('discord_tag_user')?.trim() || 'N/A';
-      const timezoneAge = interaction.fields.getTextInputValue('timezone_age')?.trim() || interaction.fields.getTextInputValue('timezone')?.trim() || 'N/A';
-      const micSoftware = interaction.fields.getTextInputValue('mic_software')?.trim() || interaction.fields.getTextInputValue('bot_knowledge')?.trim() || 'N/A';
-      const experience = interaction.fields.getTextInputValue('experience')?.trim() || 'None provided';
-      const availability = interaction.fields.getTextInputValue('availability')?.trim() || 'N/A';
+      const _safeField = (id) => { try { return interaction.fields.getTextInputValue(id)?.trim() || null; } catch { return null; } };
+      const robloxUser = _safeField('roblox_user') || _safeField('discord_tag_user') || 'N/A';
+      const timezoneAge = _safeField('timezone_age') || _safeField('timezone') || 'N/A';
+      const micSoftware = _safeField('mic_software') || _safeField('bot_knowledge') || 'N/A';
+      const experience = _safeField('experience') || 'None provided';
+      const availability = _safeField('availability') || 'N/A';
 
       appData.generalInfo = {
         roblox_user: robloxUser,
@@ -11900,6 +11908,7 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
     loadTicketPanels();
     loadAppPanels();
     loadVerifyPanels();
+    loadInfoPanels();
     loadSafeZoneStrikes();
     loadSuggestions();
     loadVotes();
@@ -13352,6 +13361,9 @@ function handleGracefulShutdown(signal) {
     saveTickets();
     saveTicketDeskState();
     saveTicketPanels();
+    saveAppPanels();
+    saveVerifyPanels();
+    saveInfoPanels();
     saveSafeZoneStrikes();
     saveSuggestions();
     savePanels();
@@ -13369,6 +13381,14 @@ function handleGracefulShutdown(signal) {
 
 process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+
+// ── Global crash prevention – never let an unhandled error kill the bot ──
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception — bot kept alive:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRITICAL] Unhandled Promise Rejection — bot kept alive:', reason);
+});
 
 // Exposed for automated smoke tests; harmless in production.
 export {
