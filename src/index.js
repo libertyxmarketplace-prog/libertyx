@@ -7084,6 +7084,8 @@ function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
       ? 'Denied / Rejected'
       : 'Pending Review';
 
+  const isReviewed = item.status === 'accepted' || item.status === 'denied';
+
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## Staff Partnership & Rank Transfer Request\n` +
@@ -7095,6 +7097,7 @@ function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
       `> **Proof / Evidence:** ${item.proof}\n` +
       `> **Status:** **${verdictStatus}**` +
       (item.reviewerId ? ` by <@${item.reviewerId}>` : '') +
+      (item.assignedRoles && item.assignedRoles.length > 0 ? `\n> **Roles Assigned:** ${item.assignedRoles.join(' ')}` : '') +
       (item.verdictReason ? `\n> **Reviewer Notes:** ${item.verdictReason}` : '')
     )
   );
@@ -7105,14 +7108,14 @@ function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
   const decisionRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`part_staff_verdict_accept_${ticket.channelId}_${page}`)
-      .setLabel('Accept Member')
+      .setLabel(item.status === 'accepted' ? 'Accepted' : 'Accept Member')
       .setStyle(ButtonStyle.Success)
-      .setDisabled(item.status === 'accepted'),
+      .setDisabled(isReviewed),
     new ButtonBuilder()
       .setCustomId(`part_staff_verdict_deny_${ticket.channelId}_${page}`)
-      .setLabel('Deny Member')
+      .setLabel(item.status === 'denied' ? 'Denied' : 'Deny Member')
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(item.status === 'denied')
+      .setDisabled(isReviewed)
   );
   card.addActionRowComponents(decisionRow);
 
@@ -7570,16 +7573,66 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const verdictReason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || 'No reason provided';
       const item = ticket.staffRequests[pageIndex];
+      if (item.verdictProcessed) {
+        await interaction.reply({
+          content: `⚠️ This member transfer request has already been processed as **${(item.status || 'reviewed').toUpperCase()}**.`,
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+      item.verdictProcessed = true;
+
+      let verdictReason = '';
+      try {
+        verdictReason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || '';
+      } catch {}
+      if (!verdictReason) {
+        verdictReason = isAccept ? 'Accepted by Super High Rank' : 'No reason provided';
+      }
+
       item.status = isAccept ? 'accepted' : 'denied';
       item.reviewerId = interaction.user.id;
       item.reviewerTag = interaction.user.tag || interaction.user.username;
       item.verdictReason = verdictReason;
       item.reviewedAt = Date.now();
+
+      // Give member requested/assigned roles if Accepted
+      const assignedRoleMentions = [];
+      if (isAccept) {
+        let rawRolesInput = '';
+        try {
+          rawRolesInput = interaction.fields.getTextInputValue('assigned_roles')?.trim() || '';
+        } catch {}
+        const roleIds = rawRolesInput.match(/\d{17,20}/g) || [];
+
+        if (roleIds.length > 0) {
+          const guild = interaction.guild || (await interaction.client.guilds.fetch(config.guildId).catch(() => null));
+          if (guild) {
+            const memberToRole = await guild.members.fetch(item.userId).catch(() => null);
+            if (memberToRole) {
+              for (const rId of roleIds) {
+                try {
+                  const role = guild.roles.cache.get(rId) || await guild.roles.fetch(rId).catch(() => null);
+                  if (role) {
+                    await memberToRole.roles.add(role, `Staff Transfer Approved by ${interaction.user.tag}`).catch((addErr) => {
+                      console.warn(`Could not assign role ${role.name} (${role.id}) to ${item.userId}:`, addErr.message);
+                    });
+                    assignedRoleMentions.push(`<@&${role.id}>`);
+                  }
+                } catch (rErr) {
+                  console.warn(`Error resolving role ${rId}:`, rErr.message);
+                }
+              }
+            }
+          }
+        }
+        item.assignedRoles = assignedRoleMentions;
+      }
+
       saveTickets();
 
-      // Update SHR log message
+      // Update SHR log message to disable verdict buttons and show decision
       if (interaction.message) {
         try {
           const updatedShrCard = buildStaffTransferReviewCard(ticket, pageIndex);
@@ -7592,57 +7645,81 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      // Notify ticket channel
+      // Update the ticket channel's overview card in-place (no duplicate verdict cards sent into ticket)
       try {
         const ticketChan = await interaction.client.channels.fetch(channelId).catch(() => null);
         if (ticketChan) {
-          const noticeCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
-          noticeCard.addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-              `## Staff Transfer Verdict — ${isAccept ? 'Accepted' : 'Denied'}\n` +
-              `> **Member:** <@${item.userId}> (\`${item.userTag}\`)\n` +
-              `> **Roblox:** \`${item.robloxUser}\`\n` +
-              `> **Roles Requested:** ${item.rolesRequested}\n` +
-              `> **Reviewed By:** <@${interaction.user.id}>\n` +
-              `> **Decision:** **${isAccept ? 'ACCEPTED' : 'DENIED'}**\n` +
-              `> **Notes / Reason:** ${verdictReason}`
-            )
-          );
-          await ticketChan.send({
-            components: [noticeCard.toJSON()],
-            flags: MessageFlags.IsComponentsV2
-          });
+          const overviewCard = buildStaffTransferOverviewCard(ticket, channelId);
+          if (ticket.staffBatchMessageId) {
+            const batchMsg = await ticketChan.messages.fetch(ticket.staffBatchMessageId).catch(() => null);
+            if (batchMsg) {
+              await batchMsg.edit({
+                components: [overviewCard.toJSON()],
+                flags: MessageFlags.IsComponentsV2
+              }).catch(() => null);
+            }
+          } else {
+            const recent = await ticketChan.messages.fetch({ limit: 15 }).catch(() => null);
+            if (recent) {
+              const batchMsg = recent.find(m =>
+                m.author?.id === interaction.client.user.id &&
+                (JSON.stringify(m.components || []).includes('part_staff_add_') || JSON.stringify(m.components || []).includes('part_staff_submit_shr_'))
+              );
+              if (batchMsg) {
+                await batchMsg.edit({
+                  components: [overviewCard.toJSON()],
+                  flags: MessageFlags.IsComponentsV2
+                }).catch(() => null);
+                ticket.staffBatchMessageId = batchMsg.id;
+                saveTickets();
+              }
+            }
+          }
         }
       } catch (postErr) {
-        console.warn('Failed to notify ticket channel of SHR transfer decision:', postErr.message);
+        console.warn('Failed to update ticket channel overview card:', postErr.message);
       }
 
-      // DM transferring member
+      // DM transferring member (only once, never expose raw role IDs)
       try {
         const targetMemberUser = await interaction.client.users.fetch(item.userId).catch(() => null);
         if (targetMemberUser) {
           const dmCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
-          dmCard.addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-              `## Staff Partnership Rank Transfer Decision\n` +
-              `Hello <@${item.userId}>,\n\n` +
-              `Your rank transfer request for Alabama State Roleplay has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by <@${interaction.user.id}>.\n\n` +
-              `> **Roles Requested:** ${item.rolesRequested}\n` +
-              `> **Reviewer Notes:** ${verdictReason}\n\n` +
-              (isAccept
-                ? 'Please check in with our leadership team in your ticket channel for role assignment.'
-                : 'Thank you for your interest. If you have questions, please speak with your server representative.')
-            )
-          );
+          let dmText =
+            `## Staff Partnership Rank Transfer Decision\n` +
+            `Hello <@${item.userId}>,\n\n` +
+            `Your rank transfer request for Alabama State Roleplay has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by <@${interaction.user.id}>.\n\n` +
+            `> • **Position Requested:** ${item.rolesRequested}\n`;
+
+          if (isAccept && assignedRoleMentions.length > 0) {
+            dmText += `> • **Roles Assigned:** ${assignedRoleMentions.join(' ')}\n`;
+          }
+
+          if (verdictReason && verdictReason !== 'No reason provided' && verdictReason !== 'Accepted by Super High Rank') {
+            dmText += `> • **Instructions / Notes:** ${verdictReason}\n`;
+          }
+
+          dmText += '\n' + (isAccept
+            ? 'Your roles have been updated. Welcome to Alabama State Roleplay!'
+            : 'Thank you for your interest. If you have questions, please speak with your server representative.');
+
+          dmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(dmText));
+
           await targetMemberUser.send({
             components: [dmCard.toJSON()],
             flags: MessageFlags.IsComponentsV2
-          });
+          }).catch(() => null);
         }
-      } catch {}
+      } catch (dmErr) {
+        console.warn(`Could not DM member ${item.userId}: ${dmErr.message}`);
+      }
 
+      let replyMsg = `✅ Member transfer request (${isAccept ? 'ACCEPTED' : 'DENIED'}) recorded. Ticket overview card updated.`;
+      if (isAccept && assignedRoleMentions.length > 0) {
+        replyMsg += ` Assigned ${assignedRoleMentions.length} role(s): ${assignedRoleMentions.join(' ')}.`;
+      }
       await interaction.reply({
-        content: `✅ Member transfer request (${isAccept ? 'ACCEPTED' : 'DENIED'}) recorded. Ticket channel and user have been notified.`,
+        content: replyMsg,
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -9342,19 +9419,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const modal = new ModalBuilder()
         .setCustomId(`part_staff_verdict_modal_${isAccept ? 'accept' : 'deny'}_${channelId}_${pageIndex}`)
-        .setTitle(isAccept ? 'Accept Member Transfer' : 'Deny Member Transfer')
-        .addComponents(
+        .setTitle(isAccept ? 'Accept Member Transfer' : 'Deny Member Transfer');
+
+      if (isAccept) {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('assigned_roles')
+              .setLabel('Role IDs to Assign (supports multiple IDs)')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(false)
+              .setPlaceholder('Enter role ID(s) or @mentions, separated by spaces or commas')
+          ),
           new ActionRowBuilder().addComponents(
             new TextInputBuilder()
               .setCustomId('verdict_reason')
-              .setLabel(isAccept ? 'Role Assignment Notes & Instructions' : 'Reason for Denial')
+              .setLabel('Instructions & Reviewer Notes')
+              .setStyle(TextInputStyle.Paragraph)
+              .setRequired(false)
+              .setMaxLength(1000)
+              .setPlaceholder('e.g. Approved for Senior Moderator; follow onboarding steps.')
+          )
+        );
+      } else {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId('verdict_reason')
+              .setLabel('Reason for Denial')
               .setStyle(TextInputStyle.Paragraph)
               .setRequired(true)
               .setMinLength(2)
               .setMaxLength(1000)
-              .setPlaceholder(isAccept ? 'e.g. Approved for Senior Moderator; assigning roles.' : 'e.g. Insufficient proof or mismatched rank.')
+              .setPlaceholder('e.g. Insufficient proof or mismatched rank.')
           )
         );
+      }
 
       await interaction.showModal(modal);
       return;
