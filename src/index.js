@@ -179,17 +179,6 @@ const staffCommand = new SlashCommandBuilder()
   .setDescription('Alabama State Roleplay staff management commands.')
   .addSubcommand((sub) =>
     sub
-      .setName('panel')
-      .setDescription('Post the live session / staff panel.')
-      .addRoleOption((opt) =>
-        opt
-          .setName('ping_role')
-          .setDescription('Role to ping at the top of the panel (hidden spoiler ping).')
-          .setRequired(false)
-      )
-  )
-  .addSubcommand((sub) =>
-    sub
       .setName('promotion')
       .setDescription('Post an official staff promotion notice.')
       .addUserOption((opt) =>
@@ -433,9 +422,6 @@ const erlcCommand = new SlashCommandBuilder()
   .setDescription('ER:LC in-game moderation and enforcement tools.')
   .addSubcommand((sub) =>
     sub.setName('scan').setDescription('Manually trigger an in-game scan for suspicious outfits and non-Discord players.')
-  )
-  .addSubcommand((sub) =>
-    sub.setName('status').setDescription('View in-game anti-exploiter and VC enforcement tracker status.')
   )
   .addSubcommand((sub) =>
     sub
@@ -4322,26 +4308,6 @@ async function handleErlcCommand(interaction) {
     return;
   }
 
-  if (sub === 'status') {
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🎮 ER:LC Anti-Exploiter & VC Enforcer Status'));
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `> **Loop Status:** 🟢 **Active & Monitoring** (Every 35s)\n` +
-        `> **Tracked Players In-Game:** ${inGamePlayerTracker.size}\n` +
-        `> **Monitored Suspicious Assets:** \`144076358\`, \`63690008\` (Bacon Hair), \`1772336109\` (Down to Earth)\n` +
-        `> **Verification Code:** \`${ERLC_ENFORCER_CONFIG.codeWord}\`\n` +
-        `> **Exempt Staff Roles:** <@&${ERLC_ENFORCER_CONFIG.staffRoleIds[0]}> (Main) • <@&${ERLC_ENFORCER_CONFIG.staffRoleIds[1]}> (Test)\n\n` +
-        `**Enforcement Policies:**\n` +
-        `• **Suspicious Outfit:** In-game PM warning + 2-min countdown to 24h ban.\n` +
-        `• **Non-Discord Member:** 2-min warning PM ➔ In-game Jail ➔ 5-min kick countdown (No bans).`
-      )
-    );
-    await interaction.reply({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 });
-    return;
-  }
-
   if (sub === 'scan') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await runErlcEnforcementScan(interaction.client);
@@ -5365,7 +5331,7 @@ function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
   selectTypeCard.addSeparatorComponents(thinLine());
   selectTypeCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      (userId ? `Welcome <@${userId}>! ` : 'Welcome! ') +
+      `Welcome! ` +
       `Please select your desired partnership path from the menu below:\n\n` +
       `• **Regular Partnership**\n` +
       `> Mutual advertisement exchange for communities meeting our 120+ member requirement.\n\n` +
@@ -5422,7 +5388,7 @@ function buildStaffTransferOverviewCard(ticket, channelId) {
 
   const requests = Array.isArray(ticket.staffRequests) ? ticket.staffRequests : [];
   let summaryText =
-    `Welcome <@${ticket.userId || ticket.authorId}> to your official staff partnership and rank transfer ticket.\n\n` +
+    `Welcome to your official staff partnership and rank transfer ticket.\n\n` +
     (isSubmitted
       ? `> **Status:** Successfully submitted to Super High Rank administration.\n> **Total Candidates:** **${requests.length}**\n\n`
       : `### When Requesting Roles & Transfers\n` +
@@ -7598,6 +7564,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       item.reviewedAt = Date.now();
 
       // Give member requested/assigned roles if Accepted
+      const guild = interaction.guild || (await interaction.client.guilds.fetch(config.guildId).catch(() => null));
+      const cleanPositionRequested = (item.rolesRequested || 'N/A').replace(/<@&(\d+)>/g, (match, rId) => {
+        const r = guild?.roles?.cache?.get(rId);
+        return r ? `@${r.name}` : match;
+      });
+
+      const assignedRoleNames = [];
       const assignedRoleMentions = [];
       if (isAccept) {
         let rawRolesInput = '';
@@ -7606,28 +7579,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } catch {}
         const roleIds = rawRolesInput.match(/\d{17,20}/g) || [];
 
-        if (roleIds.length > 0) {
-          const guild = interaction.guild || (await interaction.client.guilds.fetch(config.guildId).catch(() => null));
-          if (guild) {
-            const memberToRole = await guild.members.fetch(item.userId).catch(() => null);
-            if (memberToRole) {
-              for (const rId of roleIds) {
-                try {
-                  const role = guild.roles.cache.get(rId) || await guild.roles.fetch(rId).catch(() => null);
-                  if (role) {
-                    await memberToRole.roles.add(role, `Staff Transfer Approved by ${interaction.user.tag}`).catch((addErr) => {
-                      console.warn(`Could not assign role ${role.name} (${role.id}) to ${item.userId}:`, addErr.message);
-                    });
-                    assignedRoleMentions.push(`<@&${role.id}>`);
-                  }
-                } catch (rErr) {
-                  console.warn(`Error resolving role ${rId}:`, rErr.message);
+        if (roleIds.length > 0 && guild) {
+          const memberToRole = await guild.members.fetch(item.userId).catch(() => null);
+          if (memberToRole) {
+            for (const rId of roleIds) {
+              try {
+                const role = guild.roles.cache.get(rId) || await guild.roles.fetch(rId).catch(() => null);
+                if (role) {
+                  await memberToRole.roles.add(role, `Staff Transfer Approved by ${interaction.user.tag}`).catch((addErr) => {
+                    console.warn(`Could not assign role ${role.name} (${role.id}) to ${item.userId}:`, addErr.message);
+                  });
+                  assignedRoleNames.push(role.name);
+                  assignedRoleMentions.push(`<@&${role.id}>`);
                 }
+              } catch (rErr) {
+                console.warn(`Error resolving role ${rId}:`, rErr.message);
               }
             }
           }
         }
-        item.assignedRoles = assignedRoleMentions;
+        item.assignedRoles = assignedRoleNames.map(n => `@${n}`);
       }
 
       saveTickets();
@@ -7680,43 +7651,69 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.warn('Failed to update ticket channel overview card:', postErr.message);
       }
 
-      // DM transferring member (only once, never expose raw role IDs)
+      // DM transferring member (strictly once, never duplicate, no @unknown-role)
       try {
-        const targetMemberUser = await interaction.client.users.fetch(item.userId).catch(() => null);
-        if (targetMemberUser) {
-          const dmCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
-          let dmText =
-            `## Staff Partnership Rank Transfer Decision\n` +
-            `Hello <@${item.userId}>,\n\n` +
-            `Your rank transfer request for Alabama State Roleplay has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by <@${interaction.user.id}>.\n\n` +
-            `> • **Position Requested:** ${item.rolesRequested}\n`;
+        if (!item.dmSent) {
+          const targetMemberUser = await interaction.client.users.fetch(item.userId).catch(() => null);
+          if (targetMemberUser) {
+            const dmChan = await targetMemberUser.createDM().catch(() => null);
+            let alreadySentRecently = false;
+            if (dmChan) {
+              const recentMsgs = await dmChan.messages.fetch({ limit: 10 }).catch(() => null);
+              if (recentMsgs) {
+                const duplicate = recentMsgs.find(m =>
+                  m.author?.id === interaction.client.user.id &&
+                  (Date.now() - m.createdTimestamp < 60000) &&
+                  (JSON.stringify(m.components || []).includes('Staff Partnership Rank Transfer Decision') || (m.content || '').includes('Staff Partnership Rank Transfer Decision'))
+                );
+                if (duplicate) {
+                  alreadySentRecently = true;
+                }
+              }
+            }
 
-          if (isAccept && assignedRoleMentions.length > 0) {
-            dmText += `> • **Roles Assigned:** ${assignedRoleMentions.join(' ')}\n`;
+            if (!alreadySentRecently) {
+              item.dmSent = true;
+              saveTickets();
+
+              const dmCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+              let dmText =
+                `## Staff Partnership Rank Transfer Decision\n` +
+                `Hello ${targetMemberUser.username},\n\n` +
+                `Your rank transfer request for Alabama State Roleplay has been **${isAccept ? 'ACCEPTED' : 'DENIED'}** by ${interaction.user.username}.\n\n` +
+                `> • **Position Requested:** ${cleanPositionRequested}\n`;
+
+              if (isAccept && assignedRoleNames.length > 0) {
+                dmText += `> • **Roles Assigned:** ${assignedRoleNames.map(n => `@${n}`).join(', ')}\n`;
+              }
+
+              if (verdictReason && verdictReason !== 'No reason provided' && verdictReason !== 'Accepted by Super High Rank') {
+                dmText += `> • **Instructions / Notes:** ${verdictReason}\n`;
+              }
+
+              dmText += '\n' + (isAccept
+                ? 'Your roles have been updated. Welcome to Alabama State Roleplay!'
+                : 'Thank you for your interest. If you have questions, please speak with your server representative.');
+
+              dmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(dmText));
+
+              await targetMemberUser.send({
+                components: [dmCard.toJSON()],
+                flags: MessageFlags.IsComponentsV2
+              }).catch(() => null);
+            } else {
+              item.dmSent = true;
+              saveTickets();
+            }
           }
-
-          if (verdictReason && verdictReason !== 'No reason provided' && verdictReason !== 'Accepted by Super High Rank') {
-            dmText += `> • **Instructions / Notes:** ${verdictReason}\n`;
-          }
-
-          dmText += '\n' + (isAccept
-            ? 'Your roles have been updated. Welcome to Alabama State Roleplay!'
-            : 'Thank you for your interest. If you have questions, please speak with your server representative.');
-
-          dmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(dmText));
-
-          await targetMemberUser.send({
-            components: [dmCard.toJSON()],
-            flags: MessageFlags.IsComponentsV2
-          }).catch(() => null);
         }
       } catch (dmErr) {
         console.warn(`Could not DM member ${item.userId}: ${dmErr.message}`);
       }
 
       let replyMsg = `✅ Member transfer request (${isAccept ? 'ACCEPTED' : 'DENIED'}) recorded. Ticket overview card updated.`;
-      if (isAccept && assignedRoleMentions.length > 0) {
-        replyMsg += ` Assigned ${assignedRoleMentions.length} role(s): ${assignedRoleMentions.join(' ')}.`;
+      if (isAccept && assignedRoleNames.length > 0) {
+        replyMsg += ` Assigned ${assignedRoleNames.length} role(s): ${assignedRoleNames.map(n => `@${n}`).join(', ')}.`;
       }
       await interaction.reply({
         content: replyMsg,
@@ -8384,10 +8381,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try { grp = interaction.options.getSubcommandGroup(false); } catch {}
         if (grp === 'application' || sub === 'application') {
           await handleStaffApplicationPanelCommand(interaction);
-          return;
-        }
-        if (sub === 'panel') {
-          await handleSessionPanel(interaction);
           return;
         }
         if (sub === 'promotion' || sub === 'promote') {
