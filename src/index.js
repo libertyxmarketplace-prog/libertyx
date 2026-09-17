@@ -5189,7 +5189,7 @@ function buildPartnershipGuideContainer() {
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> **How to Apply:** Send \`-partnership\` followed by your completed form and server advertisement in this ticket.\n` +
+      `> <:Info:1549944835299868702> **How to Apply:** Send \`-partnership\` followed by your completed form and server advertisement in this ticket.\n` +
       `> Once verified, you will be prompted to run \`/proof partnership\` (with a screenshot proving our advertisement is posted in your server's partnership channel).\n` +
       `> ⚠️ **Notice:** You must remain a member of this server. If you leave, your advertisement will be deleted automatically.\n` +
       `-# If proof is not uploaded, the partnership will be removed and you may be blacklisted.`
@@ -6734,31 +6734,33 @@ function getActiveTicket(channel) {
   if (typeof channel === 'object' && channel.guild) {
     const parentId = channel.parentId;
     let matchedCatKey = null;
-    for (const [k, cat] of Object.entries(TICKET_CONFIG.categories)) {
+    for (const [k, cat] of Object.entries(TICKET_CONFIG.categories || {})) {
       if (cat.categoryId === parentId) {
         matchedCatKey = k;
         break;
       }
     }
 
-    const isTicketNamed = channel.name && (
-      channel.name.startsWith('🔴・') ||
-      channel.name.startsWith('🟢・') ||
-      channel.name.startsWith('🔵・') ||
-      channel.name.startsWith('ticket-') ||
+    const name = channel.name || '';
+    const isTicketNamed = (
+      name.startsWith('🔴・') ||
+      name.startsWith('🟢・') ||
+      name.startsWith('🔵・') ||
+      name.includes('ticket') ||
+      name.includes('partner') ||
       matchedCatKey !== null
     );
 
-    if (isTicketNamed) {
-      const catKey = matchedCatKey || 'general';
+    if (isTicketNamed || channel.topic?.includes('ticket') || channel.parentId) {
+      const catKey = matchedCatKey || (name.includes('partner') ? 'partnership' : 'general');
       const cat = TICKET_CONFIG.categories[catKey] || TICKET_CONFIG.categories.general;
-      const cleanUsername = channel.name.replace(/^[🔴🟢🔵]・/, '').replace(/^ticket-/, '');
+      const cleanUsername = name.replace(/^[🔴🟢🔵]・/, '').replace(/^ticket-/, '') || 'member';
       ticket = {
         channelId: channel.id,
         guildId: channel.guild.id,
-        authorId: channel.topic?.match(/\d{17,20}/)?.[0] || channel.client?.user?.id || 'Unknown',
-        authorTag: cleanUsername || 'Community Member',
-        authorUsername: cleanUsername || 'member',
+        authorId: channel.topic?.match(/\d{17,20}/)?.[0] || 'Unknown',
+        authorTag: cleanUsername,
+        authorUsername: cleanUsername,
         categoryKey: catKey,
         categoryName: cat.name,
         reason: 'Restored ticket session',
@@ -7056,6 +7058,7 @@ async function createTicketForUser(client, interaction, catKey, reason) {
         )
       );
       selectTypeCard.addSeparatorComponents(thinLine());
+      const staffPartOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
       const selectTypeRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`part_type_regular_${ticketChannel.id}`)
@@ -7067,8 +7070,9 @@ async function createTicketForUser(client, interaction, catKey, reason) {
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId(`part_type_staff_${ticketChannel.id}`)
-          .setLabel('Staff Partnership')
-          .setStyle(ButtonStyle.Success)
+          .setLabel(staffPartOpen ? 'Staff Partnership' : 'Staff Partnership (Closed)')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(!staffPartOpen)
       );
       selectTypeCard.addActionRowComponents(selectTypeRow);
 
@@ -8522,9 +8526,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Ticket Control: Confirm Close ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_close_confirm') {
       const ticket = getActiveTicket(interaction.channel);
+      const disabledRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('ticket_close_done')
+          .setLabel('Closing Ticket...')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      );
       await interaction.update({
         content: '🔒 Archiving transcript and closing ticket in **5 seconds**...',
-        components: []
+        components: [disabledRow]
       });
       await closeTicketChannel(client, interaction.channel, ticket, interaction.user.tag, interaction.user.id, 5000);
       return;
@@ -8583,7 +8594,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Partnership Type Selection Buttons ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('part_type_regular_')) {
       const channelId = interaction.customId.replace('part_type_regular_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId);
       if (!ticket) {
         await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -8628,7 +8639,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('part_type_staff_')) {
       const channelId = interaction.customId.replace('part_type_staff_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId);
+
+      const staffPartOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.staff_partnership !== false);
+      if (!staffPartOpen) {
+        try {
+          const updatedRows = interaction.message.components.map((row) => {
+            const rb = ActionRowBuilder.from(row);
+            rb.components = rb.components.map((c) => {
+              const btn = ButtonBuilder.from(c);
+              if (btn.data.custom_id?.startsWith('part_type_staff_')) {
+                btn.setStyle(ButtonStyle.Secondary);
+                btn.setDisabled(true);
+                btn.setLabel('Staff Partnership (Closed)');
+              }
+              return btn;
+            });
+            return rb;
+          });
+          await interaction.update({ components: updatedRows });
+        } catch {}
+        await interaction.followUp({ content: '🔒 **Staff Partnership** is currently closed by staff.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+
       if (!ticket) {
         await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -8670,7 +8704,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('part_type_paid_')) {
       const channelId = interaction.customId.replace('part_type_paid_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId);
       if (!ticket) {
         await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -8705,7 +8739,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('part_confirm_payment_')) {
       const channelId = interaction.customId.replace('part_confirm_payment_', '');
-      const ticket = activeTickets.get(channelId) || activeTickets.get(interaction.channelId);
+      const ticket = getActiveTicket(interaction.channel) || activeTickets.get(channelId);
       if (!ticket) {
         await interaction.reply({ content: 'Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -8861,7 +8895,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const pageIndex = parseInt(parts.pop(), 10) || 0;
       const channelId = parts.slice(3).join('_');
 
-      const ticket = activeTickets.get(channelId);
+      const ticket = activeTickets.get(channelId) || getActiveTicket(interaction.guild?.channels.cache.get(channelId)) || getActiveTicket(interaction.channel);
       if (!ticket) {
         await interaction.reply({ content: '❌ Ticket record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -10716,7 +10750,25 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   if (!userMessage?.id) return;
   if (repliedCommandMessageIds.has(userMessage.id)) return;
   repliedCommandMessageIds.add(userMessage.id);
-  setTimeout(() => repliedCommandMessageIds.delete(userMessage.id), 10000);
+  setTimeout(() => repliedCommandMessageIds.delete(userMessage.id), 15000);
+
+  // Cross-instance and double-event deduplication:
+  // If the bot has already replied to this message in the channel, suppress duplicate
+  try {
+    const channelMsgs = await userMessage.channel?.messages.fetch({ limit: 8 }).catch(() => null);
+    if (channelMsgs) {
+      const alreadyAnswered = channelMsgs.some(
+        (m) => m.author?.id === client.user?.id && (
+          m.reference?.messageId === userMessage.id ||
+          (Date.now() - m.createdTimestamp < 4000 && m.content === (typeof replyOptions === 'string' ? replyOptions : replyOptions?.content))
+        )
+      );
+      if (alreadyAnswered) {
+        console.log(`[Deduplication] Suppressed duplicate reply to message ${userMessage.id}`);
+        return;
+      }
+    }
+  } catch {}
 
   let sent = null;
   try {
@@ -10776,7 +10828,7 @@ client.on(Events.MessageCreate, async (message) => {
         if (!payload || payload.length < 10) {
           await message.reply({
             content:
-              `ℹ️ **How to Apply:**\n` +
+              `<:Info:1549944835299868702> **How to Apply:**\n` +
               `Type \`-partnership\` followed by your completed server form and advertisement.\n` +
               `You can click the **Partnership Requirements & Application** button on the control card above to copy the form template!`
           });
@@ -11180,6 +11232,32 @@ client.on(Events.MessageCreate, async (message) => {
         ticketDeskState.categories.staff_partnership = false;
         saveTicketDeskState();
         await refreshAllTicketPanels(client);
+
+        // If executed in a ticket channel containing partnership type buttons, update them in place
+        try {
+          const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
+          if (recent) {
+            for (const msg of recent.values()) {
+              if (msg.author?.id === client.user.id && msg.components?.some((r) => r.components?.some((c) => c.customId?.startsWith('part_type_staff_')))) {
+                const updatedRows = msg.components.map((row) => {
+                  const rb = ActionRowBuilder.from(row);
+                  rb.components = rb.components.map((c) => {
+                    const btn = ButtonBuilder.from(c);
+                    if (btn.data.custom_id?.startsWith('part_type_staff_')) {
+                      btn.setStyle(ButtonStyle.Secondary);
+                      btn.setDisabled(true);
+                      btn.setLabel('Staff Partnership (Closed)');
+                    }
+                    return btn;
+                  });
+                  return rb;
+                });
+                await msg.edit({ components: updatedRows }).catch(() => null);
+              }
+            }
+          }
+        } catch {}
+
         await autoDeleteReply(message, '🔒 **Staff Partnership** is now closed.', 30000);
         return;
       }
@@ -11224,6 +11302,31 @@ client.on(Events.MessageCreate, async (message) => {
         if (ticketDeskState.status === 'closed') ticketDeskState.status = 'online';
         saveTicketDeskState();
         await refreshAllTicketPanels(client);
+
+        try {
+          const recent = await message.channel.messages.fetch({ limit: 15 }).catch(() => null);
+          if (recent) {
+            for (const msg of recent.values()) {
+              if (msg.author?.id === client.user.id && msg.components?.some((r) => r.components?.some((c) => c.customId?.startsWith('part_type_staff_')))) {
+                const updatedRows = msg.components.map((row) => {
+                  const rb = ActionRowBuilder.from(row);
+                  rb.components = rb.components.map((c) => {
+                    const btn = ButtonBuilder.from(c);
+                    if (btn.data.custom_id?.startsWith('part_type_staff_')) {
+                      btn.setStyle(ButtonStyle.Secondary);
+                      btn.setDisabled(false);
+                      btn.setLabel('Staff Partnership');
+                    }
+                    return btn;
+                  });
+                  return rb;
+                });
+                await msg.edit({ components: updatedRows }).catch(() => null);
+              }
+            }
+          }
+        } catch {}
+
         await autoDeleteReply(message, '🔓 **Staff Partnership** is now open.', 30000);
         return;
       }
