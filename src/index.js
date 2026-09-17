@@ -5486,7 +5486,7 @@ function saveInfoPanels() {
   }
 }
 
-function buildInformationCard(section = 'info_community_rules', guild = null, includeBanner = true) {
+function buildInformationCard(section = 'info_overview', guild = null, includeBanner = true) {
   const card = new ContainerBuilder().setAccentColor(0xe67e22);
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const bannerUrl = (includeBanner && bannerExists) ? 'attachment://information_banner.png' : null;
@@ -5635,11 +5635,36 @@ function buildInformationCard(section = 'info_community_rules', guild = null, in
       )
     );
   } else {
-    // Fallback — show community rules if unknown section
+    // Default overview — shown when panel is first posted publicly
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## COMMUNITY RULES & REGULATIONS\n` +
-        `> Welcome to **Alabama State Roleplay**. All members are required to strictly follow the community regulations below and Discord Terms of Service.`
+        `## ALABAMA STATE ROLEPLAY\n` +
+        `Welcome to **Alabama State Roleplay**, founded for fans and players of ER:LC Roblox!\n\n` +
+        `Whether you're here to roleplay, connect, or just hang out — you're in the right place.\n\n` +
+        `> **Founder:** <@885315812011958313>\n` +
+        `> **Based On:** ER:LC\n` +
+        `> **Platform:** Roblox — Game Code: \`ALABAM\``
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### What We Offer\n` +
+        `> ➥ Active Roleplay Community\n` +
+        `> ➥ Organized Server Structure\n` +
+        `> ➥ ER:LC-related Events & Updates\n` +
+        `> ➥ Friendly & Supportive Members`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### Important Channels\n` +
+        `> ➥ <#1232495212333498455>\n` +
+        `> ➥ <#1234009587703742504>\n` +
+        `> ➥ <#1539680102449680495>\n` +
+        `> ➥ <#1360798150910021735>\n` +
+        `> ➥ <#1234228145796808755>`
       )
     );
   }
@@ -5694,7 +5719,7 @@ async function handleInformationCommand(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
     const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildInformationCard('info_community_rules', interaction.guild, true);
+    const card = buildInformationCard('info_overview', interaction.guild, true);
     const chanKey = `${interaction.guild.id}:${postChannel.id}`;
     const existingId = lastInfoPanelByChannel.get(chanKey);
 
@@ -5737,7 +5762,7 @@ async function handleInformationCommand(interaction) {
   // Non-staff: private ephemeral view
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-  const card = buildInformationCard('info_community_rules', interaction.guild, true);
+  const card = buildInformationCard('info_overview', interaction.guild, true);
   await interaction.reply({
     components: [card.toJSON()],
     files,
