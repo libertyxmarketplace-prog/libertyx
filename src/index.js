@@ -5158,7 +5158,7 @@ function buildTicketControlContainer(ticket, bannerOverride) {
   const container = new ContainerBuilder().setAccentColor(accentColor);
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
-    : (TICKET_CONFIG?.bannerUrl || (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.jpg' : null));
+    : (TICKET_CONFIG?.bannerUrl || (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.png' : null));
 
   if (bannerUrl) {
     container.addMediaGalleryComponents(
@@ -7175,7 +7175,10 @@ async function createTicketForUser(client, interaction, catKey, reason) {
           PermissionFlagsBits.SendMessages,
           PermissionFlagsBits.ManageChannels,
           PermissionFlagsBits.ManageMessages,
-          PermissionFlagsBits.ReadMessageHistory
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.AttachFiles,
+          PermissionFlagsBits.EmbedLinks,
+          PermissionFlagsBits.UseExternalEmojis
         ]
       }
     ];
@@ -7274,19 +7277,53 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       ticketData.partnershipStep = 'select_type';
     }
 
-    // Pinned control card
+    // Pinned control card with fallback
     const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
-    const controlFiles = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.jpg' })] : [];
-    const controlMsg = await ticketChannel.send({
-      components: [buildTicketControlContainer(ticketData, bannerExists ? 'attachment://assistance_banner.jpg' : null).toJSON()],
-      files: controlFiles,
-      flags: MessageFlags.IsComponentsV2
-    });
-
+    let controlMsg = null;
     try {
-      await controlMsg.pin();
-    } catch (pinErr) {
-      console.warn(`Could not pin ticket control card: ${pinErr.message}`);
+      const controlFiles = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
+      controlMsg = await ticketChannel.send({
+        components: [buildTicketControlContainer(ticketData, bannerExists ? 'attachment://assistance_banner.png' : null).toJSON()],
+        files: controlFiles,
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (bannerErr) {
+      console.warn('Failed to send control card with local file, sending without file:', bannerErr.message);
+      controlMsg = await ticketChannel.send({
+        components: [buildTicketControlContainer(ticketData, TICKET_CONFIG?.bannerUrl || null).toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    }
+
+    if (controlMsg) {
+      try {
+        await controlMsg.pin();
+      } catch (pinErr) {
+        console.warn(`Could not pin ticket control card: ${pinErr.message}`);
+      }
+      ticketData.controlMessageId = controlMsg.id;
+    }
+
+    // If general support ticket, post dedicated general support welcome embed card
+    if (catKey === 'general') {
+      const generalHelpCard = new ContainerBuilder().setAccentColor(0x3498db);
+      generalHelpCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent('## General Community Support & Assistance')
+      );
+      generalHelpCard.addSeparatorComponents(thinLine());
+      generalHelpCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `Welcome to **Alabama State Roleplay General Support**!\n\n` +
+          `> • **Your Inquiry:** ${ticketData.reason || 'General Community Assistance'}\n` +
+          `> • **Staff Notification:** Our support team has been notified and will assist you shortly.\n` +
+          `> • **Details:** Please provide any additional screenshots, player names, or relevant details below.\n\n` +
+          `*You can close this ticket at any time by clicking **Close Ticket** on the control card above.*`
+        )
+      );
+      await ticketChannel.send({
+        components: [generalHelpCard.toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      }).catch((e) => console.warn('Could not post general support embed:', e.message));
     }
 
     // If partnership ticket, post the interactive Regular vs Paid vs Staff selector
@@ -7310,7 +7347,6 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       ticketData.staffBatchMessageId = staffMsg.id;
     }
 
-    ticketData.controlMessageId = controlMsg.id;
     activeTickets.set(ticketChannel.id, ticketData);
     saveTickets();
 
