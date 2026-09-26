@@ -62,16 +62,16 @@ const pill = card.components.find(
   (c) => c.type === 9 && c.accessory?.custom_id?.startsWith('vote_count_')
 );
 ok(voteBtn?.custom_id === 'vote_click_vtest1', 'vote button is vote_click_<id>');
-ok(voteBtn?.disabled === false, 'Vote button interactive');
+ok(!voteBtn?.disabled, 'Vote button interactive');
 ok(pill?.accessory?.disabled === true, 'count pill disabled (not clickable)');
 ok(card.accent_color === 0x5865f2, 'open color blurple');
 
-// 2) Goal state flips button green + disables it.
+// 2) Goal state flips button green + keeps it interactive for further voters.
 vote.voters = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10 };
 const readyCard = buildVoteContainer(vote).toJSON();
 const readyBtn = readyCard.components.find((c) => c.type === 1).components[0];
 ok(readyBtn.style === 3, 'goal reached → button green (style 3)');
-ok(readyBtn.disabled === true, 'goal reached → Vote button disabled');
+ok(!readyBtn?.disabled, 'goal reached → Vote button stays interactive');
 ok(readyCard.accent_color === 0x57f287, 'goal reached → green accent');
 
 // 3) Expired state kills the button.

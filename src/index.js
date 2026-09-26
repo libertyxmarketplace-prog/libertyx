@@ -248,6 +248,83 @@ const staffCommand = new SlashCommandBuilder()
         opt.setName('anonymous').setDescription('Submit feedback anonymously? (optional)').setRequired(false)
       )
   )
+  .addSubcommand((sub) =>
+    sub
+      .setName('infraction')
+      .setDescription('Issue an official staff infraction notice (without demotion).')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('Staff member receiving the infraction').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('type')
+          .setDescription('Infraction type / severity')
+          .setRequired(true)
+          .addChoices(
+            { name: 'Formal Warning', value: 'Formal Warning' },
+            { name: 'Strike 1', value: 'Strike 1' },
+            { name: 'Strike 2', value: 'Strike 2' },
+            { name: 'Final Warning', value: 'Final Warning' },
+            { name: 'Temporary Suspension', value: 'Temporary Suspension' },
+            { name: 'Policy Violation', value: 'Policy Violation' }
+          )
+      )
+      .addStringOption((opt) =>
+        opt.setName('reason').setDescription('Reason for the infraction').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt.setName('notes').setDescription('Optional notes, remediation, or appeal instructions').setRequired(false)
+      )
+      .addChannelOption((opt) =>
+        opt.setName('channel').setDescription('Channel to post notice (defaults to derank/infraction channel)').setRequired(false)
+      )
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('retirement')
+      .setDescription('Post an official staff retirement announcement with retirement banner.')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt.setName('previous_rank').setDescription('Their rank at retirement (e.g. Moderator, Admin, Supervisor)').setRequired(true)
+      )
+      .addRoleOption((opt) =>
+        opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
+      )
+      .addRoleOption((opt) =>
+        opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
+      )
+      .addStringOption((opt) =>
+        opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
+      )
+      .addChannelOption((opt) =>
+        opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
+      )
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('retire')
+      .setDescription('Post an official staff retirement announcement (alias).')
+      .addUserOption((opt) =>
+        opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
+      )
+      .addRoleOption((opt) =>
+        opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
+      )
+      .addRoleOption((opt) =>
+        opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
+      )
+      .addStringOption((opt) =>
+        opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
+      )
+      .addChannelOption((opt) =>
+        opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
+      )
+  )
   .addSubcommandGroup((grp) =>
     grp
       .setName('application')
@@ -570,6 +647,118 @@ const unaddCommand = new SlashCommandBuilder()
     opt.setName('user').setDescription('The user to remove from this ticket').setRequired(true)
   );
 
+const infractionCommand = new SlashCommandBuilder()
+  .setName('infraction')
+  .setDescription('Issue an official staff infraction notice (without demotion).')
+  .addUserOption((opt) =>
+    opt.setName('user').setDescription('Staff member receiving the infraction').setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt
+      .setName('type')
+      .setDescription('Infraction type / severity')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Formal Warning', value: 'Formal Warning' },
+        { name: 'Strike 1', value: 'Strike 1' },
+        { name: 'Strike 2', value: 'Strike 2' },
+        { name: 'Final Warning', value: 'Final Warning' },
+        { name: 'Temporary Suspension', value: 'Temporary Suspension' },
+        { name: 'Policy Violation', value: 'Policy Violation' }
+      )
+  )
+  .addStringOption((opt) =>
+    opt.setName('reason').setDescription('Reason for the infraction').setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt.setName('notes').setDescription('Optional notes, remediation, or appeal instructions').setRequired(false)
+  )
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Channel to post notice (defaults to derank/infraction channel)').setRequired(false)
+  );
+
+const retirementCommand = new SlashCommandBuilder()
+  .setName('retirement')
+  .setDescription('Post an official staff retirement announcement with retirement banner.')
+  .addUserOption((opt) =>
+    opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
+  )
+  .addStringOption((opt) =>
+    opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
+  )
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
+  );
+
+const retireCommand = new SlashCommandBuilder()
+  .setName('retire')
+  .setDescription('Post an official staff retirement announcement (alias).')
+  .addUserOption((opt) =>
+    opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
+  )
+  .addStringOption((opt) =>
+    opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
+  )
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
+  );
+
+const exploitCommand = new SlashCommandBuilder()
+  .setName('exploit')
+  .setDescription('In-game exploit detection and reporting tools.')
+  .addSubcommand((sub) =>
+    sub
+      .setName('report')
+      .setDescription('Report an active exploiter in the ER:LC server.')
+      .addStringOption((opt) =>
+        opt.setName('player').setDescription('Roblox username of the suspected exploiter').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('type')
+          .setDescription('Type of exploit observed')
+          .setRequired(true)
+          .addChoices(
+            { name: 'Flying / Noclip', value: 'Flying / Noclip' },
+            { name: 'Speed Hacking', value: 'Speed Hacking' },
+            { name: 'Kill-All / Rapid Multi-Kill', value: 'Kill-All / Rapid Multi-Kill' },
+            { name: 'Car Fling / Physics Abuse', value: 'Car Fling / Physics Abuse' },
+            { name: 'God Mode / Invincibility', value: 'God Mode / Invincibility' },
+            { name: 'Invisibility', value: 'Invisibility' },
+            { name: 'Crashing / Server Lag', value: 'Crashing / Server Lag' },
+            { name: 'Prohibited Avatar / Other Exploit', value: 'Prohibited Avatar / Other Exploit' }
+          )
+      )
+      .addStringOption((opt) =>
+        opt.setName('details').setDescription('Details, location in-game, or link to video evidence').setRequired(true)
+      )
+  )
+  .addSubcommand((sub) =>
+    sub.setName('status').setDescription('View active exploit watcher status and recent incidents.')
+  )
+  .addSubcommand((sub) =>
+    sub.setName('scan').setDescription('Force an immediate scan of in-game players for suspicious exploits.')
+  );
+
+
 const informationCommand = new SlashCommandBuilder()
   .setName('information')
   .setDescription('Official Alabama State Roleplay information system.')
@@ -597,7 +786,9 @@ const STAFF_CONFIG = {
 
 
 const TICKET_BANNER_PATH = fileURLToPath(new URL('./assets/assistance_banner.png', import.meta.url));
-const APP_BANNER_PATH = fileURLToPath(new URL('./assets/applications_banner.jpg', import.meta.url));
+const APP_BANNER_PATH = fileURLToPath(new URL('./assets/applications_banner.png', import.meta.url));
+const RETIREMENT_BANNER_PATH = fileURLToPath(new URL('./assets/retirement_banner.png', import.meta.url));
+const VOTE_BANNER_PATH = fileURLToPath(new URL('./assets/vote_banner.png', import.meta.url));
 
 const TICKET_CONFIG = {
   bannerUrl: 'https://i.ibb.co/5gf3LYvD/content.webp',
@@ -837,7 +1028,9 @@ function bannerUrl() {
 }
 
 function voteBannerUrl() {
-  return config.voteBannerUrl || SERVER.voteBannerUrl || bannerUrl();
+  if (config.voteBannerUrl) return config.voteBannerUrl;
+  if (fs.existsSync(VOTE_BANNER_PATH)) return 'attachment://vote_banner.png';
+  return SERVER.voteBannerUrl || bannerUrl();
 }
 
 function formatRoleMention(roleId, guildId) {
@@ -1311,7 +1504,7 @@ function voteVotersLine(vote) {
 function buildVoteContainer(vote) {
   const count = Object.keys(vote.voters ?? {}).length;
   const done = count >= vote.needed;
-  const dead = vote.expired || vote.started || vote.cancelled;
+  const dead = Boolean(vote.expired || vote.started || vote.cancelled);
   const box = new ContainerBuilder().setAccentColor(
     vote.started ? VOTE_COLOR.ready : vote.expired ? VOTE_COLOR.expired : done ? VOTE_COLOR.ready : VOTE_COLOR.open
   );
@@ -1323,7 +1516,11 @@ function buildVoteContainer(vote) {
   }
   box.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      vote.started ? '## Session Starting' : vote.expired ? '## Session Vote Expired' : '## Session Vote'
+      vote.started
+        ? '## Session Starting'
+        : vote.expired
+          ? (done ? '## Session Vote Closed (Goal Reached)' : '## Session Vote Expired')
+          : (done ? '## Session Ready (Goal Reached)' : '## Session Vote')
     )
   );
   box.addTextDisplayComponents(
@@ -1331,7 +1528,9 @@ function buildVoteContainer(vote) {
       vote.started
         ? '> The session is starting now - check your DMs.'
         : vote.expired
-          ? `> This vote closed without reaching **${vote.needed}** votes.`
+          ? (done
+              ? `> ⏱️ Voting concluded with **${count}/${vote.needed}** votes (Goal reached!). Awaiting host to launch.`
+              : `> This vote closed without reaching **${vote.needed}** votes.`)
           : `> <@${vote.hostId}> needs **${vote.needed}** members to launch the session.\n> Time remaining: <t:${Math.floor(vote.endTs / 1000)}:R>\n> Ping role: ${formatRoleMention(vote.roleId, vote.guildId)}`
     )
   );
@@ -1360,13 +1559,17 @@ function buildVoteContainer(vote) {
     );
   }
   box.addSeparatorComponents(thinLine());
+  const voteBtn = new ButtonBuilder()
+    .setCustomId(`vote_click_${vote.id}`)
+    .setLabel(vote.started ? 'Started' : vote.expired ? 'Expired' : done ? `Vote (${count}/${vote.needed})` : `Vote (${count})`)
+    .setStyle(done && !vote.started && !vote.expired ? ButtonStyle.Success : ButtonStyle.Secondary);
+  if (dead) {
+    voteBtn.setDisabled(true);
+  }
+
   box.addActionRowComponents(
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`vote_click_${vote.id}`)
-        .setLabel(vote.started ? 'Started' : vote.expired ? 'Expired' : done ? 'Goal Reached' : 'Vote')
-        .setStyle(done && !vote.started && !vote.expired ? ButtonStyle.Success : ButtonStyle.Secondary)
-        .setDisabled(dead || done),
+      voteBtn,
       new ButtonBuilder()
         .setCustomId('session_notify')
         .setLabel('Session Notification')
@@ -1718,6 +1921,258 @@ async function handleDerankCommand(interaction) {
     });
   }
 }
+
+function buildInfractionContainer({ targetUser, targetMember, infractionType, reason, notes, moderator }) {
+  const container = new ContainerBuilder().setAccentColor(0xe67e22);
+  const displayName = targetMember?.displayName || targetUser.globalName || targetUser.username;
+
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Staff Infraction Notice'));
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> An official disciplinary notice has been logged for <@${targetUser.id}> (${displayName}) in **Alabama State Roleplay**.\n> *This notice serves as an official infraction on staff record without demotion.*`.trim()
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `**Staff Member:** <@${targetUser.id}> (${displayName})\n` +
+      `**Infraction Type:** ${infractionType}\n` +
+      `**Status:** Active On Staff Record\n` +
+      `**Issued By:** <@${moderator.id}>`
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`**Reason for Infraction**\n> ${reason}`)
+  );
+
+  if (notes) {
+    container.addSeparatorComponents(thinLine());
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`**Next Steps & Guidelines**\n> ${notes}`)
+    );
+  }
+
+  container.addSeparatorComponents(thinLine());
+  container.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('infraction_status_btn')
+        .setLabel('Infraction Logged')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    )
+  );
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`-# Official Staff Disciplinary Record • <t:${nowTs}:F>`)
+  );
+
+  return container;
+}
+
+function buildRetirementContainer({ targetUser, targetMember, previousRank, farewellMessage, moderator, hasBannerFile = true }) {
+  const container = new ContainerBuilder().setAccentColor(0xd35400);
+
+  if (hasBannerFile) {
+    container.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://retirement_banner.png'))
+    );
+  }
+
+  const displayName = targetMember?.displayName || targetUser.globalName || targetUser.username;
+
+  container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Staff Retirement Announcement'));
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> We recognize and honor <@${targetUser.id}> (${displayName}) as they step down from active duty in **Alabama State Roleplay**.\n> Thank you for your leadership, service, and contributions to our community!`.trim()
+    )
+  );
+
+  container.addSeparatorComponents(thinLine());
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `**Staff Member:** <@${targetUser.id}> (${displayName})\n` +
+      `**Rank at Retirement:** ${previousRank}\n` +
+      `**Status:** Honorable Retirement 🎖️\n` +
+      `**Processed By:** <@${moderator.id}>`
+    )
+  );
+
+  if (farewellMessage) {
+    container.addSeparatorComponents(thinLine());
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`**Farewell Commendation**\n> ${farewellMessage}`)
+    );
+  }
+
+  container.addSeparatorComponents(thinLine());
+  container.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('retirement_honored_btn')
+        .setLabel('Honorable Retirement')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    )
+  );
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`-# Alabama State Roleplay • Honorable Retirement • <t:${nowTs}:F>`)
+  );
+
+  return container;
+}
+
+async function handleInfractionCommand(interaction) {
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  if (!isStaffMember(member)) {
+    await interaction.reply({
+      content: '❌ You must have staff permissions to issue infractions.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const targetUser = interaction.options.getUser('user', true);
+  const infractionType = interaction.options.getString('type', true);
+  const reason = interaction.options.getString('reason', true).trim();
+  const notes = interaction.options.getString('notes')?.trim() || null;
+  const targetChannelOpt = interaction.options.getChannel('channel') || null;
+
+  const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+
+  const channelIdToUse = targetChannelOpt?.id || STAFF_CONFIG.derankChannelId;
+  const targetChannel = await interaction.guild.channels.fetch(channelIdToUse).catch(() => null);
+
+  if (!targetChannel) {
+    await interaction.editReply({
+      content: `❌ Could not find destination channel (<#${channelIdToUse}> / \`${channelIdToUse}\`). Ensure the channel exists and I have permission to send messages there.`
+    });
+    return;
+  }
+
+  const container = buildInfractionContainer({
+    targetUser,
+    targetMember,
+    infractionType,
+    reason,
+    notes,
+    moderator: interaction.user
+  });
+
+  try {
+    await targetChannel.send({
+      components: [container.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+
+    // Send DM copy to member
+    await dmUser(interaction.client, targetUser.id, {
+      components: [container.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    }).catch(() => null);
+
+    await interaction.editReply({
+      content: `⚠️ Staff infraction notice for <@${targetUser.id}> successfully posted in <#${channelIdToUse}> (Logged on record without demotion).`
+    });
+  } catch (err) {
+    console.error('Failed to post infraction notice:', err);
+    await interaction.editReply({
+      content: `❌ Failed to post infraction card: ${err.message}`
+    });
+  }
+}
+
+async function handleRetirementCommand(interaction) {
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  if (!isStaffMember(member)) {
+    await interaction.reply({
+      content: '❌ You must have staff permissions to process staff retirements.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const targetUser = interaction.options.getUser('user', true);
+  const previousRank = interaction.options.getString('previous_rank', true).trim();
+  const removeRole = interaction.options.getRole('remove_role') || null;
+  const giveRole = interaction.options.getRole('give_role') || null;
+  const farewellMessage = interaction.options.getString('farewell_message')?.trim() || null;
+  const targetChannelOpt = interaction.options.getChannel('channel') || null;
+
+  const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+  let roleChanges = [];
+
+  if (targetMember) {
+    if (removeRole && targetMember.roles.cache.has(removeRole.id)) {
+      try {
+        await targetMember.roles.remove(removeRole.id);
+        roleChanges.push(`Removed role: **@${removeRole.name}**`);
+      } catch (err) {
+        console.warn(`Could not remove role ${removeRole.name}: ${err.message}`);
+      }
+    }
+    if (giveRole && !targetMember.roles.cache.has(giveRole.id)) {
+      try {
+        await targetMember.roles.add(giveRole.id);
+        roleChanges.push(`Assigned role: **@${giveRole.name}**`);
+      } catch (err) {
+        console.warn(`Could not assign role ${giveRole.name}: ${err.message}`);
+      }
+    }
+  }
+
+  const channelIdToUse = targetChannelOpt?.id || STAFF_CONFIG.promotionChannelId;
+  const targetChannel = await interaction.guild.channels.fetch(channelIdToUse).catch(() => null);
+
+  if (!targetChannel) {
+    await interaction.editReply({
+      content: `❌ Could not find announcement channel (<#${channelIdToUse}> / \`${channelIdToUse}\`). Ensure the channel exists and I have permission to send messages there.`
+    });
+    return;
+  }
+
+  const hasBannerFile = fs.existsSync(RETIREMENT_BANNER_PATH);
+  const files = hasBannerFile ? [new AttachmentBuilder(RETIREMENT_BANNER_PATH, { name: 'retirement_banner.png' })] : [];
+
+  const container = buildRetirementContainer({
+    targetUser,
+    targetMember,
+    previousRank,
+    farewellMessage,
+    moderator: interaction.user,
+    hasBannerFile
+  });
+
+  try {
+    await targetChannel.send({
+      components: [container.toJSON()],
+      files,
+      flags: MessageFlags.IsComponentsV2
+    });
+
+    let confirmation = `🎖️ Retirement announcement for <@${targetUser.id}> successfully posted in <#${channelIdToUse}>!`;
+    if (roleChanges.length > 0) {
+      confirmation += `\n> ${roleChanges.join('\n> ')}`;
+    }
+    await interaction.editReply({ content: confirmation });
+  } catch (err) {
+    console.error('Failed to post retirement announcement:', err);
+    await interaction.editReply({
+      content: `❌ Failed to post retirement card: ${err.message}`
+    });
+  }
+}
+
 
 async function handleStaffFeedbackCommand(interaction) {
   const BOT_COMMANDS_CHANNEL_ID = '1232495212555927608';
@@ -4290,6 +4745,286 @@ let erlcEnforcerTimer = null;
 let safeZoneKillLogsTimer = null;
 let nonDiscordAutoRefreshTimer = null;
 
+
+// ═══════════════════════ ER:LC In-Game Exploit & Threat Monitor ═══════════════════════
+const processedModCalls = new Set();
+const processedCommandLogKeys = new Set();
+const killerBurstTracker = new Map(); // killerName -> [{ victim, ts }]
+let modCallsInitialized = false;
+let commandLogsInitialized = false;
+
+const EXPLOIT_KEYWORDS = /\b(exploit|exploiting|exploiter|hack|hacker|hacking|speed|fly|flying|fling|flinging|godmode|god\s*mode|kill\s*all|killall|noclip|btools|invis|invisible|tp\s*kill|crasher)\b/i;
+
+async function triggerExploitAlert(discordClient, alertData) {
+  const { suspect, suspectRobloxId, reason, detectionSource, evidence, actionTaken } = alertData;
+  console.log(`[EXPLOIT DETECTED] Suspect: ${suspect} | Source: ${detectionSource} | Reason: ${reason}`);
+
+  const primaryGuild = discordClient.guilds.cache.get('1232495211490443284') || discordClient.guilds.cache.first();
+  const card = new ContainerBuilder().setAccentColor(0xed4245);
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('## 🚨 Exploiter Detected / Threat Alert')
+  );
+  card.addSeparatorComponents(thinLine());
+
+  const robloxId = suspectRobloxId || (await getRobloxIdFromUsername(suspect).catch(() => null));
+  const avatarUrl = await getRobloxAvatarHeadshotUrl(robloxId);
+
+  const infoText =
+    `> **Suspect Player:** \`${suspect}\`${robloxId ? ` (Roblox ID: \`${robloxId}\`)` : ''}\n` +
+    `> **Detection Method:** ${detectionSource}\n` +
+    `> **Incident Details:** ${reason}\n` +
+    (evidence ? `> **Evidence / Report:** ${evidence}\n` : '') +
+    `> **Action Taken:** ${actionTaken || 'Flagged for immediate staff action'}\n` +
+    `> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
+    `*Staff moderation controls for this suspected exploiter:*`;
+
+  if (avatarUrl) {
+    card.addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText))
+        .setThumbnailAccessory(new ThumbnailBuilder().setURL(avatarUrl))
+    );
+  } else {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
+  }
+
+  card.addSeparatorComponents(thinLine());
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`erlc_tp_${suspect}`)
+      .setLabel('Teleport to Suspect')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`erlc_bring_${suspect}`)
+      .setLabel('Bring Suspect')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`erlc_instant_kick_${suspect}`)
+      .setLabel('Kick Suspect')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  card.addActionRowComponents(row);
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Automated Threat & Anti-Exploit Desk')
+  );
+
+  if (primaryGuild) {
+    // 1. Post to Game-Logs (1232495213986058287)
+    await sendGameLog(primaryGuild, card);
+
+    // 2. Post to Security-Logs (1277365829247307857)
+    try {
+      const secChan = await discordClient.channels.fetch('1277365829247307857').catch(() => null);
+      if (secChan && secChan.isTextBased()) {
+        await secChan.send({
+          content: '🚨 **URGENT EXPLOITER ALERT** - Staff response required!',
+          components: [card.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+      }
+    } catch {}
+
+    // 3. Dispatch alert to on-duty staff DMs
+    try {
+      const onDuty = await getOnDutyStaffMembers(discordClient);
+      if (onDuty && onDuty.length) {
+        for (const staffMember of onDuty.slice(0, 4)) {
+          await dmUser(discordClient, staffMember.user.id, {
+            content: `🚨 **Exploiter Alert in Server:** \`${suspect}\` detected via ${detectionSource}!`,
+            components: [card.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => null);
+        }
+      }
+    } catch {}
+  }
+}
+
+async function checkModCallsForExploits(discordClient) {
+  if (!config.apiKey) return;
+  const base = erlcBase();
+  try {
+    const res = await axios.get(`${base}/server/modcalls`, {
+      headers: { 'Server-Key': config.apiKey },
+      timeout: 6000
+    });
+    const calls = res.data || [];
+    if (!Array.isArray(calls) || !calls.length) return;
+
+    if (!modCallsInitialized) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const call of calls) {
+        const key = `${call.Caller}:${call.Timestamp}`;
+        if (call.Timestamp && (nowSec - call.Timestamp > 30)) {
+          processedModCalls.add(key);
+        }
+      }
+      modCallsInitialized = true;
+      console.log(`[Exploit Watcher] Initialized with ${processedModCalls.size} historical mod calls.`);
+      return;
+    }
+
+    for (const call of calls) {
+      const key = `${call.Caller}:${call.Timestamp}`;
+      if (processedModCalls.has(key)) continue;
+      processedModCalls.add(key);
+
+      const callerRaw = (call.Caller || '').split(':')[0] || 'Unknown';
+      const callMsg = call.Message || call.Reason || call.Call || '';
+      const isExploit = EXPLOIT_KEYWORDS.test(callMsg);
+
+      if (isExploit) {
+        console.log(`[Exploit Watcher] Mod call flagged as exploit from ${callerRaw}: "${callMsg}"`);
+        await triggerExploitAlert(discordClient, {
+          suspect: callerRaw,
+          detectionSource: 'In-Game Mod Call (:call / :modcall)',
+          reason: `Player submitted mod call reporting exploit activity: "${callMsg}"`,
+          evidence: `Reported by: ${callerRaw}`,
+          actionTaken: 'Staff dispatched via emergency alert'
+        });
+      }
+    }
+  } catch (err) {
+    // transient API error
+  }
+}
+
+async function checkCommandLogsForExploits(discordClient) {
+  if (!config.apiKey) return;
+  const base = erlcBase();
+  try {
+    const res = await axios.get(`${base}/server/commandlogs`, {
+      headers: { 'Server-Key': config.apiKey },
+      timeout: 6000
+    });
+    const logs = res.data || [];
+    if (!Array.isArray(logs) || !logs.length) return;
+
+    if (!commandLogsInitialized) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const entry of logs) {
+        const key = `${entry.Player}:${entry.Command}:${entry.Timestamp}`;
+        if (entry.Timestamp && (nowSec - entry.Timestamp > 30)) {
+          processedCommandLogKeys.add(key);
+        }
+      }
+      commandLogsInitialized = true;
+      console.log(`[Exploit Watcher] Initialized with ${processedCommandLogKeys.size} historical command logs.`);
+      return;
+    }
+
+    for (const entry of logs) {
+      const key = `${entry.Player}:${entry.Command}:${entry.Timestamp}`;
+      if (processedCommandLogKeys.has(key)) continue;
+      processedCommandLogKeys.add(key);
+
+      const command = (entry.Command || '').trim();
+      const adminName = (entry.Player || '').split(':')[0] || 'Server System';
+
+      // Check if a staff member or anti-cheat issued an exploit ban or kick
+      if (/^:(ban|kick)\s+/i.test(command) && EXPLOIT_KEYWORDS.test(command)) {
+        const parts = command.split(/\s+/);
+        const suspectName = parts[1] || 'Unknown';
+        console.log(`[Exploit Watcher] In-game exploit command detected: ${command} by ${adminName}`);
+        await triggerExploitAlert(discordClient, {
+          suspect: suspectName,
+          detectionSource: 'In-Game Punishment Log (:ban / :kick)',
+          reason: `Command executed by ${adminName}: \`${command}\``,
+          actionTaken: 'In-game punishment issued by staff / automated system'
+        });
+      }
+    }
+  } catch (err) {
+    // transient API error
+  }
+}
+
+function trackRapidKillsForExploit(discordClient, killerName, victimName, timestamp) {
+  if (!killerName || killerName === 'Unknown') return;
+  const now = Date.now();
+  let list = killerBurstTracker.get(killerName.toLowerCase()) || [];
+  // Keep only kills in the last 15 seconds
+  list = list.filter(item => now - item.ts < 15000);
+  list.push({ victim: victimName, ts: now });
+  killerBurstTracker.set(killerName.toLowerCase(), list);
+
+  // If 2 or more kills within 12 seconds, trigger multi-kill exploit alert!
+  if (list.length >= 2) {
+    const victims = list.map(x => x.victim).join(', ');
+    console.log(`[Exploit Watcher] Rapid multi-kill detected by ${killerName}: ${list.length} kills in 15s!`);
+    triggerExploitAlert(discordClient, {
+      suspect: killerName,
+      detectionSource: 'Rapid Multi-Kill / Kill-All Detection',
+      reason: `Player registered ${list.length} rapid kills in under 15 seconds (Victims: ${victims})`,
+      actionTaken: 'Flagged for urgent staff teleport / in-game review'
+    }).catch(() => {});
+  }
+}
+
+async function handleExploitCommand(interaction) {
+  const sub = interaction.options.getSubcommand();
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+
+  if (sub === 'report') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const player = interaction.options.getString('player', true).trim();
+    const exploitType = interaction.options.getString('type', true);
+    const details = interaction.options.getString('details', true).trim();
+
+    await triggerExploitAlert(interaction.client, {
+      suspect: player,
+      detectionSource: `Staff / Community Report (Submitted by <@${interaction.user.id}>)`,
+      reason: `Reported for: **${exploitType}**\n> Evidence & Details: ${details}`,
+      actionTaken: 'Report filed - staff notified'
+    });
+
+    await interaction.editReply({
+      content: `✅ Exploiter report for \`${player}\` has been dispatched to Game-Logs and active on-duty staff!`
+    });
+    return;
+  }
+
+  if (sub === 'status') {
+    const base = erlcBase();
+    let apiStatus = 'Connecting...';
+    try {
+      const res = await axios.get(`${base}/server`, { headers: { 'Server-Key': config.apiKey }, timeout: 4000 });
+      apiStatus = res.status === 200 ? '🟢 Connected (Active)' : `HTTP ${res.status}`;
+    } catch (e) {
+      apiStatus = `🔴 Offline / Error (${e.message})`;
+    }
+
+    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🛡️ Alabama Anti-Exploit & Security Status'));
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `> • **ER:LC API Status:** ${apiStatus}\n` +
+        `> • **ModCall Threat Scanner:** Active (every 6s)\n` +
+        `> • **CommandLog Scanner:** Active (every 6s)\n` +
+        `> • **Rapid Kill / Mass Kill Watcher:** Active (live)\n` +
+        `> • **Default Outfit / Prohibited Bacon Enforcer:** Active (20s loop)\n` +
+        `> • **Tracked Incidents:** ${killerBurstTracker.size} active burst tracker(s)\n\n` +
+        `*All suspicious exploits trigger automatic alerts in <#1232495213986058287> & <#1277365829247307857>.*`
+      )
+    );
+    await interaction.reply({ components: [card.toJSON()], flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  if (sub === 'scan') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await runErlcEnforcementScan(interaction.client);
+    await checkModCallsForExploits(interaction.client);
+    await checkCommandLogsForExploits(interaction.client);
+    await interaction.editReply({ content: '✅ Forced full ER:LC player, mod call, and command log security scan completed.' });
+    return;
+  }
+}
+
 function startErlcEnforcerLoop(client) {
   if (erlcEnforcerTimer) clearInterval(erlcEnforcerTimer);
   if (safeZoneKillLogsTimer) clearInterval(safeZoneKillLogsTimer);
@@ -4304,9 +5039,11 @@ function startErlcEnforcerLoop(client) {
     });
   }, 20000);
 
-  // Dedicated real-time Safe Zone kill logs loop (every 6 seconds)
+  // Dedicated real-time Safe Zone kill logs & exploit threat watcher (every 6 seconds)
   safeZoneKillLogsTimer = setInterval(() => {
     checkKillLogsForSafeZone(client).catch(() => {});
+    checkModCallsForExploits(client).catch(() => {});
+    checkCommandLogsForExploits(client).catch(() => {});
   }, 6000);
 
   // Dedicated auto-refresh for non-Discord players & staff DMs (every 8 seconds)
@@ -5794,7 +6531,7 @@ async function handleInformationCommand(interaction) {
 }
 
 // ═══════════════════════ Staff Application System ═══════════════════════
-const APP_PANEL_BANNER_URL = 'attachment://applications_banner.jpg';
+const APP_PANEL_BANNER_URL = 'attachment://applications_banner.png';
 const APP_PASSED_BANNER_URL =
   'https://media.discordapp.net/attachments/1232495213986058283/1536858352754360392/content.png?ex=6aab12e0&is=6aa9c160&hm=236ce65b7c5709b6e05934e6c7de79760de79a4832f8e08d510ccfc9b4951425&=&format=webp&quality=lossless';
 const APP_DECISIONS_CHANNEL_ID = '1232495212333498458';
@@ -5808,7 +6545,7 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   const card = new ContainerBuilder().setAccentColor(0x2b2d31);
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
-    : (fs.existsSync(APP_BANNER_PATH) ? 'attachment://applications_banner.jpg' : null);
+    : (fs.existsSync(APP_BANNER_PATH) ? 'attachment://applications_banner.png' : null);
 
   if (bannerUrl) {
     card.addMediaGalleryComponents(
@@ -5833,29 +6570,15 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   const options = [];
   if (appGateState.ingame) {
     options.push({
-      label: 'In-Game Staff Application',
+      label: 'Staff Application',
       value: 'app_start_ingame',
-      description: 'Apply to join the Alabama State Roleplay in-game staff team.'
+      description: 'Apply to join the Alabama State Roleplay staff team.'
     });
   } else {
     options.push({
-      label: 'In-Game Staff (Closed)',
+      label: 'Staff Application (Closed)',
       value: 'app_closed_ingame',
-      description: 'In-game staff applications are currently closed.'
-    });
-  }
-
-  if (appGateState.discord) {
-    options.push({
-      label: 'Discord Staff Application',
-      value: 'app_start_discord',
-      description: 'Apply to join the Discord moderation and ticket support team.'
-    });
-  } else {
-    options.push({
-      label: 'Discord Staff (Closed)',
-      value: 'app_closed_discord',
-      description: 'Discord staff applications are currently closed.'
+      description: 'Staff applications are currently closed.'
     });
   }
 
@@ -5867,13 +6590,22 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   const row = new ActionRowBuilder().addComponents(selectMenu);
   card.addActionRowComponents(row);
 
+  const btnRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(appGateState.ingame ? 'app_start_ingame' : 'app_closed_ingame')
+      .setLabel(appGateState.ingame ? 'Apply for Staff' : 'Applications Closed')
+      .setStyle(appGateState.ingame ? ButtonStyle.Success : ButtonStyle.Secondary)
+      .setDisabled(!appGateState.ingame)
+  );
+  card.addActionRowComponents(btnRow);
+
   return card;
 }
 
 async function refreshAllAppPanels(discordClient) {
   const bannerExists = fs.existsSync(APP_BANNER_PATH);
-  const bannerUrl = bannerExists ? 'attachment://applications_banner.jpg' : null;
-  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.jpg' })] : [];
+  const bannerUrl = bannerExists ? 'attachment://applications_banner.png' : null;
+  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.png' })] : [];
 
   for (const [chanKey, msgId] of [...lastAppPanelByChannel]) {
     const parts = chanKey.split(':');
@@ -6182,8 +6914,8 @@ async function handleStaffApplicationPanelCommand(interaction) {
   }
 
   const bannerExists = fs.existsSync(APP_BANNER_PATH);
-  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.jpg' })] : [];
-  const card = buildStaffApplicationPanelCard(bannerExists ? 'attachment://applications_banner.jpg' : null);
+  const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.png' })] : [];
+  const card = buildStaffApplicationPanelCard(bannerExists ? 'attachment://applications_banner.png' : null);
 
   const chanKey = `${interaction.guildId}:${targetChannel.id}`;
   let existingMsg = await findExistingPanelMessage(targetChannel, 'app');
@@ -6486,10 +7218,18 @@ async function editVoteMessage(client, vote) {
   try {
     const channel = await client.channels.fetch(vote.channelId);
     const msg = await channel.messages.fetch(vote.messageId);
-    await msg.edit({ components: [buildVoteContainer(vote).toJSON()], flags: MessageFlags.IsComponentsV2 });
+    const voteFiles = fs.existsSync(VOTE_BANNER_PATH)
+      ? [new AttachmentBuilder(VOTE_BANNER_PATH, { name: 'vote_banner.png' })]
+      : [];
+    await msg.edit({
+      components: [buildVoteContainer(vote).toJSON()],
+      files: voteFiles,
+      flags: MessageFlags.IsComponentsV2,
+      allowedMentions: { parse: [] }
+    });
     return true;
   } catch {
-    return false; // Message deleted / channel gone - stop tracking.
+    return false;
   }
 }
 
@@ -6720,6 +7460,19 @@ async function startSessionFromVote(client, vote, interaction) {
   }
 
 
+  // Announce session launch in channel with actual role ping!
+  try {
+    const pubChannel = await client.channels.fetch(vote.channelId);
+    if (pubChannel && pubChannel.isTextBased()) {
+      await pubChannel.send({
+        content: `<@&${vote.roleId}> 🚀 **The session is starting now!** Hop into the server and join the patrol.\n**Join URL:** <${link}>`,
+        allowedMentions: { roles: [vote.roleId], parse: ['roles'] }
+      });
+    }
+  } catch (err) {
+    console.warn('Could not post session start ping:', err.message);
+  }
+
   activeVotes.delete(vote.id);
   saveVotes();
   const pingText = formatRoleMention(vote.roleId, vote.guildId);
@@ -6818,7 +7571,11 @@ function getSlashPayload() {
     safezoneCommand.toJSON(),
     appealCommand.toJSON(),
     addCommand.toJSON(),
-    unaddCommand.toJSON()
+    unaddCommand.toJSON(),
+    infractionCommand.toJSON(),
+    retirementCommand.toJSON(),
+    retireCommand.toJSON(),
+    exploitCommand.toJSON()
   ];
 }
 
@@ -8947,6 +9704,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (existingMsg) {
         try {
           await existingMsg.edit({
+            content: pingMention || undefined,
+            allowedMentions: selectedRole ? { roles: [selectedRole.id], parse: ['roles'] } : { parse: [] },
             components: [buildContainer(stats, { pingMention }).toJSON()],
             flags: MessageFlags.IsComponentsV2
           });
@@ -8969,6 +9728,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       let sent;
       try {
         sent = await channel.send({
+          content: pingMention || undefined,
+          allowedMentions: selectedRole ? { roles: [selectedRole.id], parse: ['roles'] } : { parse: [] },
           components: [buildContainer(stats, { pingMention }).toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
@@ -9047,9 +9808,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
           voters: {}
         };
         let sent;
+        const voteFiles = fs.existsSync(VOTE_BANNER_PATH)
+          ? [new AttachmentBuilder(VOTE_BANNER_PATH, { name: 'vote_banner.png' })]
+          : [];
         try {
           sent = await interaction.channel.send({
+            content: `<@&${role.id}>`,
+            allowedMentions: { roles: [role.id], parse: ['roles'] },
             components: [buildVoteContainer(vote).toJSON()],
+            files: voteFiles,
             flags: MessageFlags.IsComponentsV2
           });
         } catch (err) {
@@ -12843,26 +13610,11 @@ client.on(Events.MessageCreate, async (message) => {
         await autoDeleteReply(message, '🔒 **Partnership Operations** is now closed.', 30000);
         return;
       }
-      if (/^ingame(\s*apps?|\s*applications?)?$/i.test(target)) {
+      if (/^(staff\s*)?(apps?|applications?)$/i.test(target) || /^apps?(\s*all)?$/i.test(target)) {
         appGateState.ingame = false;
         saveAppGateState();
         await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔒 **In-Game Staff Applications** are now closed.', 30000);
-        return;
-      }
-      if (/^discord(\s*apps?|\s*applications?)?$/i.test(target)) {
-        appGateState.discord = false;
-        saveAppGateState();
-        await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔒 **Discord Staff Applications** are now closed.', 30000);
-        return;
-      }
-      if (/^apps?(\s*all)?$/i.test(target)) {
-        appGateState.ingame = false;
-        appGateState.discord = false;
-        saveAppGateState();
-        await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔒 **All Staff Applications** are now closed.', 30000);
+        await autoDeleteReply(message, '🔒 **Staff Applications** are now closed.', 30000);
         return;
       }
     }
@@ -12926,26 +13678,11 @@ client.on(Events.MessageCreate, async (message) => {
         await autoDeleteReply(message, '🔓 **Partnership Operations** is now open.', 30000);
         return;
       }
-      if (/^ingame(\s*apps?|\s*applications?)?$/i.test(target)) {
+      if (/^(staff\s*)?(apps?|applications?)$/i.test(target) || /^apps?(\s*all)?$/i.test(target)) {
         appGateState.ingame = true;
         saveAppGateState();
         await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔓 **In-Game Staff Applications** are now open.', 30000);
-        return;
-      }
-      if (/^discord(\s*apps?|\s*applications?)?$/i.test(target)) {
-        appGateState.discord = true;
-        saveAppGateState();
-        await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔓 **Discord Staff Applications** are now open.', 30000);
-        return;
-      }
-      if (/^apps?(\s*all)?$/i.test(target)) {
-        appGateState.ingame = true;
-        appGateState.discord = true;
-        saveAppGateState();
-        await refreshAllAppPanels(client);
-        await autoDeleteReply(message, '🔓 **All Staff Applications** are now open.', 30000);
+        await autoDeleteReply(message, '🔓 **Staff Applications** are now open.', 30000);
         return;
       }
     }
