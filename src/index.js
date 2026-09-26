@@ -729,6 +729,7 @@ const STAFF_CONFIG = {
 const TICKET_BANNER_PATH = fileURLToPath(new URL('./assets/assistance_banner.png', import.meta.url));
 const APP_BANNER_PATH = fileURLToPath(new URL('./assets/applications_banner.png', import.meta.url));
 const RETIREMENT_BANNER_PATH = fileURLToPath(new URL('./assets/retirement_banner.png', import.meta.url));
+const INFRACTIONS_BANNER_PATH = fileURLToPath(new URL('./assets/infractions_banner.png', import.meta.url));
 const VOTE_BANNER_PATH = fileURLToPath(new URL('./assets/vote_banner.png', import.meta.url));
 
 const TICKET_CONFIG = {
@@ -1863,8 +1864,15 @@ async function handleDerankCommand(interaction) {
   }
 }
 
-function buildInfractionContainer({ targetUser, targetMember, infractionType, reason, notes, moderator }) {
+function buildInfractionContainer({ targetUser, targetMember, infractionType, reason, notes, moderator, hasBannerFile = true }) {
   const container = new ContainerBuilder().setAccentColor(0xe67e22);
+
+  if (hasBannerFile) {
+    container.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://infractions_banner.png'))
+    );
+  }
+
   const displayName = targetMember?.displayName || targetUser.globalName || targetUser.username;
 
   container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Staff Infraction Notice'));
@@ -1970,16 +1978,16 @@ function buildRetirementContainer({ targetUser, targetMember, previousRank, fare
 }
 
 async function handleInfractionCommand(interaction) {
+  // 1. Defer immediately to prevent Discord 3-second timeout
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => null);
+
   const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
   if (!isStaffMember(member)) {
-    await interaction.reply({
-      content: '❌ You must have staff permissions to issue infractions.',
-      flags: MessageFlags.Ephemeral
+    await interaction.editReply({
+      content: '❌ You must have staff permissions to issue infractions.'
     });
     return;
   }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const targetUser = interaction.options.getUser('user', true);
   const infractionType = interaction.options.getString('type', true);
@@ -1999,24 +2007,30 @@ async function handleInfractionCommand(interaction) {
     return;
   }
 
+  const hasBannerFile = fs.existsSync(INFRACTIONS_BANNER_PATH);
+  const files = hasBannerFile ? [new AttachmentBuilder(INFRACTIONS_BANNER_PATH, { name: 'infractions_banner.png' })] : [];
+
   const container = buildInfractionContainer({
     targetUser,
     targetMember,
     infractionType,
     reason,
     notes,
-    moderator: interaction.user
+    moderator: interaction.user,
+    hasBannerFile
   });
 
   try {
     await targetChannel.send({
       components: [container.toJSON()],
+      files,
       flags: MessageFlags.IsComponentsV2
     });
 
     // Send DM copy to member
     await dmUser(interaction.client, targetUser.id, {
       components: [container.toJSON()],
+      files,
       flags: MessageFlags.IsComponentsV2
     }).catch(() => null);
 
@@ -6522,22 +6536,20 @@ function buildStaffApplicationPanelCard(bannerOverride) {
     );
   }
 
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay • Staff Application Portal'));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay Staff Applications'));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      'Welcome to the official **Alabama State Roleplay** Staff Recruitment Portal. We are seeking mature, dedicated, and active members to join our team in upholding high-quality roleplay and community standards.\n\n' +
-      '### Available Staff Positions:\n' +
-      '• 🎮 **In-Game Staff**\n' +
-      '> Responsible for moderating our ER:LC private server, enforcing roleplay rules (FRP, NLR, VDM/RDM), handling `:m` / `:h` mod calls, overseeing Safe Zones, and maintaining realistic gameplay.\n\n' +
-      '• 🛡️ **Discord Moderation Team**\n' +
-      '> Responsible for moderating Discord chat and voice channels, assisting members with tickets, handling verification and reports, managing disputes, and maintaining community safety.\n\n' +
-      '### Minimum Requirements:\n' +
-      '> • Must be at least **14 years of age**\n' +
-      '> • Must maintain regular weekly activity\n' +
-      '> • Must possess a working microphone & clip recording software\n' +
-      '> • **Zero tolerance** for AI-generated answers or plagiarism (results in immediate permanent blacklist)\n\n' +
-      'Click a button below or select a position from the dropdown menu to open your interactive application dashboard in Direct Messages.'
+      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n\n' +
+      '**Available Positions:**\n' +
+      '• **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
+      '• **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n\n' +
+      '**Requirements & Notice:**\n' +
+      '• Must be at least 14 years of age\n' +
+      '• Must maintain regular activity in either the ER:LC server or Discord\n' +
+      '• Must have a working microphone and clip recording software\n' +
+      '• AI-generated answers and false information are strictly prohibited and will result in a permanent blacklist.\n\n' +
+      'Select the position you wish to apply for from the menu below to receive your application in your Direct Messages.'
     )
   );
 
@@ -6579,22 +6591,6 @@ function buildStaffApplicationPanelCard(bannerOverride) {
 
   const selectRow = new ActionRowBuilder().addComponents(selectMenu);
   card.addActionRowComponents(selectRow);
-
-  const btnRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(appGateState.ingame ? 'app_start_ingame' : 'app_closed_ingame')
-      .setLabel(appGateState.ingame ? 'In-Game Staff' : 'In-Game Staff (Closed)')
-      .setStyle(appGateState.ingame ? ButtonStyle.Success : ButtonStyle.Secondary)
-      .setEmoji('🎮')
-      .setDisabled(!appGateState.ingame),
-    new ButtonBuilder()
-      .setCustomId(appGateState.discord ? 'app_start_discord' : 'app_closed_discord')
-      .setLabel(appGateState.discord ? 'Discord Moderation Team' : 'Discord Team (Closed)')
-      .setStyle(appGateState.discord ? ButtonStyle.Primary : ButtonStyle.Secondary)
-      .setEmoji('🛡️')
-      .setDisabled(!appGateState.discord)
-  );
-  card.addActionRowComponents(btnRow);
 
   return card;
 }
