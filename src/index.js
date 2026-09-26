@@ -279,52 +279,6 @@ const staffCommand = new SlashCommandBuilder()
         opt.setName('channel').setDescription('Channel to post notice (defaults to derank/infraction channel)').setRequired(false)
       )
   )
-  .addSubcommand((sub) =>
-    sub
-      .setName('retirement')
-      .setDescription('Post an official staff retirement announcement with retirement banner.')
-      .addUserOption((opt) =>
-        opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
-      )
-      .addStringOption((opt) =>
-        opt.setName('previous_rank').setDescription('Their rank at retirement (e.g. Moderator, Admin, Supervisor)').setRequired(true)
-      )
-      .addRoleOption((opt) =>
-        opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
-      )
-      .addRoleOption((opt) =>
-        opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
-      )
-      .addChannelOption((opt) =>
-        opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
-      )
-  )
-  .addSubcommand((sub) =>
-    sub
-      .setName('retire')
-      .setDescription('Post an official staff retirement announcement (alias).')
-      .addUserOption((opt) =>
-        opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
-      )
-      .addStringOption((opt) =>
-        opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
-      )
-      .addRoleOption((opt) =>
-        opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
-      )
-      .addRoleOption((opt) =>
-        opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
-      )
-      .addStringOption((opt) =>
-        opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
-      )
-      .addChannelOption((opt) =>
-        opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
-      )
-  )
   .addSubcommandGroup((grp) =>
     grp
       .setName('application')
@@ -684,41 +638,28 @@ const retirementCommand = new SlashCommandBuilder()
     opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
   )
   .addStringOption((opt) =>
-    opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
+    opt.setName('previous_rank').setDescription('Their rank(s) at retirement (e.g. Senior Admin / Internal Affairs)').setRequired(true)
   )
   .addRoleOption((opt) =>
-    opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
+    opt.setName('remove_role').setDescription('Primary staff role to remove (optional)').setRequired(false)
   )
   .addRoleOption((opt) =>
-    opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
+    opt.setName('remove_role_2').setDescription('Second staff role to remove (optional)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('remove_role_3').setDescription('Third staff role to remove (optional)').setRequired(false)
+  )
+  .addBooleanOption((opt) =>
+    opt.setName('remove_all_staff_roles').setDescription('Automatically strip all staff roles from member? (defaults to True)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('give_role').setDescription('Retired Staff / Veteran role to give (optional)').setRequired(false)
   )
   .addStringOption((opt) =>
     opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
   )
   .addChannelOption((opt) =>
-    opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
-  );
-
-const retireCommand = new SlashCommandBuilder()
-  .setName('retire')
-  .setDescription('Post an official staff retirement announcement (alias).')
-  .addUserOption((opt) =>
-    opt.setName('user').setDescription('Staff member retiring / stepping down').setRequired(true)
-  )
-  .addStringOption((opt) =>
-    opt.setName('previous_rank').setDescription('Their rank at retirement').setRequired(true)
-  )
-  .addRoleOption((opt) =>
-    opt.setName('remove_role').setDescription('Current staff role to remove (optional)').setRequired(false)
-  )
-  .addRoleOption((opt) =>
-    opt.setName('give_role').setDescription('Retired / Veteran role to give (optional)').setRequired(false)
-  )
-  .addStringOption((opt) =>
-    opt.setName('farewell_message').setDescription('Retirement message / commendation (optional)').setRequired(false)
-  )
-  .addChannelOption((opt) =>
-    opt.setName('channel').setDescription('Target announcement channel (defaults to promotions channel)').setRequired(false)
+    opt.setName('channel').setDescription('Channel to post announcement into (defaults to #retirement / 1344860625742073856)').setRequired(false)
   );
 
 const exploitCommand = new SlashCommandBuilder()
@@ -2091,20 +2032,23 @@ async function handleInfractionCommand(interaction) {
 }
 
 async function handleRetirementCommand(interaction) {
+  // 1. Defer IMMEDIATELY to prevent Discord 3-second timeout ("The application did not respond")
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => null);
+
   const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
   if (!isStaffMember(member)) {
-    await interaction.reply({
-      content: '❌ You must have staff permissions to process staff retirements.',
-      flags: MessageFlags.Ephemeral
+    await interaction.editReply({
+      content: '❌ You must have staff permissions to process staff retirements.'
     });
     return;
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
   const targetUser = interaction.options.getUser('user', true);
   const previousRank = interaction.options.getString('previous_rank', true).trim();
   const removeRole = interaction.options.getRole('remove_role') || null;
+  const removeRole2 = interaction.options.getRole('remove_role_2') || null;
+  const removeRole3 = interaction.options.getRole('remove_role_3') || null;
+  const removeAllStaff = interaction.options.getBoolean('remove_all_staff_roles') ?? true;
   const giveRole = interaction.options.getRole('give_role') || null;
   const farewellMessage = interaction.options.getString('farewell_message')?.trim() || null;
   const targetChannelOpt = interaction.options.getChannel('channel') || null;
@@ -2113,14 +2057,37 @@ async function handleRetirementCommand(interaction) {
   let roleChanges = [];
 
   if (targetMember) {
-    if (removeRole && targetMember.roles.cache.has(removeRole.id)) {
-      try {
-        await targetMember.roles.remove(removeRole.id);
-        roleChanges.push(`Removed role: **@${removeRole.name}**`);
-      } catch (err) {
-        console.warn(`Could not remove role ${removeRole.name}: ${err.message}`);
+    const rolesToRemove = new Set();
+    if (removeRole) rolesToRemove.add(removeRole.id);
+    if (removeRole2) rolesToRemove.add(removeRole2.id);
+    if (removeRole3) rolesToRemove.add(removeRole3.id);
+
+    // If removeAllStaff is true, detect any staff roles currently on member
+    if (removeAllStaff) {
+      for (const r of targetMember.roles.cache.values()) {
+        if (r.id === interaction.guild.id) continue;
+        if (giveRole && r.id === giveRole.id) continue;
+        if (
+          ERLC_ENFORCER_CONFIG.staffRoleIds.includes(r.id) ||
+          /(staff|admin|mod\b|moderator|supervisor|director|executive|management|trainee|junior\s*mod|senior\s*mod|trial\s*mod|head\s*admin|co-owner|owner)/i.test(r.name)
+        ) {
+          rolesToRemove.add(r.id);
+        }
       }
     }
+
+    for (const rid of rolesToRemove) {
+      const roleObj = targetMember.roles.cache.get(rid);
+      if (roleObj) {
+        try {
+          await targetMember.roles.remove(rid);
+          roleChanges.push(`Removed role: **@${roleObj.name}**`);
+        } catch (err) {
+          console.warn(`Could not remove role ${roleObj.name}: ${err.message}`);
+        }
+      }
+    }
+
     if (giveRole && !targetMember.roles.cache.has(giveRole.id)) {
       try {
         await targetMember.roles.add(giveRole.id);
@@ -2131,12 +2098,14 @@ async function handleRetirementCommand(interaction) {
     }
   }
 
-  const channelIdToUse = targetChannelOpt?.id || STAFF_CONFIG.promotionChannelId;
+  // Official retirement channel requested by user: 1344860625742073856
+  const DEFAULT_RETIREMENT_CHANNEL_ID = '1344860625742073856';
+  const channelIdToUse = targetChannelOpt?.id || DEFAULT_RETIREMENT_CHANNEL_ID;
   const targetChannel = await interaction.guild.channels.fetch(channelIdToUse).catch(() => null);
 
   if (!targetChannel) {
     await interaction.editReply({
-      content: `❌ Could not find announcement channel (<#${channelIdToUse}> / \`${channelIdToUse}\`). Ensure the channel exists and I have permission to send messages there.`
+      content: `❌ Could not find retirement channel (<#${channelIdToUse}> / \`${channelIdToUse}\`). Ensure the channel exists and I have permission to send messages there.`
     });
     return;
   }
@@ -7138,80 +7107,56 @@ async function sendNextReviewInquiry(client, appData) {
 async function dispatchApplicationReview(client, appData) {
   if (appData.reviewDispatched) return;
   appData.reviewDispatched = true;
-  appData.reviewerDmMessages = [];
   saveApplications();
 
-  const candidateStaff = await getApplicationReviewerStaff(client);
-  appData.reviewCandidates = candidateStaff.map((m) => m.user ? m.user.id : m.id);
-  appData.currentReviewCandidateIdx = 0;
-  saveApplications();
+  // Official staff application review channel requested by user: 1553225174067712010
+  const STAFF_REVIEW_CHANNEL_ID = '1553225174067712010';
+  const reviewChannel = await client.channels.fetch(STAFF_REVIEW_CHANNEL_ID).catch(() => null);
 
-  for (const member of candidateStaff) {
-    const staffId = member.user ? member.user.id : member.id;
-    try {
-      const staffUser = member.user || (await client.users.fetch(staffId).catch(() => null));
-      if (!staffUser) continue;
-
-      const dmChan = await staffUser.createDM().catch(() => null);
-      if (dmChan) {
-        const recent = await dmChan.messages.fetch({ limit: 10 }).catch(() => null);
-        const dup = recent?.find(m =>
-          m.author?.id === client.user.id &&
-          (Date.now() - m.createdTimestamp < 45000) &&
-          (JSON.stringify(m.components || []).includes(appData.id) || JSON.stringify(m.components || []).includes(appData.applicantId))
-        );
-        if (dup) {
-          appData.reviewerDmMessages.push({ userId: staffId, messageId: dup.id });
-          continue;
-        }
-      }
-
-      const card = new ContainerBuilder().setAccentColor(0x2b2d31);
-      card.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(
-          `## 📋 Staff Application Review Request\n` +
-          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
-          `> **Position:** **${appData.appType}**\n` +
-          `> **Submitted:** <t:${Math.floor(appData.createdAt / 1000)}:R>\n\n` +
-          `Are you available to read and review this application? Click below to claim and review.`
-        )
-      );
-      card.addSeparatorComponents(thinLine());
-
-      const checkBtn = new ButtonBuilder()
-        .setCustomId(`app_rev_claim_${appData.id}`)
-        .setStyle(ButtonStyle.Secondary);
-      try {
-        checkBtn.setEmoji({ id: '1549230329418485832', name: 'checkmark' });
-      } catch {
-        checkBtn.setEmoji('✅');
-      }
-
-      const wrongBtn = new ButtonBuilder()
-        .setCustomId(`app_rev_decline_${appData.id}`)
-        .setStyle(ButtonStyle.Secondary);
-      try {
-        wrongBtn.setEmoji({ id: '1549230458070507552', name: 'wrong' });
-      } catch {
-        wrongBtn.setEmoji('❌');
-      }
-
-      const row = new ActionRowBuilder().addComponents(checkBtn, wrongBtn);
-      card.addActionRowComponents(row);
-
-      const dmMsg = await staffUser.send({
-        components: [card.toJSON()],
-        flags: MessageFlags.IsComponentsV2
-      });
-      if (dmMsg) {
-        appData.reviewerDmMessages.push({ userId: staffId, messageId: dmMsg.id });
-      }
-      console.log(`[Staff Application] Dispatched review inquiry to reviewer ${staffUser.tag} (${staffUser.id})`);
-    } catch (err) {
-      console.warn(`[Staff Application] Could not dispatch review DM to staff ${staffId}: ${err.message}`);
-    }
+  if (!reviewChannel || !reviewChannel.isTextBased()) {
+    console.error(`[Staff Application] Review channel ${STAFF_REVIEW_CHANNEL_ID} not found or not text-based.`);
+    return;
   }
-  saveApplications();
+
+  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## 📋 Staff Application Review Request\n` +
+      `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\` • \`${appData.applicantId}\`)\n` +
+      `> **Position:** **${appData.appType}**\n` +
+      `> **Submitted:** <t:${Math.floor((appData.createdAt || Date.now()) / 1000)}:R>\n\n` +
+      `Click below to claim and review this application.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  const checkBtn = new ButtonBuilder()
+    .setCustomId(`app_rev_claim_${appData.id}`)
+    .setLabel('Claim & Review Application')
+    .setStyle(ButtonStyle.Primary);
+  try {
+    checkBtn.setEmoji({ id: '1549230329418485832', name: 'checkmark' });
+  } catch {
+    checkBtn.setEmoji('📋');
+  }
+
+  const row = new ActionRowBuilder().addComponents(checkBtn);
+  card.addActionRowComponents(row);
+
+  try {
+    const reviewMsg = await reviewChannel.send({
+      components: [card.toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+    if (reviewMsg) {
+      appData.reviewChannelMessageId = reviewMsg.id;
+      appData.reviewChannelId = reviewChannel.id;
+      saveApplications();
+      console.log(`[Staff Application] Posted review request for ${appData.applicantTag} into <#${STAFF_REVIEW_CHANNEL_ID}> (msg: ${reviewMsg.id})`);
+    }
+  } catch (err) {
+    console.error('Failed to post review request into channel 1553225174067712010:', err);
+  }
 }
 
 async function editVoteMessage(client, vote) {
@@ -7574,7 +7519,6 @@ function getSlashPayload() {
     unaddCommand.toJSON(),
     infractionCommand.toJSON(),
     retirementCommand.toJSON(),
-    retireCommand.toJSON(),
     exploitCommand.toJSON()
   ];
 }
@@ -9282,6 +9226,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
       appData.verdictReason = reason;
       saveApplications();
 
+      // Update the review card in staff application review channel 1553225174067712010
+      if (appData.reviewChannelMessageId && appData.reviewChannelId) {
+        try {
+          const revChan = await interaction.client.channels.fetch(appData.reviewChannelId).catch(() => null);
+          if (revChan) {
+            const revMsg = await revChan.messages.fetch(appData.reviewChannelMessageId).catch(() => null);
+            if (revMsg) {
+              const resCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+              resCard.addTextDisplayComponents(
+                new TextDisplayBuilder().setContent(
+                  `## 📋 Staff Application Review — ${isPassed ? 'Accepted' : 'Denied'}\n` +
+                  `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+                  `> **Position:** **${appData.appType}**\n` +
+                  `> **Verdict:** ${isPassed ? '✅ **Accepted**' : '❌ **Denied**'}\n` +
+                  `> **Reviewed By:** <@${interaction.user.id}> (${interaction.user.tag})\n` +
+                  `> **Reviewer Notes:** ${reason}\n` +
+                  `> **Completed:** <t:${Math.floor(Date.now() / 1000)}:R>`
+                )
+              );
+              resCard.addSeparatorComponents(thinLine());
+              const statusBtn = new ButtonBuilder()
+                .setCustomId(`app_status_done_${appData.id}`)
+                .setLabel(isPassed ? 'Accepted' : 'Denied')
+                .setStyle(isPassed ? ButtonStyle.Success : ButtonStyle.Danger)
+                .setDisabled(true);
+              resCard.addActionRowComponents(new ActionRowBuilder().addComponents(statusBtn));
+
+              await revMsg.edit({
+                components: [resCard.toJSON()],
+                flags: MessageFlags.IsComponentsV2
+              }).catch(() => null);
+            }
+          }
+        } catch (e) {
+          console.warn('Could not update review message in channel 1553225174067712010:', e.message);
+        }
+      }
+
       // Update ALL review request messages in DMs so Rose, Sulman, and all reviewers see who reviewed it with their icon and username!
       if (Array.isArray(appData.reviewerDmMessages)) {
         for (const item of appData.reviewerDmMessages) {
@@ -10020,6 +10002,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       } else if (interaction.commandName === 'commands') {
         await handleCommandsGuideCommand(interaction, true, 0);
+        return;
+      } else if (interaction.commandName === 'retirement') {
+        await handleRetirementCommand(interaction);
+        return;
+      } else if (interaction.commandName === 'infraction') {
+        await handleInfractionCommand(interaction);
+        return;
+      } else if (interaction.commandName === 'exploit') {
+        await handleExploitCommand(interaction);
         return;
       }
     }
@@ -11787,11 +11778,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
       saveApplications();
       activeReviewSessions.set(interaction.user.id, { appId, currentPage: 0 });
 
-      const reviewCard = buildApplicationReviewReaderCard(appData, 0);
+      // Update the channel message cleanly using Components V2 (NO legacy content field)
+      const claimedCard = new ContainerBuilder().setAccentColor(0x3498db);
+      claimedCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## 📋 Staff Application Review — In Review\n` +
+          `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+          `> **Position:** **${appData.appType}**\n` +
+          `> **Status:** 🔒 Claimed and being reviewed by <@${interaction.user.id}>\n` +
+          `> **Claimed:** <t:${Math.floor(Date.now() / 1000)}:R>`
+        )
+      );
+      claimedCard.addSeparatorComponents(thinLine());
+      const claimedBtn = new ButtonBuilder()
+        .setCustomId(`app_claimed_info_${appData.id}`)
+        .setLabel(`Claimed by ${interaction.user.displayName || interaction.user.username}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true);
+      claimedCard.addActionRowComponents(new ActionRowBuilder().addComponents(claimedBtn));
+
+      // Update the card in channel 1553225174067712010
       await interaction.update({
-        components: [reviewCard.toJSON()],
-        flags: MessageFlags.IsComponentsV2
-      });
+        components: [claimedCard.toJSON()]
+      }).catch((e) => console.warn('Could not update review request in channel:', e.message));
+
+      // Dispatch the interactive review reader to reviewer DMs (and ephemeral follow-up)
+      const reviewCard = buildApplicationReviewReaderCard(appData, 0);
+      let sentDm = false;
+      try {
+        const dmMsg = await dmUser(interaction.client, interaction.user.id, {
+          components: [reviewCard.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        });
+        if (dmMsg) sentDm = true;
+      } catch {}
+
+      if (sentDm) {
+        await interaction.followUp({
+          content: `✅ You claimed this application! The interactive 4-page review reader has been sent to your **Direct Messages**.`,
+          flags: MessageFlags.Ephemeral
+        }).catch(() => null);
+      } else {
+        // Fallback: send as ephemeral in the review channel if DMs are closed
+        await interaction.followUp({
+          components: [reviewCard.toJSON()],
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
+        }).catch(() => null);
+      }
       return;
     }
 
@@ -11799,14 +11832,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const appId = interaction.customId.replace('app_rev_decline_', '');
       const appData = [...activeApplications.values()].find((a) => a.id === appId);
       if (!appData) {
-        await interaction.update({ content: 'Application no longer pending.', components: [] });
+        const expiredCard = new ContainerBuilder().setAccentColor(0x72767d);
+        expiredCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('## 📋 Application Review\n> This application is no longer pending or has expired.')
+        );
+        await interaction.update({ components: [expiredCard.toJSON()] }).catch(() => null);
         return;
       }
 
+      const declineCard = new ContainerBuilder().setAccentColor(0xed4245);
+      declineCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          '## 📋 Staff Application Review — Declined\n' +
+          '> You declined to review this application. It has been released for other staff members.'
+        )
+      );
+
       await interaction.update({
-        content: 'You declined to review this application. Forwarding to next staff member...',
-        components: []
-      });
+        components: [declineCard.toJSON()]
+      }).catch(() => null);
 
       appData.currentReviewCandidateIdx = (appData.currentReviewCandidateIdx || 0) + 1;
       saveApplications();
