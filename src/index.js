@@ -6522,15 +6522,22 @@ function buildStaffApplicationPanelCard(bannerOverride) {
     );
   }
 
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay Staff Applications'));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Alabama State Roleplay • Staff Application Portal'));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n' +
-      '> \n' +
-      '> **Notice:** Submitting an application does not guarantee acceptance. Applications are thoroughly reviewed based on maturity, activity, effort, and situational judgment. AI-generated answers and false information are strictly prohibited.\n' +
-      '> \n' +
-      '> Select the position you wish to apply for from the menu below to receive your application in your Direct Messages.'
+      'Welcome to the official **Alabama State Roleplay** Staff Recruitment Portal. We are seeking mature, dedicated, and active members to join our team in upholding high-quality roleplay and community standards.\n\n' +
+      '### Available Staff Positions:\n' +
+      '• 🎮 **In-Game Staff**\n' +
+      '> Responsible for moderating our ER:LC private server, enforcing roleplay rules (FRP, NLR, VDM/RDM), handling `:m` / `:h` mod calls, overseeing Safe Zones, and maintaining realistic gameplay.\n\n' +
+      '• 🛡️ **Discord Moderation Team**\n' +
+      '> Responsible for moderating Discord chat and voice channels, assisting members with tickets, handling verification and reports, managing disputes, and maintaining community safety.\n\n' +
+      '### Minimum Requirements:\n' +
+      '> • Must be at least **14 years of age**\n' +
+      '> • Must maintain regular weekly activity\n' +
+      '> • Must possess a working microphone & clip recording software\n' +
+      '> • **Zero tolerance** for AI-generated answers or plagiarism (results in immediate permanent blacklist)\n\n' +
+      'Click a button below or select a position from the dropdown menu to open your interactive application dashboard in Direct Messages.'
     )
   );
 
@@ -6539,15 +6546,29 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   const options = [];
   if (appGateState.ingame) {
     options.push({
-      label: 'Staff Application',
+      label: 'In-Game Staff',
       value: 'app_start_ingame',
-      description: 'Apply to join the Alabama State Roleplay staff team.'
+      description: 'Apply for the in-game ER:LC server staff and patrol team.'
     });
   } else {
     options.push({
-      label: 'Staff Application (Closed)',
+      label: 'In-Game Staff (Closed)',
       value: 'app_closed_ingame',
-      description: 'Staff applications are currently closed.'
+      description: 'In-game staff applications are currently closed.'
+    });
+  }
+
+  if (appGateState.discord) {
+    options.push({
+      label: 'Discord Moderation Team',
+      value: 'app_start_discord',
+      description: 'Apply for the Discord moderation and community support team.'
+    });
+  } else {
+    options.push({
+      label: 'Discord Moderation Team (Closed)',
+      value: 'app_closed_discord',
+      description: 'Discord moderation team applications are currently closed.'
     });
   }
 
@@ -6556,15 +6577,22 @@ function buildStaffApplicationPanelCard(bannerOverride) {
     .setPlaceholder('Select an application position...')
     .addOptions(options);
 
-  const row = new ActionRowBuilder().addComponents(selectMenu);
-  card.addActionRowComponents(row);
+  const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+  card.addActionRowComponents(selectRow);
 
   const btnRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(appGateState.ingame ? 'app_start_ingame' : 'app_closed_ingame')
-      .setLabel(appGateState.ingame ? 'Apply for Staff' : 'Applications Closed')
+      .setLabel(appGateState.ingame ? 'In-Game Staff' : 'In-Game Staff (Closed)')
       .setStyle(appGateState.ingame ? ButtonStyle.Success : ButtonStyle.Secondary)
-      .setDisabled(!appGateState.ingame)
+      .setEmoji('🎮')
+      .setDisabled(!appGateState.ingame),
+    new ButtonBuilder()
+      .setCustomId(appGateState.discord ? 'app_start_discord' : 'app_closed_discord')
+      .setLabel(appGateState.discord ? 'Discord Moderation Team' : 'Discord Team (Closed)')
+      .setStyle(appGateState.discord ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setEmoji('🛡️')
+      .setDisabled(!appGateState.discord)
   );
   card.addActionRowComponents(btnRow);
 
@@ -6622,7 +6650,7 @@ function buildApplicantDashboard(appData) {
   } else {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### DISCORD STAFF REQUIREMENTS\n` +
+        `### DISCORD MODERATION TEAM REQUIREMENTS\n` +
         `> • 14+ years of age\n` +
         `> • Must maintain active presence in the Discord server\n` +
         `> • Must have a working microphone for voice operations\n` +
@@ -6689,7 +6717,7 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
   const gen = appData.generalInfo || {};
   const kno = appData.knowledgeAnswers || {};
   const ans = appData.scenarioAnswers || {};
-  const isDiscord = appData.appType === 'Discord Staff';
+  const isDiscord = /discord/i.test(appData.appType || '');
 
   if (pageIndex === 0) {
     // Page 1: General Info
@@ -9141,7 +9169,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step3_')) {
       const appId = interaction.customId.replace('app_modal_step3_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       if (isDiscord) {
         appData.knowledgeAnswers = {
           discord_tos_safety: interaction.fields.getTextInputValue('discord_tos_safety')?.trim() || 'N/A',
@@ -9173,7 +9201,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_step4_')) {
       const appId = interaction.customId.replace('app_modal_step4_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       if (isDiscord) {
         appData.scenarioAnswers = {
           scen_mass_raid: interaction.fields.getTextInputValue('scen_mass_raid')?.trim() || 'N/A',
@@ -11281,7 +11309,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const isIngame = chosenOption === 'app_start_ingame';
-      const appType = isIngame ? 'In-Game Staff' : 'Discord Staff';
+      const appType = isIngame ? 'In-Game Staff' : 'Discord Moderation Team';
       const appId = `${Date.now().toString(36)}_${startInteraction.user.id.slice(-4)}`;
 
       const newApp = {
@@ -11385,7 +11413,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step1_')) {
       const appId = interaction.customId.replace('app_btn_step1_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step1_${appId}`)
         .setTitle('Step 1: Rules & Requirements')
@@ -11422,7 +11450,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step2_')) {
       const appId = interaction.customId.replace('app_btn_step2_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step2_${appId}`)
         .setTitle('Step 2: General Information');
@@ -11520,7 +11548,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step3_')) {
       const appId = interaction.customId.replace('app_btn_step3_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step3_${appId}`)
         .setTitle('Step 3: Core Knowledge');
@@ -11619,7 +11647,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && interaction.customId.startsWith('app_btn_step4_')) {
       const appId = interaction.customId.replace('app_btn_step4_', '');
       const appData = getOrCreateApplication(interaction.user, appId, interaction.customId);
-      const isDiscord = appData.appType === 'Discord Staff';
+      const isDiscord = /discord/i.test(appData.appType || '');
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_step4_${appId}`)
         .setTitle('Step 4: Realistic Scenarios');
