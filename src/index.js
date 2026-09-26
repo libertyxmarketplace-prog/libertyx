@@ -6525,7 +6525,7 @@ const APP_SULMAN_USER_ID = '523693281541095424';
 const APP_ROSE_USER_ID = '885315812011958313';
 
 function buildStaffApplicationPanelCard(bannerOverride) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder().setAccentColor(0xf1c40f);
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
     : (fs.existsSync(APP_BANNER_PATH) ? 'attachment://applications_banner.png' : null);
@@ -6540,16 +6540,19 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n\n' +
-      '**Available Positions:**\n' +
-      '• **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
-      '• **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n\n' +
-      '**Requirements & Notice:**\n' +
-      '• Must be at least 14 years of age\n' +
-      '• Must maintain regular activity in either the ER:LC server or Discord\n' +
-      '• Must have a working microphone and clip recording software\n' +
-      '• AI-generated answers and false information are strictly prohibited and will result in a permanent blacklist.\n\n' +
-      'Select the position you wish to apply for from the menu below to receive your application in your Direct Messages.'
+      '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n' +
+      '> \n' +
+      '> **Available Positions:**\n' +
+      '> • **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
+      '> • **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n' +
+      '> \n' +
+      '> **Requirements & Standards:**\n' +
+      '> • Must be at least 14 years of age\n' +
+      '> • Must maintain regular weekly activity in either the ER:LC server or Discord\n' +
+      '> • Must have a working microphone and clip recording software\n' +
+      '> \n' +
+      '> Select the position you wish to apply for from the dropdown menu below to receive your application in your Direct Messages.\n\n' +
+      '```\nusing ai will be a  imidiete blacklist\n```'
     )
   );
 
@@ -6620,7 +6623,7 @@ async function refreshAllAppPanels(discordClient) {
 }
 
 function buildApplicantDashboard(appData) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder().setAccentColor(0xf1c40f);
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## ${appData.appType} Application\n` +
@@ -6704,6 +6707,11 @@ function buildApplicantDashboard(appData) {
     );
     card.addActionRowComponents(submitRow);
   }
+
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('```\nusing ai will be a  imidiete blacklist\n```')
+  );
 
   return card;
 }
@@ -11780,20 +11788,70 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Review Claim / Decline / Paging / Verdict ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('app_rev_claim_')) {
       const appId = interaction.customId.replace('app_rev_claim_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      loadApplications();
+      let appData = [...activeApplications.values()].find((a) => a.id === appId || a.applicantId === appId);
+
+      if (!appData && interaction.message) {
+        const msgStr = JSON.stringify(interaction.message.components || []);
+        const uidMatch = msgStr.match(/<@(\d{17,20})>/);
+        if (uidMatch && uidMatch[1]) {
+          appData = activeApplications.get(uidMatch[1]);
+        }
+      }
+
       if (!appData) {
-        await interaction.reply({ content: '⚠️ This application has already been processed or expired.', flags: MessageFlags.Ephemeral });
-        return;
-      }
-      if (appData.status === 'accepted' || appData.status === 'denied' || appData.verdictBy) {
+        const expiredCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        expiredCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            '## Staff Application Notice\n' +
+            '> **Status:** Expired or Already Processed\n' +
+            '> \n' +
+            '> This staff application has already been processed, archived, or is no longer pending review.\n' +
+            '> All official decision records are recorded in the designated application channels.\n\n' +
+            '```\nusing ai will be a  imidiete blacklist\n```'
+          )
+        );
         await interaction.reply({
-          content: `⚠️ This application has already been **${appData.status?.toUpperCase()}** by **${appData.verdictBy?.tag || 'another staff member'}**.`,
-          flags: MessageFlags.Ephemeral
-        });
+          components: [expiredCard.toJSON()],
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
+        }).catch(() => null);
         return;
       }
+
+      if (appData.status === 'accepted' || appData.status === 'denied' || appData.verdictBy) {
+        const processedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        processedCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            '## Staff Application Notice\n' +
+            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+            `> **Position:** **${appData.appType}**\n` +
+            `> **Status:** Already **${(appData.status || 'Processed').toUpperCase()}** by **${appData.verdictBy?.tag || 'Staff Member'}**\n` +
+            (appData.verdictReason ? `> **Verdict Notes:** ${appData.verdictReason}\n\n` : '\n') +
+            '```\nusing ai will be a  imidiete blacklist\n```'
+          )
+        );
+        await interaction.reply({
+          components: [processedCard.toJSON()],
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
+        }).catch(() => null);
+        return;
+      }
+
       if (appData.claimedReviewerId && appData.claimedReviewerId !== interaction.user.id) {
-        await interaction.reply({ content: `⚠️ This application has already been claimed by <@${appData.claimedReviewerId}>.`, flags: MessageFlags.Ephemeral });
+        const claimedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        claimedCard.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            '## Staff Application Notice\n' +
+            `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
+            `> **Position:** **${appData.appType}**\n` +
+            `> **Status:** 🔒 Already claimed and being reviewed by <@${appData.claimedReviewerId}>\n\n` +
+            '```\nusing ai will be a  imidiete blacklist\n```'
+          )
+        );
+        await interaction.reply({
+          components: [claimedCard.toJSON()],
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
+        }).catch(() => null);
         return;
       }
 
