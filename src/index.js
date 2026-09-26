@@ -6525,7 +6525,7 @@ const APP_SULMAN_USER_ID = '523693281541095424';
 const APP_ROSE_USER_ID = '885315812011958313';
 
 function buildStaffApplicationPanelCard(bannerOverride) {
-  const card = new ContainerBuilder().setAccentColor(0xf1c40f);
+  const card = new ContainerBuilder();
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
     : (fs.existsSync(APP_BANNER_PATH) ? 'attachment://applications_banner.png' : null);
@@ -6540,18 +6540,15 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n' +
-      '> \n' +
-      '> **Available Positions:**\n' +
-      '> • **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
-      '> • **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n' +
-      '> \n' +
-      '> **Requirements & Standards:**\n' +
-      '> • Must be at least 14 years of age\n' +
-      '> • Must maintain regular weekly activity in either the ER:LC server or Discord\n' +
-      '> • Must have a working microphone and clip recording software\n' +
-      '> \n' +
-      '> Select the position you wish to apply for from the dropdown menu below to receive your application in your Direct Messages.\n\n' +
+      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n\n' +
+      '**Available Positions:**\n' +
+      '• **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
+      '• **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n\n' +
+      '**Requirements & Standards:**\n' +
+      '• Must be at least 14 years of age\n' +
+      '• Must maintain regular weekly activity in either the ER:LC server or Discord\n' +
+      '• Must have a working microphone and clip recording software\n\n' +
+      'Select the position you wish to apply for from the dropdown menu below to receive your application in your Direct Messages.\n\n' +
       '```\nusing ai will be a  imidiete blacklist\n```'
     )
   );
