@@ -380,7 +380,7 @@ const LOA_BANNER_URL = 'https://i.ibb.co/5gf3LYvD/content.webp';
 const LOA_FILE = fileURLToPath(new URL('../loas.json', import.meta.url));
 // /media — only this role may post media drops, and only in the media channel.
 const MEDIA_ROLE_ID = '1360982598062702722';
-const MEDIA_CHANNEL_ID = '1360798150910021735';
+const MEDIA_CHANNEL_ID = '1341896131398864916';
 const MEDIA_CAMERA_EMOJI = '<:cameras:1554959653107138690>';
 
 const banCommand = new SlashCommandBuilder()
@@ -8083,12 +8083,32 @@ async function checkVoteGoal(client, vote) {
 async function notifyHostReady(client, vote) {
   const stats = await fetchServerStats();
   stats.staff = staffRoleCount(vote.guildId) ?? stats.staff;
+  const count = Object.keys(vote.voters).length;
 
   const box = new ContainerBuilder();
-  box.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Session Ready'));
+
+  // Vote banner on top (uploaded from our own assets so it can never expire).
+  const bannerPath = fileURLToPath(new URL('./assets/vote_banner.png', import.meta.url));
+  const hasBanner = fs.existsSync(bannerPath);
+  if (hasBanner) {
+    box.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL('attachment://vote_banner.png')
+      )
+    );
+  }
+
   box.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> Your vote hit **${Object.keys(vote.voters).length}/${vote.needed}** - the session is ready to host.\n> What do you want to do?`
+      `# 🎉 Session Ready\n*Your vote reached the goal — the session is waiting on you.*`
+    )
+  );
+  box.addSeparatorComponents(thinLine());
+  box.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## ${count} / ${vote.needed} votes\n> ${voteVotersLine(vote).replace(/^>\s*/, '')}\n` +
+      `> **Host:** <@${vote.hostId}>\n` +
+      `> **Time left on the vote:** ${vote.endTs > Date.now() ? `<t:${Math.floor(vote.endTs / 1000)}:R>` : 'expired — it will extend while the card is live'}`
     )
   );
   box.addSeparatorComponents(thinLine());
@@ -8099,14 +8119,27 @@ async function notifyHostReady(client, vote) {
     sectionRow('Staff In-Game', 'Staff on-duty.', String(stats.staff), 'host_r_staff')
   );
   box.addSeparatorComponents(thinLine());
+  box.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### What do you want to do?\n` +
+      `> • **Start Session** — launches the session and notifies everyone who voted.\n` +
+      `> • **Postpone** — gives you more time to gather players.`
+    )
+  );
   box.addActionRowComponents(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`vote_start_${vote.id}`).setLabel('Start Session').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId(`vote_postpone_${vote.id}`).setLabel('Postpone').setStyle(ButtonStyle.Secondary)
     )
   );
+  box.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Session Vote')
+  );
+
   const ok = await dmUser(client, vote.hostId, {
+    allowedMentions: { users: [vote.hostId], parse: [] },
     components: [box.toJSON()],
+    files: hasBanner ? [new AttachmentBuilder(bannerPath, { name: 'vote_banner.png' })] : [],
     flags: MessageFlags.IsComponentsV2
   });
   if (!ok) {
