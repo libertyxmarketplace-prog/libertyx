@@ -1428,8 +1428,8 @@ function loadVotes() {
     if (!fs.existsSync(VOTES_FILE)) return;
     const raw = JSON.parse(fs.readFileSync(VOTES_FILE, 'utf8'));
     for (const [id, v] of Object.entries(raw)) {
-      // Never resurrect dead votes.
-      if (v.started || v.expired || v.cancelled) continue;
+      // Only a launched/cancelled vote is dead — an overdue one can be revived.
+      if (v.started || v.cancelled) continue;
       activeVotes.set(id, v);
     }
     console.log(`Restored ${activeVotes.size} active vote(s) from votes.json.`);
@@ -8160,6 +8160,28 @@ function clearVoteTimer(id) {
   }
 }
 
+/**
+ * Re-opens a vote whose timer ran out while the card is still up. Anyone still
+ * clicking Vote should never be met with "no longer active" — the vote simply
+ * gets more time, the card is re-rendered and everyone can keep voting.
+ */
+function reviveVote(client, vote, minutes = 30) {
+  vote.expired = false;
+  vote.cancelled = false;
+  vote.endTs = Date.now() + minutes * 60_000;
+  saveVotes();
+  if (!activeVotes.has(vote.id)) activeVotes.set(vote.id, vote);
+  setVoteTimer(client, vote);
+  void editVoteMessage(client, vote);
+  console.log(`[votes] ${vote.id} was past its end time — extended by ${minutes} minutes so voting can continue.`);
+  return vote;
+}
+
+/** A vote is only truly dead once it started (session launched) or was cancelled. */
+function isVoteClosed(vote) {
+  return !vote || vote.started || vote.cancelled;
+}
+
 function setVoteTimer(client, vote) {
   clearVoteTimer(vote.id);
   const ms = vote.endTs - Date.now();
@@ -8171,6 +8193,54 @@ function setVoteTimer(client, vote) {
     vote.id,
     setTimeout(() => void expireVote(client, vote), Math.min(ms, 2 ** 31 - 1))
   );
+}
+
+/**
+ * Last-resort recovery: rebuild a vote straight from its own card when it exists
+ * in neither memory nor votes.json (e.g. an old embed after many restarts).
+ * Everything needed — goal, host, timer and current voters — is printed on the card.
+ */
+async function rebuildVoteFromMessage(client, interaction, voteId) {
+  try {
+    const msg = interaction.message;
+    if (!msg) return null;
+    const flat = (msg.components || []).map((c) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
+    const text = flat.map((c) => (c.components || []).map((k) => k.content || '').join('\n')).join('\n');
+
+    const needed = Number(text.match(/needs \*\*(\d+)\*\* members/)?.[1] || 0);
+    const hostId = text.match(/<@!?(\d{15,20})>\s*needs/)?.[1] || null;
+    const endTs = Number(text.match(/Time remaining: <t:(\d{1,17}):R>/)?.[1] || 0) * 1000;
+    if (!needed || !hostId) return null;
+
+    const readyLine = text.match(/Ready:\s*((?:<@!?\d{15,20}>\s*)+)/);
+    const voters = {};
+    for (const id of readyLine?.[1]?.match(/\d{15,20}/g) || []) voters[id] = Date.now();
+
+    const vote = {
+      id: voteId,
+      guildId: interaction.guildId,
+      channelId: msg.channelId,
+      messageId: msg.id,
+      hostId,
+      hostName: interaction.client.users.cache.get(hostId)?.username || 'Host',
+      needed,
+      roleId: text.match(/Ping role: <@&(\d+)>/)?.[1] || '',
+      endTs: endTs > Date.now() ? endTs : Date.now() + 30 * 60_000,
+      ready: Object.keys(voters).length >= needed,
+      postponed: false,
+      started: false,
+      expired: false,
+      voters
+    };
+    activeVotes.set(vote.id, vote);
+    saveVotes();
+    reviveVote(client, vote);
+    console.log(`[votes] rebuilt ${voteId} from its card (${Object.keys(voters).length}/${needed}) — buttons are live again.`);
+    return vote;
+  } catch (err) {
+    console.warn(`[votes] could not rebuild the vote from its card: ${err.message}`);
+    return null;
+  }
 }
 
 /** True only when the vote card is genuinely gone (deleted), not a blip. */
@@ -8187,17 +8257,25 @@ function isVoteMessageGone(err) {
  */
 async function getVoteById(client, voteId) {
   let vote = activeVotes.get(voteId);
-  if (vote) return vote;
+  if (vote && !isVoteClosed(vote)) {
+    // Past its end time but the card is still up — give it more life.
+    if (vote.expired || vote.endTs <= Date.now()) reviveVote(client, vote);
+    return vote;
+  }
+  if (vote) return null;
   try {
     if (!voteId || !fs.existsSync(VOTES_FILE)) return null;
     const raw = JSON.parse(fs.readFileSync(VOTES_FILE, 'utf8'));
     const stored = raw[voteId];
-    if (stored && !stored.started && !stored.expired && !stored.cancelled) {
+    // Only a launched/cancelled vote is dead — an "expired" one can be revived.
+    if (stored && !stored.started && !stored.cancelled) {
       vote = stored;
-      activeVotes.set(voteId, vote);
-      setVoteTimer(client, vote);
-      console.log(`[votes] recovered vote ${voteId} from disk — buttons are live again.`);
-      void editVoteMessage(client, vote);
+      if (vote.expired || !vote.endTs || vote.endTs <= Date.now()) reviveVote(client, vote);
+      else {
+        activeVotes.set(voteId, vote);
+        setVoteTimer(client, vote);
+        console.log(`[votes] recovered vote ${voteId} from disk — buttons are live again.`);
+      }
     }
   } catch (err) {
     console.warn(`[votes] could not recover ${voteId}: ${err.message}`);
@@ -8209,8 +8287,13 @@ async function getVoteById(client, voteId) {
 async function restoreVotes(client) {
   loadVotes();
   for (const [id, vote] of [...activeVotes]) {
-    if (vote.started || vote.expired) {
+    if (vote.started || vote.cancelled) {
       activeVotes.delete(id);
+      continue;
+    }
+    // Overdue but still open - give it more time so the buttons keep working.
+    if (vote.expired || !vote.endTs || vote.endTs <= Date.now()) {
+      reviveVote(client, vote);
       continue;
     }
     // Only drop the vote when its card really is gone. A rate limit, a slow
@@ -8383,8 +8466,11 @@ function applyPostpone(client, vote, ms) {
 async function handlePostponeModal(client, interaction) {
   const id = interaction.customId.replace('vote_delay_custom_', '');
   const vote = await getVoteById(client, id);
-  if (!vote || vote.started || vote.expired) {
-    await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+  if (!vote) {
+    await interaction.reply({
+      content: 'This vote has already been used for a session (or its card was deleted).',
+      flags: MessageFlags.Ephemeral
+    });
     return;
   }
   if (interaction.user.id !== vote.hostId) {
@@ -11115,10 +11201,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_click_')) {
-      const vote = await getVoteById(client, interaction.customId.replace('vote_click_', ''));
-      if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+      const voteId = interaction.customId.replace('vote_click_', '');
+      let vote = await getVoteById(client, voteId);
+      // Nothing in memory or on disk? Rebuild it from the card itself.
+      if (!vote) vote = await rebuildVoteFromMessage(client, interaction, voteId);
+      if (!vote) {
+        await interaction.reply({
+          content: 'This vote has already been used for a session (or its card was deleted).',
+          flags: MessageFlags.Ephemeral
+        });
         return;
+      }
+      // A vote that ran out of time while its card is still up gets more time
+      // instead of dying under the clicker's feet.
+      if (vote.expired || vote.endTs <= Date.now()) {
+        reviveVote(client, vote);
       }
       const action = toggleVoter(vote, interaction.user.id);
       await checkVoteGoal(client, vote);
@@ -11135,9 +11232,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_start_')) {
-      const vote = await getVoteById(client, interaction.customId.replace('vote_start_', ''));
-      if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+      const voteId = interaction.customId.replace('vote_start_', '');
+      let vote = await getVoteById(client, voteId);
+      if (!vote) vote = await rebuildVoteFromMessage(client, interaction, voteId);
+      if (!vote) {
+        await interaction.reply({
+          content: 'This vote has already been used for a session (or its card was deleted).',
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (interaction.user.id !== vote.hostId) {
@@ -11150,8 +11252,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_postpone_')) {
       const vote = await getVoteById(client, interaction.customId.replace('vote_postpone_', ''));
-      if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+      if (!vote) {
+        await interaction.reply({
+          content: 'This vote has already been used for a session (or its card was deleted).',
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (interaction.user.id !== vote.hostId) {
@@ -11164,8 +11269,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_delay_custom_')) {
       const vote = await getVoteById(client, interaction.customId.replace('vote_delay_custom_', ''));
-      if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+      if (!vote) {
+        await interaction.reply({
+          content: 'This vote has already been used for a session (or its card was deleted).',
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (interaction.user.id !== vote.hostId) {
@@ -11199,8 +11307,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const vote = await getVoteById(client, voteId);
       // NOTE: the vote card is a Components V2 message - it can never be
       // updated with `content`, so all feedback is sent as an ephemeral reply.
-      if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
+      if (!vote) {
+        await interaction.reply({
+          content: 'This vote has already been used for a session (or its card was deleted).',
+          flags: MessageFlags.Ephemeral
+        });
         return;
       }
       if (interaction.user.id !== vote.hostId) {
