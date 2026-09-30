@@ -5607,12 +5607,12 @@ function getOrCreateApplication(user, appId = null, customIdHint = '') {
     appData = activeApplications.get(user.id);
   }
   if (!appData && user?.id) {
-    const isDiscord = (customIdHint || '').toLowerCase().includes('discord');
+    // In-game staff is the only application type we run now.
     appData = {
       id: appId || `${Date.now().toString(36)}_${user.id.slice(-4)}`,
       applicantId: user.id,
       applicantTag: user.tag || user.username || 'Applicant',
-      appType: isDiscord ? 'Discord Staff' : 'In-Game Staff',
+      appType: 'In-Game Staff',
       step1Done: false,
       step2Done: false,
       step3Done: false,
@@ -6662,8 +6662,7 @@ function buildStaffApplicationPanelCard(bannerOverride) {
     new TextDisplayBuilder().setContent(
       '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated members who are committed to keeping the community professional and welcoming.\n\n' +
       '**Available Positions:**\n' +
-      '• **In-Game Staff:** Patrol the ER:LC private server, enforce roleplay rules, answer mod calls, and monitor safe zones.\n' +
-      '• **Discord Moderation Team:** Moderate the Discord server, handle support tickets and verification, and enforce community guidelines.\n\n' +
+      '• **In-Game Staff:** Patrol the ER:LC private server, enforce roleplay rules, answer mod calls, and monitor safe zones.\n\n' +
       '**Requirements:**\n' +
       '• Must be at least 14 years old\n' +
       '• Must stay active each week in the ER:LC server or Discord\n' +
@@ -6692,20 +6691,7 @@ function buildStaffApplicationPanelCard(bannerOverride) {
     });
   }
 
-  if (appGateState.discord) {
-    options.push({
-      label: 'Discord Moderation Team',
-      value: 'app_start_discord',
-      description: 'Apply for the Discord moderation and community support team.'
-    });
-  } else {
-    options.push({
-      label: 'Discord Moderation Team (Closed)',
-      value: 'app_closed_discord',
-      description: 'Discord moderation team applications are currently closed.'
-    });
-  }
-
+  // Discord Moderation applications are no longer offered — in-game staff only.
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('app_select_position')
     .setPlaceholder('Select an application position...')
@@ -6763,20 +6749,6 @@ function buildApplicantDashboard(appData) {
         `> • Must be willing to attend required staff trainings and meetings\n` +
         `> • Must enforce rules objectively without favoritism or bias\n` +
         `> • Prior moderation / staff experience is preferred, but not required`
-      )
-    );
-  } else {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### DISCORD MODERATION TEAM REQUIREMENTS\n` +
-        `> • 14+ years of age\n` +
-        `> • Must maintain active presence in the Discord server\n` +
-        `> • Must have a working microphone for voice operations\n` +
-        `> • Must be respectful, mature, and professional in all interactions\n` +
-        `> • Must understand Discord ToS and Community Rules\n` +
-        `> • Must actively assist members with tickets, questions, and reports\n` +
-        `> • Must enforce guidelines fairly without personal favoritism\n` +
-        `> • Prior Discord staff experience is preferred, but not required`
       )
     );
   }
@@ -7028,7 +7000,7 @@ function buildPanelHubCard() {
       '**Session Panel:** Live player counts, join link, and session status.\n' +
       '**Ticket Panel:** General, IA, High Rank, Department Support, and Partnership.\n' +
       '**Verification Panel:** Roblox verification dashboard.\n' +
-      '**Application Panel:** In-Game Staff and Discord Moderation applications.\n' +
+      '**Application Panel:** In-Game Staff applications.\n' +
       '**Information Panel:** Community rules, roleplay rules, and server guides.'
     )
   );
@@ -12920,8 +12892,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      const isIngame = chosenOption === 'app_start_ingame';
-      const appType = isIngame ? 'In-Game Staff' : 'Discord Moderation Team';
+      // Only the in-game application is offered now.
+      const appType = 'In-Game Staff';
       const appId = `${Date.now().toString(36)}_${startInteraction.user.id.slice(-4)}`;
 
       const newApp = {
