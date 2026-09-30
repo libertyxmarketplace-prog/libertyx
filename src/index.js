@@ -338,6 +338,13 @@ const loaCommand = new SlashCommandBuilder()
   .addStringOption((opt) => opt.setName('end_date').setDescription('LOA end date (e.g. 2026-10-12)').setRequired(true))
   .addStringOption((opt) => opt.setName('reason').setDescription('Reason for LOA').setRequired(true));
 
+const shopCommand = new SlashCommandBuilder()
+  .setName('shop')
+  .setDescription('Post the Alabama State Roleplay shop panel.')
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Channel to post the shop panel into (defaults to this channel)').setRequired(false)
+  );
+
 const mediaCommand = new SlashCommandBuilder()
   .setName('media')
   .setDescription('Post a media drop with a banner, credit and an optional ping.')
@@ -8706,6 +8713,7 @@ function getSlashPayload() {
     retriggerCommand.toJSON(),
     sessionCommand.toJSON(),
     panelCommand.toJSON(),
+    shopCommand.toJSON(),
     staffCommand.toJSON(),
     suggestionCommand.toJSON(),
     suggestCommand.toJSON(),
@@ -11234,6 +11242,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       } else if (interaction.commandName === 'panel') {
         await handlePanelHubCommand(interaction);
+        return;
+      } else if (interaction.commandName === 'shop') {
+        const shopMember = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+        if (!isStaffMember(shopMember) && !shopMember?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+          await interaction.reply({ content: 'You must have staff permissions to post the shop panel.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        try { await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
+        try {
+          const target = interaction.options?.getChannel?.('channel') || interaction.channel;
+          await postPanelByType(interaction, 'shop', target, null);
+          await interaction.editReply({ content: `Shop panel posted in <#${target.id}>.` });
+        } catch (err) {
+          await interaction.editReply({ content: `Could not post the shop panel — ${err.message}` });
+        }
         return;
       } else if (interaction.commandName === 'verify') {
         await interaction.reply({ content: '`/verify panel` was removed — use **/panel type:Verification** instead.', flags: MessageFlags.Ephemeral });
