@@ -1447,9 +1447,8 @@ function buildVoteContainer(vote) {
   const count = Object.keys(vote.voters ?? {}).length;
   const done = count >= vote.needed;
   const dead = Boolean(vote.expired || vote.started || vote.cancelled);
-  const box = new ContainerBuilder().setAccentColor(
-    vote.started ? VOTE_COLOR.ready : vote.expired ? VOTE_COLOR.expired : done ? VOTE_COLOR.ready : VOTE_COLOR.open
-  );
+  // No accent color — plain Components V2 container, no side bar.
+  const box = new ContainerBuilder();
   const banner = voteBannerUrl();
   if (banner) {
     box.addMediaGalleryComponents(
