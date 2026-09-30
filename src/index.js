@@ -186,7 +186,8 @@ const panelCommand = new SlashCommandBuilder()
         { name: 'Session Panel', value: 'session' },
         { name: 'Ticket Panel', value: 'ticket' },
         { name: 'Verification Panel', value: 'verify' },
-        { name: 'Staff Application Panel', value: 'application' }
+        { name: 'Staff Application Panel', value: 'application' },
+        { name: 'Information Panel', value: 'information' }
       )
   )
   .addChannelOption((opt) =>
@@ -357,6 +358,18 @@ const proofCommand = new SlashCommandBuilder()
           .setRequired(true)
       )
   );
+
+const loaCommand = new SlashCommandBuilder()
+  .setName('loa')
+  .setDescription('Submit a Leave of Absence (LOA) request.')
+  .addStringOption((opt) => opt.setName('roblox_username').setDescription('Your Roblox username').setRequired(true))
+  .addStringOption((opt) => opt.setName('staff_rank').setDescription('Your current staff rank').setRequired(true))
+  .addStringOption((opt) => opt.setName('start_date').setDescription('LOA start date (e.g. 2026-10-05)').setRequired(true))
+  .addStringOption((opt) => opt.setName('end_date').setDescription('LOA end date (e.g. 2026-10-12)').setRequired(true))
+  .addStringOption((opt) => opt.setName('reason').setDescription('Reason for LOA').setRequired(true));
+
+const LOA_CHANNEL_ID = '1232495214162214922';
+const LOA_BANNER_URL = 'https://cdn.discordapp.com/attachments/1543836515656802504/1548635509864013904/vote_banner.png?ex=6aa7c6b5&is=6aa67535&hm=24f16b550d56360950f9d64bddad1a4711b6cad836e0bf5da94873c83c5afabe&';
 
 const banCommand = new SlashCommandBuilder()
   .setName('ban')
@@ -780,11 +793,11 @@ const TICKET_CONFIG = {
     },
     deptreport: {
       id: 'deptreport',
-      name: 'Alabama Department Reports',
-      shortName: 'Department Reports',
+      name: 'Alabama Department Support',
+      shortName: 'Department Support',
       categoryId: '1553589854200266823',
       pingRoleId: '1341931745351700534',
-      desc: 'Reports handled by department staff. Opens in the department reports category.'
+      desc: 'Reports handled by department staff. Opens in the department support category.'
     },
     partnership: {
       id: 'partnership',
@@ -1345,7 +1358,7 @@ function buildSuggestionBar(upvotes, downvotes) {
 }
 
 function buildSuggestionContainer(sug, discordClient = null) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(`## Community Suggestion #${sug.id}`)
   );
@@ -1554,7 +1567,7 @@ function buildVoteContainer(vote) {
 // Dark gray "Session Closed" card posted by /session shutdown - NO banner at the bottom per user request.
 function buildShutdownNotice(stats) {
   const curPlayers = Number(stats?.players) || 0;
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## Session Closed')
   );
@@ -1586,7 +1599,7 @@ function buildShutdownNotice(stats) {
 // Dark gray DM card sent to voters when the session shuts down - dark gray side bar,
 // red Session Ended pill, NO Join Server (the session is over).
 function buildSessionClosedDM(stats) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## Session Closed')
   );
@@ -1617,7 +1630,7 @@ function isStaffMember(member) {
 }
 
 function buildPromotionContainer({ targetUser, targetMember, newRank, previousRank, reason, notes, moderator }) {
-  const container = new ContainerBuilder().setAccentColor(STAFF_CONFIG.color || 0xd69a5c);
+  const container = new ContainerBuilder();
 
   if (STAFF_CONFIG.promotionBannerUrl) {
     container.addMediaGalleryComponents(
@@ -1680,7 +1693,7 @@ function buildPromotionContainer({ targetUser, targetMember, newRank, previousRa
 }
 
 function buildDerankContainer({ targetUser, targetMember, removeRole, newRank, reason, notes, moderator }) {
-  const container = new ContainerBuilder().setAccentColor(STAFF_CONFIG.color || 0xd69a5c);
+  const container = new ContainerBuilder();
 
   if (STAFF_CONFIG.derankBannerUrl) {
     container.addMediaGalleryComponents(
@@ -1892,7 +1905,7 @@ async function handleDerankCommand(interaction) {
 }
 
 function buildInfractionContainer({ targetUser, targetMember, infractionType, reason, notes, moderator, hasBannerFile = true }) {
-  const container = new ContainerBuilder().setAccentColor(0xe67e22);
+  const container = new ContainerBuilder();
 
   if (hasBannerFile) {
     container.addMediaGalleryComponents(
@@ -1951,7 +1964,7 @@ function buildInfractionContainer({ targetUser, targetMember, infractionType, re
 }
 
 function buildRetirementContainer({ targetUser, targetMember, previousRank, farewellMessage, moderator, hasBannerFile = true }) {
-  const container = new ContainerBuilder().setAccentColor(0xd35400);
+  const container = new ContainerBuilder();
 
   if (hasBannerFile) {
     container.addMediaGalleryComponents(
@@ -2234,7 +2247,7 @@ async function handleStaffFeedbackCommand(interaction) {
     ? 'https://cdn.discordapp.com/embed/avatars/0.png'
     : interaction.user.displayAvatarURL({ size: 128 });
 
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## Staff Member Feedback')
   );
@@ -2304,7 +2317,7 @@ async function handleSuggestionCommand(interaction) {
       return b.upvoters.length - a.upvoters.length;
     });
     const top = sorted[0];
-    const topCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const topCard = new ContainerBuilder();
     topCard.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(`## 🏆 Top Community Suggestion (#${top.id})`)
     );
@@ -2577,8 +2590,22 @@ async function sendSecurityLog(guild, container) {
   }
 }
 
-async function sendGameLog(guild, container) {
+async function sendGameLog(guild, container, dedupeKey = null) {
   try {
+    if (dedupeKey) {
+      const now = Date.now();
+      if (!globalThis.__gameLogDedupe) globalThis.__gameLogDedupe = new Map();
+      const last = globalThis.__gameLogDedupe.get(dedupeKey) || 0;
+      if (now - last < 15000) {
+        console.log(`[GameLog Dedupe] Suppressed duplicate log: ${dedupeKey}`);
+        return;
+      }
+      globalThis.__gameLogDedupe.set(dedupeKey, now);
+      if (globalThis.__gameLogDedupe.size > 200) {
+        const oldest = globalThis.__gameLogDedupe.keys().next().value;
+        globalThis.__gameLogDedupe.delete(oldest);
+      }
+    }
     let logChan = await client.channels.fetch('1232495213986058287').catch(() => null); // Game-Logs
     if (!logChan) {
       logChan = await client.channels.fetch('1277365829247307857').catch(() => null); // Security-Logs
@@ -2702,7 +2729,7 @@ async function handleAntiNukeTrigger({ guild, executor, actionType, targetName, 
     rolesStripped
   });
 
-  const alertCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const alertCard = new ContainerBuilder();
   alertCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🚨 Anti-Nuke Emergency Security Alert'));
   alertCard.addSeparatorComponents(thinLine());
   alertCard.addTextDisplayComponents(
@@ -2795,7 +2822,7 @@ async function handleAntiNukeButton(interaction) {
         content: `✅ **Roles Restored:** <@${executorId}> has been restored with all previous roles and quarantine was removed.`
       });
 
-      const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+      const logCard = new ContainerBuilder();
       logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🛡️ Anti-Nuke Action Resolved'));
       logCard.addSeparatorComponents(thinLine());
       logCard.addTextDisplayComponents(
@@ -2828,7 +2855,7 @@ async function handleAntiNukeButton(interaction) {
         content: `🔨 **Banned:** Rogue actor <@${executorId}> has been permanently banned from the server.`
       });
 
-      const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+      const logCard = new ContainerBuilder();
       logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Rogue Member Banned'));
       logCard.addSeparatorComponents(thinLine());
       logCard.addTextDisplayComponents(
@@ -2875,7 +2902,7 @@ async function handleAntiNukeButton(interaction) {
       content: `🔄 **Channels Restored:** Successfully re-created **${restored}** deleted channel(s)!`
     });
 
-    const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const logCard = new ContainerBuilder();
     logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔄 Channels Auto-Restored'));
     logCard.addSeparatorComponents(thinLine());
     logCard.addTextDisplayComponents(
@@ -2917,7 +2944,7 @@ async function handleAntiNukeButton(interaction) {
       content: `🔄 **Roles Restored:** Successfully re-created **${restored}** deleted role(s)!`
     });
 
-    const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const logCard = new ContainerBuilder();
     logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔄 Roles Auto-Restored'));
     logCard.addSeparatorComponents(thinLine());
     logCard.addTextDisplayComponents(
@@ -2967,7 +2994,7 @@ async function handleBanCommand(interaction) {
       deleteMessageSeconds: deleteDays * 24 * 60 * 60
     });
 
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Member Banned'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3019,7 +3046,7 @@ async function handleKickCommand(interaction) {
   await interaction.deferReply();
   try {
     await targetMember.kick(`${reason} (Issued by ${interaction.user.tag})`);
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Member Kicked'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3076,7 +3103,7 @@ async function handleTimeoutCommand(interaction) {
   await interaction.deferReply();
   try {
     await targetMember.timeout(durationMs, `${reason} (Issued by ${interaction.user.tag})`);
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Member Timed Out'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3142,7 +3169,7 @@ async function handlePurgeCommand(interaction) {
       content: `🧹 Successfully purged **${deletedCount}** message(s)${filterUser ? ` from <@${filterUser.id}>` : ''}.`
     });
 
-    const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const logCard = new ContainerBuilder();
     logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🧹 Messages Purged'));
     logCard.addSeparatorComponents(thinLine());
     logCard.addTextDisplayComponents(
@@ -3216,7 +3243,7 @@ async function handleAntiNukeCommand(interaction) {
   }
 
   if (sub === 'status') {
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🛡️ Anti-Nuke Defense Status'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3562,7 +3589,7 @@ async function getRobloxAvatarHeadshotUrl(userId) {
 }
 
 async function buildStaffAlertCard(username, tracker, isJoined = false, hasLeft = false) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## In-Game Player Not in Discord Server')
   );
@@ -3646,7 +3673,7 @@ async function buildStaffAlertCard(username, tracker, isJoined = false, hasLeft 
 }
 
 async function buildOutfitFlagCard(username, robloxId, assetName) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## Flagged Avatar / Account In-Game')
   );
@@ -3873,7 +3900,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
     const warnPm = `Safe Zone Warning: Do not attack players in protected safe zones. First warning.`;
     await sendErlcCommand(`:pm ${username} ${warnPm}`);
 
-    const card = new ContainerBuilder().setAccentColor(0xf1c40f);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⚠️ Safe Zone Violation — Strike 1 (Warning)'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3899,7 +3926,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
       await targetChannel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
     }
     if (primaryGuild) {
-      await sendGameLog(primaryGuild, card);
+      await sendGameLog(primaryGuild, card, `sz_${username.toLowerCase()}_1_${Math.floor(Date.now()/60000)}`);
     }
     return { ok: true, strike: 1, action: 'warn' };
   } else if (strikeNum === 2) {
@@ -3910,7 +3937,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
     await sendErlcCommand(`:pm ${username} ${warnPm2}`);
     await sendErlcCommand(`:pm ${username} ${jailPm}`);
 
-    const card = new ContainerBuilder().setAccentColor(0xe67e22);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔒 Safe Zone Violation — Strike 2 (Jailed)'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3939,7 +3966,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
       await targetChannel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
     }
     if (primaryGuild) {
-      await sendGameLog(primaryGuild, card);
+      await sendGameLog(primaryGuild, card, sz___);
     }
     return { ok: true, strike: 2, action: 'warn_jail' };
   } else if (strikeNum === 3) {
@@ -3949,7 +3976,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
     await new Promise((resolve) => setTimeout(resolve, 3500));
     await sendErlcCommand(`:kick ${username} Safe Zone - Repeated attacks in safe zone.`);
 
-    const card = new ContainerBuilder().setAccentColor(0xed4245);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Safe Zone Violation — Strike 3 (Kicked)'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -3973,14 +4000,14 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
       await targetChannel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
     }
     if (primaryGuild) {
-      await sendGameLog(primaryGuild, card);
+      await sendGameLog(primaryGuild, card, sz___);
     }
     return { ok: true, strike: 3, action: 'kick' };
   } else {
     // Strike 4+: Permanent Ban
     await sendErlcCommand(`:ban ${username} Safe Zone - Repeated safe zone shooting after kick.`);
 
-    const card = new ContainerBuilder().setAccentColor(0x992d22);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Safe Zone Violation — Strike 4 (Banned)'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -4002,7 +4029,7 @@ async function handleSafeZoneStrike(discordClient, username, moderator = null, r
       await targetChannel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
     }
     if (primaryGuild) {
-      await sendGameLog(primaryGuild, card);
+      await sendGameLog(primaryGuild, card, sz___);
     }
     return { ok: true, strike: strikeNum, action: 'ban' };
   }
@@ -4233,7 +4260,7 @@ async function runErlcEnforcementScan(discordClient) {
           console.log(`[Flagged Avatar] Player "${username}" rejoined wearing the prohibited bacon outfit! Issuing 24h ban...`);
           await sendErlcCommand(`:ban ${username} 24h Flagged Avatar - Rejoined with prohibited bacon outfit`);
           if (primaryGuild) {
-            const banCard = new ContainerBuilder().setAccentColor(0xed4245);
+            const banCard = new ContainerBuilder();
             banCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Flagged Avatar: Rejoined With Prohibited Outfit (Banned)'));
             banCard.addSeparatorComponents(thinLine());
             const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4277,7 +4304,7 @@ async function runErlcEnforcementScan(discordClient) {
           }
 
           if (primaryGuild) {
-            const logCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+            const logCard = new ContainerBuilder();
             logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Prohibited Bacon Outfit Flagged In-Game'));
             logCard.addSeparatorComponents(thinLine());
             const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4349,7 +4376,7 @@ async function runErlcEnforcementScan(discordClient) {
         }
 
         if (primaryGuild) {
-          const unjailCard = new ContainerBuilder().setAccentColor(0x57f287);
+          const unjailCard = new ContainerBuilder();
           unjailCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Player Verified In Discord'));
           unjailCard.addSeparatorComponents(thinLine());
           const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4379,7 +4406,7 @@ async function runErlcEnforcementScan(discordClient) {
       console.log(`[VC Enforcer] Player ${username} rejoined before the rejoin timer expired! Kicking immediately...`);
       await sendErlcCommand(`:kick ${username} VC Only Server - Rejoined before the rejoin timer expired.`);
       if (primaryGuild) {
-        const reCard = new ContainerBuilder().setAccentColor(0xed4245);
+        const reCard = new ContainerBuilder();
         reCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 VC Only: Rejoined Before Timer Expired (Kicked)'));
         reCard.addSeparatorComponents(thinLine());
         const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4397,8 +4424,7 @@ async function runErlcEnforcementScan(discordClient) {
         } else {
           reCard.addTextDisplayComponents(new TextDisplayBuilder().setContent(infoText));
         }
-        await sendGameLog(primaryGuild, reCard);
-        await sendSecurityLog(primaryGuild, reCard);
+        await sendGameLog(primaryGuild, reCard, `vc_rejoin_${username.toLowerCase()}_${Math.floor(Date.now()/60000)}`);
       }
       if (tracker.staffDmMessages && tracker.staffDmMessages.length) {
         for (const item of tracker.staffDmMessages) {
@@ -4445,7 +4471,7 @@ async function runErlcEnforcementScan(discordClient) {
       }
 
       if (primaryGuild) {
-        const warnCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const warnCard = new ContainerBuilder();
         warnCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## VC Only: Player Not In Discord'));
         warnCard.addSeparatorComponents(thinLine());
         const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4586,7 +4612,7 @@ async function runErlcEnforcementScan(discordClient) {
 
       inGamePlayerTracker.delete(username.toLowerCase());
       if (primaryGuild) {
-        const kickCard = new ContainerBuilder().setAccentColor(0xed4245);
+        const kickCard = new ContainerBuilder();
         kickCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 VC Only: Player Kicked (5 Warnings Elapsed)'));
         kickCard.addSeparatorComponents(thinLine());
         const avatarUrl = await getRobloxAvatarHeadshotUrl(tracker.robloxId);
@@ -4770,7 +4796,7 @@ async function triggerExploitAlert(discordClient, alertData) {
   console.log(`[EXPLOIT DETECTED] Suspect: ${suspect} | Source: ${detectionSource} | Reason: ${reason}`);
 
   const primaryGuild = discordClient.guilds.cache.get('1232495211490443284') || discordClient.guilds.cache.first();
-  const card = new ContainerBuilder().setAccentColor(0xed4245);
+  const card = new ContainerBuilder();
 
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## 🚨 Exploiter Detected / Threat Alert')
@@ -4823,7 +4849,7 @@ async function triggerExploitAlert(discordClient, alertData) {
 
   if (primaryGuild) {
     // 1. Post to Game-Logs (1232495213986058287)
-    await sendGameLog(primaryGuild, card);
+    await sendGameLog(primaryGuild, card, sz___);
 
     // 2. Post to Security-Logs (1277365829247307857)
     try {
@@ -5007,7 +5033,7 @@ async function handleExploitCommand(interaction) {
       apiStatus = `🔴 Offline / Error (${e.message})`;
     }
 
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🛡️ Alabama Anti-Exploit & Security Status'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5090,7 +5116,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to send PM to \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 📨 In-Game Private Message Sent'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5115,7 +5141,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to jail \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔒 Player Jailed In-Game'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5140,7 +5166,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to unjail \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔓 Player Unjailed In-Game'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5166,7 +5192,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to kick \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Player Kicked In-Game'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5193,7 +5219,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to ban \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Player Banned In-Game'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5220,7 +5246,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to unban \`${target}\`: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Player Unbanned In-Game'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5246,7 +5272,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to broadcast message: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 📢 In-Game Broadcast Sent'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5271,7 +5297,7 @@ async function handleErlcCommand(interaction) {
       await interaction.editReply({ content: `❌ Failed to send hint: ${res.error}` });
       return;
     }
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💡 In-Game Top Hint Sent'));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5301,7 +5327,7 @@ async function handleJailCommand(interaction) {
     await interaction.editReply({ content: `❌ Failed to jail \`${target}\`: ${res.error}` });
     return;
   }
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔒 Player Jailed In-Game'));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
@@ -5330,7 +5356,7 @@ async function handleUnjailCommand(interaction) {
     await interaction.editReply({ content: `❌ Failed to unjail \`${target}\`: ${res.error}` });
     return;
   }
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔓 Player Unjailed In-Game'));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
@@ -5381,7 +5407,7 @@ async function handleUnbanCommand(interaction) {
     details.push(`• **ER:LC In-Game Server:** ${erlcRes.error || 'Failed to send command'}`);
   }
 
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Member / Player Unbanned'));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
@@ -5421,7 +5447,7 @@ async function handleSafeZoneCommand(interaction) {
   if (sub === 'status') {
     const record = safeZoneStrikes.get(player.toLowerCase());
     const strikes = record?.strikes || 0;
-    const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+    const card = new ContainerBuilder();
     card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## 🛡️ Safe Zone Record: ${player}`));
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
@@ -5870,7 +5896,7 @@ function buildTicketPanelContainer(bannerOverride) {
 
   const deskLabel =
     ticketDeskState.status === 'online'
-      ? 'Online'
+      ? '🟢'
       : ticketDeskState.status === 'busy'
         ? 'Busy'
         : 'Closed';
@@ -5881,7 +5907,7 @@ function buildTicketPanelContainer(bannerOverride) {
       `**General Support:** ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**Internal Affairs:** ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**High Rank Support:** ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
-      `**Department Reports:** ${deptOpen ? 'Department-level reports handled by department staff.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Department Support:** ${deptOpen ? 'Department-level reports handled by department staff.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**Partnership:** ${partnershipOpen ? 'Server partnerships, mutual advertising, paid promotions, and staff transfers.' : '[Closed by staff] Currently unavailable.'}`
     )
   );
@@ -5917,7 +5943,7 @@ function buildTicketPanelContainer(bannerOverride) {
         .setValue('highrank')
         .setDescription(hrOpen ? 'Executive matters, IA+ reports, payments, and management' : '[Closed by staff] Currently unavailable'),
       new StringSelectMenuOptionBuilder()
-        .setLabel('Department Reports')
+        .setLabel('Department Support')
         .setValue('deptreport')
         .setDescription(deptOpen ? 'Department reports handled by department staff' : '[Closed by staff] Currently unavailable'),
       new StringSelectMenuOptionBuilder()
@@ -6003,6 +6029,9 @@ function buildTicketControlContainer(ticket, bannerOverride) {
   }
   buttons.push(
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Secondary)
+  );
+  buttons.push(
+    new ButtonBuilder().setCustomId('ticket_report').setLabel('Report').setStyle(ButtonStyle.Danger)
   );
 
   if (ticket.categoryKey === 'partnership') {
@@ -6109,7 +6138,7 @@ https://discord.gg/alabam
  🔥 **Join Alabama State Roleplay today and become part of our growing community!**`;
 
 function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
-  const selectTypeCard = new ContainerBuilder().setAccentColor(0x3498db);
+  const selectTypeCard = new ContainerBuilder();
   selectTypeCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Select Partnership Type'));
   selectTypeCard.addSeparatorComponents(thinLine());
   selectTypeCard.addTextDisplayComponents(
@@ -6159,7 +6188,7 @@ function buildPartnershipSelectCard(channelId, staffOpen, userId = null) {
 
 function buildStaffTransferOverviewCard(ticket, channelId) {
   const isSubmitted = !!ticket.batchSubmitted;
-  const card = new ContainerBuilder().setAccentColor(isSubmitted ? 0x57f287 : 0x3498db);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       isSubmitted
@@ -6254,7 +6283,7 @@ function saveInfoPanels() {
 }
 
 function buildInformationCard(section = 'info_overview', guild = null, includeBanner = true) {
-  const card = new ContainerBuilder().setAccentColor(0xe67e22);
+  const card = new ContainerBuilder();
   const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
   const bannerUrl = (includeBanner && bannerExists) ? 'attachment://information_banner.png' : null;
 
@@ -6564,7 +6593,7 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated members who are committed to keeping the community professional and welcoming.\n\n' +
+      '> Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated members who are committed to keeping the community professional and welcoming.\n\n' +
       '**Available Positions:**\n' +
       '• **In-Game Staff:** Patrol the ER:LC private server, enforce roleplay rules, answer mod calls, and monitor safe zones.\n' +
       '• **Discord Moderation Team:** Moderate the Discord server, handle support tickets and verification, and enforce community guidelines.\n\n' +
@@ -6573,17 +6602,9 @@ function buildStaffApplicationPanelCard(bannerOverride) {
       '• Must stay active each week in the ER:LC server or Discord\n' +
       '• Must have a working microphone and clip recording software\n\n' +
       'Select the position you want to apply for below. Your application will be sent to your DMs.\n\n' +
-      '> ⚠️ **Notice:** Any use of AI in your application will result in an **immediate blacklist**.'
-    )
-  );
-
-  card.addSeparatorComponents(thinLine());
-
-  // Gray-only quick actions (V2 panel footer).
-  card.addActionRowComponents(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('app_start_ingame').setLabel('Apply: In-Game Staff').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('app_start_discord').setLabel('Apply: Discord Moderation').setStyle(ButtonStyle.Secondary)
+      '```ansi\n' +
+      '\u001b[2;33m⚠ Notice: Any use of AI in your application will result in an immediate blacklist.\u001b[0m\n' +
+      '```'
     )
   );
 
@@ -6654,7 +6675,7 @@ async function refreshAllAppPanels(discordClient) {
 }
 
 function buildApplicantDashboard(appData) {
-  const card = new ContainerBuilder().setAccentColor(0xf1c40f);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## ${appData.appType} Application\n` +
@@ -6938,9 +6959,10 @@ function buildPanelHubCard() {
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       '**Session Panel:** Live player counts, join link, and session status.\n' +
-      '**Ticket Panel:** General, IA, High Rank, Department Reports, and Partnership.\n' +
+      '**Ticket Panel:** General, IA, High Rank, Department Support, and Partnership.\n' +
       '**Verification Panel:** Roblox verification dashboard.\n' +
-      '**Application Panel:** In-Game Staff and Discord Moderation applications.'
+      '**Application Panel:** In-Game Staff and Discord Moderation applications.\n' +
+      '**Information Panel:** Community rules, roleplay rules, and server guides.'
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -6949,7 +6971,8 @@ function buildPanelHubCard() {
       new ButtonBuilder().setCustomId('panel_post_session').setLabel('Session').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('panel_post_ticket').setLabel('Tickets').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('panel_post_verify').setLabel('Verification').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('panel_post_application').setLabel('Applications').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId('panel_post_application').setLabel('Applications').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_post_information').setLabel('Information').setStyle(ButtonStyle.Secondary)
     )
   );
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Staff only'));
@@ -7007,7 +7030,80 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     saveAppPanels();
     return `Staff Application Panel posted in <#${channel.id}>.`;
   }
+  if (t === 'information' || t === 'info') {
+    const channel = targetChannel || postInteraction.channel;
+    const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+    const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
+    const card = buildInformationCard('info_overview', postInteraction.guild, true);
+    const sent = await channel.send({ components: [card.toJSON()], files, flags: MessageFlags.IsComponentsV2 });
+    lastInfoPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
+    saveInfoPanels();
+    return `Information panel posted in <#${channel.id}>.`;
+  }
   throw new Error('Unknown panel type.');
+}
+
+// ── /loa + -loa Leave of Absence system ──
+function buildLoaCard({ roblox, rank, start, end, reason, user, status = 'pending' }) {
+  const card = new ContainerBuilder();
+  if (LOA_BANNER_URL) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(LOA_BANNER_URL))
+    );
+  }
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      status === 'concluded' ? '## Leave of Absence Concluded' : '## Leave of Absence (LOA) Request'
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  if (status === 'concluded') {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `> Your scheduled Leave of Absence in **Alabama State Roleplay** has officially ended.\n\n` +
+        `### Return to Active Service\n` +
+        `> • **Nickname:** Your server nickname has been restored to normal.\n` +
+        `> • **Activity Requirements:** You are now expected to resume full moderation activity and attendance at official sessions.\n\n` +
+        `> If you require an extension or need to renew your leave, please submit a new request via \`/loa\`. Welcome back to active service!\n\n` +
+        `-# Alabama State Roleplay • Leave of Absence System`
+      )
+    );
+    return card;
+  }
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **Staff Member:** <@${user?.id || 'unknown'}> (${user?.tag || 'unknown'})\n` +
+      `> **Roblox Username:** \`${roblox}\`\n` +
+      `> **Staff Rank:** \`${rank}\`\n` +
+      `> **Start Date:** \`${start}\`\n` +
+      `> **End Date:** \`${end}\`\n` +
+      `> **Reason for LOA:** ${reason}\n\n` +
+      `> -# Staff members must wait for Management approval before going on inactive status.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('loa_approve').setLabel('Approve').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('loa_deny').setLabel('Deny').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('loa_conclude').setLabel('Conclude LOA').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  return card;
+}
+
+async function handleLoaCommand(interaction) {
+  try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
+  const roblox = interaction.options?.getString?.('roblox_username', true) || 'N/A';
+  const rank = interaction.options?.getString?.('staff_rank', true) || 'N/A';
+  const start = interaction.options?.getString?.('start_date', true) || 'N/A';
+  const end = interaction.options?.getString?.('end_date', true) || 'N/A';
+  const reason = interaction.options?.getString?.('reason', true) || 'N/A';
+  const target = await interaction.client.channels.fetch(LOA_CHANNEL_ID).catch(() => interaction.channel);
+  const card = buildLoaCard({ roblox, rank, start, end, reason, user: interaction.user });
+  const sent = await target.send({ content: `<@${interaction.user.id}> LOA submitted — pending management review.`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch((e) => null);
+  if (!sent) { await interaction.editReply({ content: '❌ Could not post LOA (missing channel access).' }); return; }
+  await interaction.editReply({ content: `✅ LOA submitted in <#${target.id}>. Format:\n\`\`\`\n### Leave of Absence (LOA) Format\n- Roblox Username: ${roblox}\n- Staff Rank: ${rank}\n- Start Date: ${start}\n- End Date: ${end}\n- Reason for LOA: ${reason}\n\`\`\`` });
 }
 
 async function handlePanelHubCommand(hubInteraction) {
@@ -7202,7 +7298,7 @@ async function sendNextReviewInquiry(client, appData) {
     return sendNextReviewInquiry(client, appData);
   }
 
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## 📋 Staff Application Review Request\n` +
@@ -7282,7 +7378,7 @@ async function dispatchApplicationReview(client, appData) {
     return;
   }
 
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## 📋 Staff Application Review Request\n` +
@@ -7362,7 +7458,7 @@ async function notifyHostReady(client, vote) {
   const stats = await fetchServerStats();
   stats.staff = staffRoleCount(vote.guildId) ?? stats.staff;
 
-  const box = new ContainerBuilder().setAccentColor(VOTE_COLOR.ready);
+  const box = new ContainerBuilder();
   box.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Session Ready'));
   box.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -7480,7 +7576,7 @@ async function startSessionFromVote(client, vote, interaction) {
   const link = joinUrl();
   const count = Object.keys(vote.voters ?? {}).length;
 
-  const card = new ContainerBuilder().setAccentColor(0x57f287);
+  const card = new ContainerBuilder();
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Session Starting!'));
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -7509,7 +7605,7 @@ async function startSessionFromVote(client, vote, interaction) {
   }
 
   // Send the host a dedicated Session Active control card with a Shutdown Session button!
-  const hostControl = new ContainerBuilder().setAccentColor(0xff7700);
+  const hostControl = new ContainerBuilder();
   hostControl.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Session Active'));
   hostControl.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -7684,7 +7780,8 @@ function getSlashPayload() {
     unaddCommand.toJSON(),
     infractionCommand.toJSON(),
     retirementCommand.toJSON(),
-    exploitCommand.toJSON()
+    exploitCommand.toJSON(),
+    loaCommand.toJSON()
   ];
 }
 
@@ -8079,7 +8176,7 @@ client.on(Events.GuildBanRemove, async (ban) => {
 
         console.log(`[Discord Unban] User ${ban.user?.tag || ban.user?.id} was unbanned by ${executor?.tag || 'Staff'}. All penalties cleared.`);
 
-        const logCard = new ContainerBuilder().setAccentColor(0x57f287);
+        const logCard = new ContainerBuilder();
         logCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Member Unbanned'));
         logCard.addSeparatorComponents(thinLine());
         logCard.addTextDisplayComponents(
@@ -8397,7 +8494,7 @@ async function closeTicketChannel(client, channel, ticket, closedByTag, closedBy
       }
       if (transcriptChan) {
         const isPartnership = ticket.categoryKey === 'partnership';
-        const transcriptCard = new ContainerBuilder().setAccentColor(isPartnership ? 0x3498db : 0xd35400);
+        const transcriptCard = new ContainerBuilder();
         transcriptCard.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(`## Ticket Closed: ${ticket.categoryName}`)
         );
@@ -8527,7 +8624,7 @@ function buildStaffTransferReviewCard(ticket, pageIndex = 0) {
   const reqs = ticket.staffRequests || [];
   const total = reqs.length;
   const page = Math.max(0, Math.min(total - 1, pageIndex));
-  const card = new ContainerBuilder().setAccentColor(0x3498db);
+  const card = new ContainerBuilder();
 
   if (total === 0) {
     card.addTextDisplayComponents(
@@ -8806,7 +8903,7 @@ async function createTicketForUser(client, interaction, catKey, reason) {
 
     // If general support ticket, post dedicated general support welcome embed card
     if (catKey === 'general') {
-      const generalHelpCard = new ContainerBuilder().setAccentColor(0x3498db);
+      const generalHelpCard = new ContainerBuilder();
       generalHelpCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent('## General Community Support & Assistance')
       );
@@ -8887,6 +8984,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // ─────────────── Department Support: Report modal submit (summarised on claim) ───────────────
+    if (interaction.isModalSubmit() && interaction.customId === 'ticket_report_modal') {
+      try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
+      const ticket = getActiveTicket(interaction.channel);
+      if (!ticket) {
+        await interaction.editReply({ content: 'This channel is not an active ticket.' });
+        return;
+      }
+      const repUser = interaction.fields.getTextInputValue('rep_user')?.trim() || 'N/A';
+      const repPlatform = interaction.fields.getTextInputValue('rep_platform')?.trim() || 'N/A';
+      const repReason = interaction.fields.getTextInputValue('rep_reason')?.trim() || 'N/A';
+      const repProof = interaction.fields.getTextInputValue('rep_proof')?.trim() || '';
+      const repExtra = interaction.fields.getTextInputValue('rep_extra')?.trim() || '';
+      const mentionMatch = repUser.match(/(\d{17,20})/);
+      let userLine = `**Reported User:** \`${repUser}\``;
+      if (mentionMatch) {
+        const du = await interaction.client.users.fetch(mentionMatch[1]).catch(() => null);
+        if (du) userLine = `**Reported User:** <@${du.id}> (\`${du.tag || du.username}\`)`;
+      }
+      ticket.report = {
+        repUser, repPlatform, repReason, repProof, repExtra,
+        reporterId: interaction.user.id,
+        reporterTag: interaction.user.tag,
+        createdAt: Date.now()
+      };
+      saveTickets();
+      const card = new ContainerBuilder();
+      card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Department Support Report'));
+      card.addSeparatorComponents(thinLine());
+      const plat = repPlatform.toLowerCase();
+      const icon = plat.includes('discord') && !plat.includes('roblox') ? '💬' : (plat.includes('roblox') && !plat.includes('discord') ? '🧱' : '💬🧱');
+      card.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> ${icon} ${userLine}\n` +
+          `> **Platform:** \`${repPlatform}\`\n` +
+          `> **Reason:** ${repReason}\n` +
+          (repProof ? `> **Proof:** ${repProof}\n` : '') +
+          (repExtra ? `> **Extra:** ${repExtra}\n` : '') +
+          `> **Reported By:** <@${interaction.user.id}>\n` +
+          `> -# Summarised by Alabama Utilities • Full details released when staff claims the ticket.`
+        )
+      );
+      const msg = await interaction.channel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+      if (msg && ticket.report) { ticket.report.messageId = msg.id; saveTickets(); }
+      await interaction.editReply({ content: '✅ Your report has been filed. Staff will see the full summary when they claim the ticket.' });
+      return;
+    }
+
     // ─────────────── transcript edit reason modal submit ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('transcript_modal_')) {
       const msgId = interaction.customId.replace('transcript_modal_', '');
@@ -8910,7 +9055,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       data.reason = newReason;
       closedTranscripts.set(msgId, data);
 
-      const updatedCard = new ContainerBuilder().setAccentColor(data.isPartnership ? 0x3498db : 0xd35400);
+      const updatedCard = new ContainerBuilder();
       updatedCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(`## Ticket Closed: ${data.categoryName}`)
       );
@@ -9213,7 +9358,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               item.dmSent = true;
               saveTickets();
 
-              const dmCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+              const dmCard = new ContainerBuilder();
               let dmText =
                 `## Staff Partnership Rank Transfer Decision\n` +
                 `Hello ${targetMemberUser.username},\n\n` +
@@ -9400,7 +9545,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (revChan) {
             const revMsg = await revChan.messages.fetch(appData.reviewChannelMessageId).catch(() => null);
             if (revMsg) {
-              const resCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+              const resCard = new ContainerBuilder();
               resCard.addTextDisplayComponents(
                 new TextDisplayBuilder().setContent(
                   `## 📋 Staff Application Review — ${isPassed ? 'Accepted' : 'Denied'}\n` +
@@ -9442,7 +9587,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             const msg = await dmChan.messages.fetch(item.messageId).catch(() => null);
             if (!msg) continue;
 
-            const updateCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+            const updateCard = new ContainerBuilder();
             updateCard.addMediaGalleryComponents(
               new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(appData.verdictBy.avatar))
             );
@@ -9472,7 +9617,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const logChannel = await interaction.client.channels.fetch(APP_DECISIONS_CHANNEL_ID).catch(() => null);
       if (logChannel) {
         if (isPassed) {
-          const passedCard = new ContainerBuilder().setAccentColor(0x57f287);
+          const passedCard = new ContainerBuilder();
           passedCard.addMediaGalleryComponents(
             new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
           );
@@ -9494,7 +9639,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: MessageFlags.IsComponentsV2
           }).catch(console.error);
         } else {
-          const failedCard = new ContainerBuilder().setAccentColor(0xed4245);
+          const failedCard = new ContainerBuilder();
           const failAttachmentExists = fs.existsSync('src/assets/application_failed.png');
           const attachment = failAttachmentExists ? [new AttachmentBuilder('src/assets/application_failed.png', { name: 'application_failed.png' })] : [];
           if (failAttachmentExists) {
@@ -9539,7 +9684,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
 
           if (!alreadySent) {
-            const decisionDmCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+            const decisionDmCard = new ContainerBuilder();
             if (isPassed) {
               decisionDmCard.addMediaGalleryComponents(
                 new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(APP_PASSED_BANNER_URL))
@@ -9597,7 +9742,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Update reviewer message and schedule 5-minute auto-delete
       if (interaction.message) {
         try {
-          const closedCard = new ContainerBuilder().setAccentColor(isPassed ? 0x57f287 : 0xed4245);
+          const closedCard = new ContainerBuilder();
           closedCard.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
               `## ${isPassed ? 'Staff Application Accepted' : 'Staff Application Denied'}\n` +
@@ -9661,7 +9806,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // DM applicant confirmation
       try {
-        const dmCard = new ContainerBuilder().setAccentColor(0x3498db);
+        const dmCard = new ContainerBuilder();
         dmCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⚖️ Ban Appeal Submitted'));
         dmCard.addSeparatorComponents(thinLine());
         dmCard.addTextDisplayComponents(
@@ -9685,7 +9830,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const appealChan = await interaction.client.channels.fetch(APPEALS_CHANNEL_ID).catch(() => null);
       if (appealChan) {
         try {
-          const reviewCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+          const reviewCard = new ContainerBuilder();
           reviewCard.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
               `## ⚖️ New In-Game Ban Appeal\n` +
@@ -9760,7 +9905,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         const applicantUser = await interaction.client.users.fetch(appeal.applicantId).catch(() => null);
         if (applicantUser) {
-          const resCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          const resCard = new ContainerBuilder();
           resCard.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
               `## ${isAccept ? '🎉 Ban Appeal Accepted!' : '❌ Ban Appeal Denied'}\n` +
@@ -9784,7 +9929,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Edit the review message in channel 1360997421642944623
       if (interaction.message) {
         try {
-          const decisionCard = new ContainerBuilder().setAccentColor(isAccept ? 0x57f287 : 0xed4245);
+          const decisionCard = new ContainerBuilder();
           decisionCard.addTextDisplayComponents(
             new TextDisplayBuilder().setContent(
               `## ⚖️ Ban Appeal ${isAccept ? 'Accepted' : 'Denied'}\n` +
@@ -10198,6 +10343,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else if (interaction.commandName === 'exploit') {
         await handleExploitCommand(interaction);
         return;
+      } else if (interaction.commandName === 'loa') {
+        await handleLoaCommand(interaction);
+        return;
       }
     }
 
@@ -10565,6 +10713,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
+      // Release department report summary to claimer
+      if (ticket.report) {
+        const r = ticket.report;
+        const card = new ContainerBuilder();
+        card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Report Summary (Alabama Utilities)'));
+        card.addSeparatorComponents(thinLine());
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> **Reported User:** \`${r.repUser}\`\n` +
+            `> **Platform:** \`${r.repPlatform}\`\n` +
+            `> **Reason:** ${r.repReason}\n` +
+            (r.repProof ? `> **Proof:** ${r.repProof}\n` : `> **Proof:** *None provided*\n`) +
+            (r.repExtra ? `> **Extra:** ${r.repExtra}\n` : '') +
+            `> **Filed By:** <@${r.reporterId}> (${r.reporterTag || 'unknown'})\n` +
+            `> **Claimed By:** <@${interaction.user.id}>\n` +
+            `-# Auto-summarised by Alabama Utilities`
+          )
+        );
+        await interaction.channel.send({ content: `<@${interaction.user.id}> — full report details:`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+      }
+
       await interaction.reply({
         content: `> 🔒 **Claimed** by <@${interaction.user.id}>. They will now be assisting with this inquiry.`
       });
@@ -10618,6 +10787,37 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // ─────────────── Ticket Control: Report (red, far right) ───────────────
+    if (interaction.isButton() && interaction.customId === 'ticket_report') {
+      const ticket = getActiveTicket(interaction.channel);
+      if (!ticket) {
+        await interaction.reply({ content: 'This channel is not an active ticket.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const modal = new ModalBuilder()
+        .setCustomId('ticket_report_modal')
+        .setTitle('Department Support Report')
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('rep_user').setLabel('User being reported (Roblox / Discord)').setStyle(TextInputStyle.Short).setPlaceholder('e.g. xX_JohnDoe_Xx or @someone').setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('rep_platform').setLabel('Platform: Discord or Roblox?').setStyle(TextInputStyle.Short).setPlaceholder('Discord / Roblox / Both').setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('rep_reason').setLabel('Reason for report').setStyle(TextInputStyle.Paragraph).setPlaceholder('What happened? When? Where?').setRequired(true)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('rep_proof').setLabel('Proof link (optional)').setStyle(TextInputStyle.Short).setPlaceholder('https://... clip / screenshot link').setRequired(false)
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder().setCustomId('rep_extra').setLabel('Extra details (optional)').setStyle(TextInputStyle.Paragraph).setPlaceholder('Witnesses, time, server, anything else').setRequired(false)
+          )
+        );
+      await interaction.showModal(modal);
+      return;
+    }
+
     // ─────────────── Ticket Control: Close Prompt ───────────────
     if (interaction.isButton() && interaction.customId === 'ticket_close') {
       const ticket = getActiveTicket(interaction.channel);
@@ -10660,6 +10860,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         content: 'Ticket closure cancelled.',
         components: []
       });
+      return;
+    }
+
+    // ─────────────── LOA buttons ───────────────
+    if (interaction.isButton() && (interaction.customId === 'loa_approve' || interaction.customId === 'loa_deny' || interaction.customId === 'loa_conclude')) {
+      const action = interaction.customId.replace('loa_', '');
+      try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
+      if (action === 'conclude') {
+        const done = buildLoaCard({ status: 'concluded' });
+        await interaction.message?.reply({ components: [done.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        await interaction.editReply({ content: '✅ LOA concluded — conclusion card posted with banner.' });
+        return;
+      }
+      await interaction.message?.reply({ content: action === 'approve' ? `✅ LOA **approved** by <@${interaction.user.id}>.` : `❌ LOA **denied** by <@${interaction.user.id}>.` }).catch(() => null);
+      await interaction.editReply({ content: `✅ Recorded LOA decision: ${action}.` });
       return;
     }
 
@@ -10737,7 +10952,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ticket.partnershipStep = 'awaiting_ad';
         saveTickets();
 
-        const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
+        const regularCard = new ContainerBuilder();
         regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Regular Partnership Selected'));
         regularCard.addSeparatorComponents(thinLine());
         regularCard.addTextDisplayComponents(
@@ -10780,7 +10995,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ticket.partnershipStep = 'awaiting_payment_proof';
         saveTickets();
 
-        const paidCard = new ContainerBuilder().setAccentColor(0xfee75c);
+        const paidCard = new ContainerBuilder();
         paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Paid Partnership Game Passes'));
         paidCard.addSeparatorComponents(thinLine());
         paidCard.addTextDisplayComponents(
@@ -10860,7 +11075,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ticket.partnershipStep = 'awaiting_ad';
       saveTickets();
 
-      const regularCard = new ContainerBuilder().setAccentColor(0x3498db);
+      const regularCard = new ContainerBuilder();
       regularCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Regular Partnership Selected'));
       regularCard.addSeparatorComponents(thinLine());
       regularCard.addTextDisplayComponents(
@@ -10959,7 +11174,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ticket.partnershipStep = 'awaiting_payment_proof';
       saveTickets();
 
-      const paidCard = new ContainerBuilder().setAccentColor(0xfee75c);
+      const paidCard = new ContainerBuilder();
       paidCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Paid Partnership Game Passes'));
       paidCard.addSeparatorComponents(thinLine());
       paidCard.addTextDisplayComponents(
@@ -11010,7 +11225,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ticket.partnershipStep = 'awaiting_ad';
       saveTickets();
 
-      const confirmedCard = new ContainerBuilder().setAccentColor(0x57f287);
+      const confirmedCard = new ContainerBuilder();
       confirmedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Payment Verified by Staff!'));
       confirmedCard.addSeparatorComponents(thinLine());
       confirmedCard.addTextDisplayComponents(
@@ -11294,7 +11509,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch {}
 
-      const updatedCard = new ContainerBuilder().setAccentColor(0xed4245);
+      const updatedCard = new ContainerBuilder();
       updatedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Partnership Proof — Revoked & Deleted'));
       updatedCard.addSeparatorComponents(thinLine());
       updatedCard.addTextDisplayComponents(
@@ -11394,7 +11609,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       } catch {}
 
-      const updatedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+      const updatedCard = new ContainerBuilder();
       updatedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ⚠️ Partnership Proof — Warned & Blacklisted'));
       updatedCard.addSeparatorComponents(thinLine());
       updatedCard.addTextDisplayComponents(
@@ -11937,7 +12152,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       appData.submittedAt = Date.now();
       saveApplications();
 
-      const submittedCard = new ContainerBuilder().setAccentColor(0x57f287);
+      const submittedCard = new ContainerBuilder();
       submittedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Staff Application Submitted!'));
       submittedCard.addSeparatorComponents(thinLine());
       submittedCard.addTextDisplayComponents(
@@ -11972,7 +12187,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (!appData) {
-        const expiredCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        const expiredCard = new ContainerBuilder();
         expiredCard.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
             '## Staff Application Notice\n' +
@@ -11991,7 +12206,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (appData.status === 'accepted' || appData.status === 'denied' || appData.verdictBy) {
-        const processedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        const processedCard = new ContainerBuilder();
         processedCard.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
             '## Staff Application Notice\n' +
@@ -12010,7 +12225,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (appData.claimedReviewerId && appData.claimedReviewerId !== interaction.user.id) {
-        const claimedCard = new ContainerBuilder().setAccentColor(0xf1c40f);
+        const claimedCard = new ContainerBuilder();
         claimedCard.addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
             '## Staff Application Notice\n' +
@@ -12033,7 +12248,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       activeReviewSessions.set(interaction.user.id, { appId, currentPage: 0 });
 
       // Update the channel message cleanly using Components V2 (NO legacy content field)
-      const claimedCard = new ContainerBuilder().setAccentColor(0x3498db);
+      const claimedCard = new ContainerBuilder();
       claimedCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           `## 📋 Staff Application Review — In Review\n` +
@@ -12086,7 +12301,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const appId = interaction.customId.replace('app_rev_decline_', '');
       const appData = [...activeApplications.values()].find((a) => a.id === appId);
       if (!appData) {
-        const expiredCard = new ContainerBuilder().setAccentColor(0x72767d);
+        const expiredCard = new ContainerBuilder();
         expiredCard.addTextDisplayComponents(
           new TextDisplayBuilder().setContent('## 📋 Application Review\n> This application is no longer pending or has expired.')
         );
@@ -12094,7 +12309,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const declineCard = new ContainerBuilder().setAccentColor(0xed4245);
+      const declineCard = new ContainerBuilder();
       declineCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
           '## 📋 Staff Application Review — Declined\n' +
@@ -12277,7 +12492,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ? sug.downvoters.slice(0, 40).map((u) => `<@${u}>`).join(', ')
         : '*No downvotes yet*';
 
-      const votersCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+      const votersCard = new ContainerBuilder();
       votersCard.addTextDisplayComponents(
         new TextDisplayBuilder().setContent(`## Voters for Suggestion #${sug.id}`)
       );
@@ -12573,7 +12788,7 @@ function inspectAdContent(text) {
 async function processPartnershipProof({ guild, channel, author, ticket, imageUrl, replyTarget, isInteraction = false }) {
   // ── Step 1: Send initial 30-second AI review notice ──
   const finishTs = Math.floor(Date.now() / 1000) + 30;
-  const reviewCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const reviewCard = new ContainerBuilder();
   reviewCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔍 AI Verification In Progress'));
   reviewCard.addSeparatorComponents(thinLine());
   reviewCard.addTextDisplayComponents(
@@ -12605,7 +12820,7 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
   // ── Step 3: Content and safety inspection ──
   const inspection = inspectAdContent(partnerAd);
   if (!inspection.ok) {
-    const failCard = new ContainerBuilder().setAccentColor(0xed4245);
+    const failCard = new ContainerBuilder();
     failCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ❌ Partnership Review Failed'));
     failCard.addSeparatorComponents(thinLine());
     failCard.addTextDisplayComponents(
@@ -12671,7 +12886,7 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
   const proofChan = await guild.channels.fetch(PROOF_CHANNEL_ID).catch(() => null);
   if (proofChan) {
     try {
-      const proofCard = new ContainerBuilder().setAccentColor(0x3498db);
+      const proofCard = new ContainerBuilder();
       proofCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Proof Submitted'));
       proofCard.addSeparatorComponents(thinLine());
       proofCard.addTextDisplayComponents(
@@ -12714,7 +12929,7 @@ async function processPartnershipProof({ guild, channel, author, ticket, imageUr
 
   // ── Step 6: Remodeled Partnership Approved & Published card (BLUE, NO GREEN, Close Button, 5-min auto close) ──
   const autoCloseTs = Math.floor(Date.now() / 1000) + 300;
-  const confirmCard = new ContainerBuilder().setAccentColor(0x3498db); // Blue accent, NO green!
+  const confirmCard = new ContainerBuilder(); // Blue accent, NO green!
   confirmCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## 🤝 Partnership Approved & Published!')
   );
@@ -12870,7 +13085,7 @@ async function handleTicketAddMember(interaction, isSlash = true, targetUser = n
       EmbedLinks: true
     });
 
-    const addCard = new ContainerBuilder().setAccentColor(0x57f287);
+    const addCard = new ContainerBuilder();
     addCard.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `## Member Added to Ticket\n` +
@@ -12943,7 +13158,7 @@ async function handleTicketUnaddMember(interaction, isSlash = true, targetUser =
   try {
     await interaction.channel.permissionOverwrites.delete(target.id);
 
-    const unaddCard = new ContainerBuilder().setAccentColor(0xed4245);
+    const unaddCard = new ContainerBuilder();
     unaddCard.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `## Member Removed from Ticket\n` +
@@ -12971,7 +13186,7 @@ async function handleTicketUnaddMember(interaction, isSlash = true, targetUser =
 }
 
 function buildCommandsGuidePage(pageIndex = 0) {
-  const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+  const card = new ContainerBuilder();
   const totalPages = 6;
   const page = Math.max(0, Math.min(totalPages - 1, pageIndex));
 
@@ -13132,7 +13347,7 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
   }
 
   if (isSlash) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
   }
 
   const startTime = Date.now();
@@ -13289,7 +13504,7 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
   const elapsedMs = Date.now() - startTime;
 
   // Build Results Card
-  const resultCard = new ContainerBuilder().setAccentColor(0x57f287);
+  const resultCard = new ContainerBuilder();
   resultCard.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('## ⚡ System Retrigger & Emergency Reboot Completed')
   );
@@ -13510,7 +13725,7 @@ client.on(Events.MessageCreate, async (message) => {
           return;
         }
 
-        const receivedCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const receivedCard = new ContainerBuilder();
         receivedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Application & Advertisement Received!'));
         receivedCard.addSeparatorComponents(thinLine());
         receivedCard.addTextDisplayComponents(
@@ -13534,6 +13749,23 @@ client.on(Events.MessageCreate, async (message) => {
           components: [receivedCard.toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
+        return;
+      }
+
+      // ── -loa command (prefix LOA request) ──
+      if (lower === 'loa' || lower.startsWith('loa ')) {
+        const payload = trimmed.slice(3).trim();
+        // Expected: Roblox | Rank | Start | End | Reason  (pipe or line separated)
+        const parts = payload.split(/\s*\|\s*|\n/).map((s) => s.trim()).filter(Boolean);
+        const roblox = parts[0] || message.member?.nickname || message.author.username;
+        const rank = parts[1] || 'Unknown';
+        const start = parts[2] || 'ASAP';
+        const end = parts[3] || 'TBD';
+        const reason = parts.slice(4).join(' | ') || payload || 'No reason provided';
+        const target = await message.client.channels.fetch(LOA_CHANNEL_ID).catch(() => message.channel);
+        const card = buildLoaCard({ roblox, rank, start, end, reason, user: message.author });
+        await target.send({ content: `<@${message.author.id}> LOA submitted via \`-loa\` — pending management review.`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        await autoDeleteReply(message, `✅ LOA submitted in <#${target.id}>. Format:\n\`\`\`\n### Leave of Absence (LOA) Format\n- Roblox Username: ${roblox}\n- Staff Rank: ${rank}\n- Start Date: ${start}\n- End Date: ${end}\n- Reason for LOA: ${reason}\n\`\`\``, 30000);
         return;
       }
 
@@ -13573,7 +13805,7 @@ client.on(Events.MessageCreate, async (message) => {
         ticket.partnershipStep = 'awaiting_ad';
         saveTickets();
 
-        const verifiedCard = new ContainerBuilder().setAccentColor(0x57f287);
+        const verifiedCard = new ContainerBuilder();
         verifiedCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## ✅ Paid Partnership Confirmed!'));
         verifiedCard.addSeparatorComponents(thinLine());
         verifiedCard.addTextDisplayComponents(
@@ -13618,7 +13850,7 @@ client.on(Events.MessageCreate, async (message) => {
           ticket.partnershipStep = 'payment_proof_submitted';
           saveTickets();
 
-          const pendingCard = new ContainerBuilder().setAccentColor(0xfee75c);
+          const pendingCard = new ContainerBuilder();
           pendingCard.addMediaGalleryComponents(
             new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(hasImage.url))
           );
@@ -13673,7 +13905,7 @@ client.on(Events.MessageCreate, async (message) => {
           ticket.partnershipStep = 'payment_proof_submitted';
           saveTickets();
 
-          const pendingCard = new ContainerBuilder().setAccentColor(0xfee75c);
+          const pendingCard = new ContainerBuilder();
           pendingCard.addMediaGalleryComponents(
             new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(hasImage.url))
           );
@@ -13992,7 +14224,7 @@ client.on(Events.MessageCreate, async (message) => {
           : ticketDeskState.status === 'busy'
             ? '🟠 Busy'
             : '🔴 Closed';
-      const statusCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+      const statusCard = new ContainerBuilder();
       statusCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Ticket Desk Status'));
       statusCard.addSeparatorComponents(thinLine());
       statusCard.addSectionComponents(
@@ -14034,7 +14266,7 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (raw === 'ticket help' || raw === 'ticket commands') {
-      const helpCard = new ContainerBuilder().setAccentColor(0x2b2d31);
+      const helpCard = new ContainerBuilder();
       helpCard.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Ticket Desk Staff Commands'));
       helpCard.addSeparatorComponents(thinLine());
       helpCard.addTextDisplayComponents(
@@ -14080,7 +14312,7 @@ client.on(Events.MessageCreate, async (message) => {
       const reason = parts.slice(2).join(' ') || 'No reason provided';
       try {
         await message.guild.members.ban(targetUser.id, { reason: `${reason} (Issued by ${message.author.tag})` });
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Member Banned'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14113,7 +14345,7 @@ client.on(Events.MessageCreate, async (message) => {
           return;
         }
         await targetMember.kick(`${reason} (Issued by ${message.author.tag})`);
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Member Kicked'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14149,7 +14381,7 @@ client.on(Events.MessageCreate, async (message) => {
           return;
         }
         await targetMember.timeout(durationMs, `${reason} (Issued by ${message.author.tag})`);
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Member Timed Out'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14236,7 +14468,7 @@ client.on(Events.MessageCreate, async (message) => {
           });
           deletedCount = res ? res.size : 0;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🧹 Messages Purged'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14260,7 +14492,7 @@ client.on(Events.MessageCreate, async (message) => {
       const parts = message.content.slice(1).trim().split(/\s+/);
       const action = parts[1]?.toLowerCase() || 'status';
       if (action === 'status') {
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🛡️ Anti-Nuke Defense Status'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14304,7 +14536,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to send PM to \`${player}\`: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 📨 In-Game Private Message Sent'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14333,7 +14565,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to jail \`${player}\`: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔒 Player Jailed In-Game'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14362,7 +14594,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to unjail \`${player}\`: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔓 Player Unjailed In-Game'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14410,7 +14642,7 @@ client.on(Events.MessageCreate, async (message) => {
           details.push(`• **ER:LC In-Game:** ${erlcRes.error || 'Failed to send'}`);
         }
 
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🤝 Member / Player Unbanned'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14442,7 +14674,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to ban \`${player}\`: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 🔨 Player Banned In-Game'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14474,7 +14706,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to kick \`${player}\`: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 👢 Player Kicked In-Game'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14503,7 +14735,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to send announcement: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 📢 In-Game Broadcast Sent'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -14531,7 +14763,7 @@ client.on(Events.MessageCreate, async (message) => {
           await autoDeleteReply(message, `❌ Failed to send hint: ${res.error}`, 30000);
           return;
         }
-        const card = new ContainerBuilder().setAccentColor(0x2b2d31);
+        const card = new ContainerBuilder();
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## 💡 In-Game Top Hint Sent'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
