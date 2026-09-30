@@ -169,7 +169,8 @@ const panelCommand = new SlashCommandBuilder()
         { name: 'Ticket Panel', value: 'ticket' },
         { name: 'Verification Panel', value: 'verify' },
         { name: 'Staff Application Panel', value: 'application' },
-        { name: 'Information Panel', value: 'information' }
+        { name: 'Information Panel', value: 'information' },
+        { name: 'Shop Panel', value: 'shop' }
       )
   )
   .addChannelOption((opt) =>
@@ -7031,10 +7032,160 @@ function buildPanelHubCard() {
       new ButtonBuilder().setCustomId('panel_post_verify').setLabel('Verification').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('panel_post_application').setLabel('Applications').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('panel_post_information').setLabel('Information').setStyle(ButtonStyle.Secondary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('panel_post_shop').setLabel('Shop').setStyle(ButtonStyle.Secondary)
     )
   );
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Staff only'));
   return card;
+}
+
+const SHOP_BANNER_PATH = fileURLToPath(new URL('./assets/shop_banner.webp', import.meta.url));
+
+// Tier emoji IDs supplied by the server. If one is ever removed the panel
+// falls back to a clean unicode symbol instead of showing raw "<:Name:id>" text.
+const SHOP_TIERS = [
+  {
+    value: 'diamond', label: 'Diamond', emojiId: '1554984338645585990', fallback: '💎',
+    price: 'R$1,800', perk: 'R$15,000 every hour',
+    perks: [
+      'Exclusive Diamond role + Diamond Lounge',
+      'Members-only chats',
+      '2 emojis and 2 stickers',
+      'Early updates and priority events',
+      'Featured recognition'
+    ]
+  },
+  {
+    value: 'gold', label: 'Gold', emojiId: '1554984242486837278', fallback: '🥇',
+    price: 'R$1,150', perk: 'R$10,000 every 2 hours',
+    perks: [
+      'Exclusive Gold role',
+      'Premium chat access',
+      '1 emoji and 1 sticker',
+      'Sneak peeks into updates',
+      'Priority events and supporter recognition'
+    ]
+  },
+  {
+    value: 'silver', label: 'Silver', emojiId: '1554984375408398416', fallback: '🥈',
+    price: 'R$850', perk: 'R$7,000 every 3 hours',
+    perks: [
+      'Exclusive Silver role',
+      'Members-only chat',
+      '1 emoji',
+      'Early updates and priority events',
+      'Supporter recognition'
+    ]
+  },
+  {
+    value: 'bronze', label: 'Bronze', emojiId: '1554984276620083230', fallback: '🥉',
+    price: 'R$400', perk: 'R$5,000 every 3 hours',
+    perks: [
+      'Exclusive Bronze role',
+      'Members-only chat',
+      'External emojis and stickers',
+      'Supporter recognition',
+      'Event priority'
+    ]
+  }
+];
+
+/** Uses the server's custom tier emoji when it exists, otherwise a clean fallback. */
+function shopTierEmoji(guild, tier) {
+  const found = guild?.emojis?.cache?.get(tier.emojiId);
+  if (found) return found.animated ? `<a:${found.name}:${found.id}>` : `<:${found.name}:${found.id}>`;
+  return tier.fallback;
+}
+
+function buildShopPanelContainer(guild) {
+  const bannerUrl = fs.existsSync(SHOP_BANNER_PATH) ? 'attachment://shop_banner.webp' : null;
+  const card = new ContainerBuilder();
+
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl))
+    );
+  }
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Alabama State Roleplay Shop\n` +
+      `Support Alabama State Roleplay and receive exclusive perks, recognition and economy benefits.\n` +
+      `*Every purchase is optional and helps keep our community running.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  for (const tier of SHOP_TIERS) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `${shopTierEmoji(guild, tier)}  **${tier.label.toUpperCase()}** — ${tier.price}\n` +
+        tier.perks.map((p) => `> • ${p}`).join('\n') +
+        `\n> **Economy perk:** ${tier.perk}`
+      )
+    );
+    card.addSeparatorComponents(thinLine());
+  }
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> Every higher membership includes the benefits of the tiers below it.\n` +
+      `> A discount is available for the executive tier. To donate a specific amount of Robux, please open a support ticket.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('### Support\n*Choose how you would like to support the server.*')
+  );
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('shop_select')
+        .setPlaceholder('Select an option')
+        .addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Donation').setDescription('Coming soon').setValue('donation'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Membership+').setDescription('Coming soon').setValue('membership'),
+          new StringSelectMenuOptionBuilder()
+            .setLabel('Paid Partnership').setDescription('Coming soon').setValue('partnership')
+        )
+    )
+  );
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Shop')
+  );
+  return card;
+}
+
+/** Every shop option is a placeholder until the payment system is built. */
+async function handleShopSelect(interaction) {
+  const chosen = interaction.values?.[0] || '';
+  const labels = { donation: 'Donation', membership: 'Membership+', partnership: 'Paid Partnership' };
+  const label = labels[chosen] || 'This option';
+  await interaction.reply({
+    components: [
+      new ContainerBuilder()
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(`### ${label} — Coming Soon`)
+        )
+        .addSeparatorComponents(thinLine())
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `> This option is not available yet.\n` +
+            `> For now, open a support ticket if you would like to donate a specific amount of Robux.`
+          )
+        )
+        .addSeparatorComponents(thinLine())
+        .addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Shop')
+        )
+        .toJSON()
+    ],
+    flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+  });
 }
 
 async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
@@ -7099,6 +7250,18 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     lastInfoPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
     saveInfoPanels();
     return `Information panel posted in <#${channel.id}>.`;
+  }
+  if (t === 'shop') {
+    const channel = targetChannel || postInteraction.channel;
+    const hasBanner = fs.existsSync(SHOP_BANNER_PATH);
+    const files = hasBanner ? [new AttachmentBuilder(SHOP_BANNER_PATH, { name: 'shop_banner.webp' })] : [];
+    const sent = await channel.send({
+      allowedMentions: { parse: [] },
+      components: [buildShopPanelContainer(postInteraction.guild).toJSON()],
+      files,
+      flags: MessageFlags.IsComponentsV2
+    });
+    return `Shop panel posted in <#${channel.id}>.`;
   }
   throw new Error('Unknown panel type.');
 }
@@ -12702,6 +12865,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && (interaction.customId === 'app_start_ingame' || interaction.customId === 'app_start_discord')) {
       await startStaffApplication(interaction, interaction.customId);
+      return;
+    }
+
+    // ─────────────── Shop select (all options are placeholders for now) ───────────────
+    if (interaction.isStringSelectMenu() && interaction.customId === 'shop_select') {
+      await handleShopSelect(interaction);
       return;
     }
 
