@@ -7107,6 +7107,13 @@ function buildRulesCard(pageIndex = 0, guild = null) {
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(true),
       rulesArrow(`rules_page_${page + 1}`, RULES_ARROW_RIGHT, 'Next', page >= total - 1)
+    ),
+    // Way back to the Information overview from the middle of the rules.
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('rules_back_info')
+        .setLabel('Back to Information')
+        .setStyle(ButtonStyle.Secondary)
     )
   );
   card.addTextDisplayComponents(
@@ -7119,7 +7126,18 @@ function buildRulesCard(pageIndex = 0, guild = null) {
 
 /** Left / right arrow handler for the rules panel. */
 async function handleRulesNav(interaction) {
-  if (!interaction.customId.startsWith('rules_page_')) return false;
+  if (interaction.isButton() && interaction.customId === 'rules_back_info') {
+    try {
+      await interaction.update({
+        components: [buildInformationCard('info_overview', interaction.guild, true).toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (err) {
+      console.warn(`Rules back-to-information failed: ${err.message}`);
+    }
+    return true;
+  }
+  if (!interaction.isButton() || !interaction.customId.startsWith('rules_page_')) return false;
   const target = Number(interaction.customId.replace('rules_page_', ''));
   if (!Number.isFinite(target)) return false;
   try {
@@ -7333,11 +7351,11 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     saveAppPanels();
     return `Staff Application Panel posted in <#${channel.id}>.`;
   }
-  if (t === 'information' || t === 'info' || t === 'rules') {
+  if (t === 'information' || t === 'info') {
     const channel = targetChannel || postInteraction.channel;
     const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
     const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildRulesCard(0, postInteraction.guild);
+    const card = buildInformationCard('info_overview', postInteraction.guild, true);
     const sent = await channel.send({
       allowedMentions: { parse: [] },
       components: [card.toJSON()],
@@ -7346,7 +7364,7 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     });
     lastInfoPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
     saveInfoPanels();
-    return `Game Rules panel posted in <#${channel.id}>.`;
+    return `Information panel posted in <#${channel.id}>.`;
   }
   if (t === 'shop') {
     const channel = targetChannel || postInteraction.channel;
@@ -11644,6 +11662,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'info_select_section') {
       const chosen = interaction.values?.[0] || 'info_overview';
       const isEphemeral = Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral));
+
+      // "Roleplay Rules & Regulations" opens the full paginated Game Rules panel.
+      if (chosen === 'info_roleplay_rules') {
+        const rulesCard = buildRulesCard(0, interaction.guild);
+        if (isEphemeral) {
+          await interaction.update({
+            components: [rulesCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        } else {
+          // Public panel: swap the panel itself so everyone can browse the pages.
+          await interaction.update({
+            components: [rulesCard.toJSON()],
+            flags: MessageFlags.IsComponentsV2
+          });
+        }
+        return;
+      }
+
       const updatedCard = buildInformationCard(chosen, interaction.guild, false);
 
       if (isEphemeral) {
