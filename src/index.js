@@ -343,8 +343,8 @@ const mediaCommand = new SlashCommandBuilder()
   .addAttachmentOption((opt) =>
     opt.setName('banner').setDescription('The image/video to post').setRequired(true)
   )
-  .addStringOption((opt) =>
-    opt.setName('credit').setDescription('Credit for the media (who made it) — shown inside the card').setRequired(false)
+  .addUserOption((opt) =>
+    opt.setName('credit').setDescription('Who to credit under the media (defaults to you)').setRequired(false)
   )
   .addUserOption((opt) =>
     opt.setName('ping_user').setDescription('User to ping above the card (optional)').setRequired(false)
@@ -7627,7 +7627,7 @@ function resolveCameraEmoji(guild) {
   return '📷';
 }
 
-function buildMediaCard({ bannerRef, credit, pingUserId, pingRoleId, posterId, emoji = MEDIA_CAMERA_EMOJI }) {
+function buildMediaCard({ bannerRef, creditUserId, pingUserId, pingRoleId, emoji = MEDIA_CAMERA_EMOJI }) {
   const card = new ContainerBuilder();
 
   // Pings sit ABOVE the banner, exactly where they were asked for.
@@ -7639,29 +7639,19 @@ function buildMediaCard({ bannerRef, credit, pingUserId, pingRoleId, posterId, e
     card.addSeparatorComponents(thinLine());
   }
 
+  // Just the camera emoji above the media — nothing else.
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(emoji));
+
   if (bannerRef) {
     card.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerRef))
     );
   }
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`${emoji}  ## Media Drop\n*Fresh media just landed — take a look.*`)
-  );
-
-  if (credit) {
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### Credits\n> **Created by:** ${credit}\n> **Posted by:** <@${posterId || pingUserId || 'unknown'}>`
-      )
-    );
+  // Credit is simply the user's Discord — no labels, no clutter.
+  if (creditUserId) {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`<@${creditUserId}>`));
   }
-
-  card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Media Desk')
-  );
   return card;
 }
 
@@ -7685,16 +7675,15 @@ async function handleMediaCommand(interaction) {
     return;
   }
   const fileName = `media_${Date.now().toString(36)}${attachment.name?.includes('.') ? attachment.name.slice(attachment.name.lastIndexOf('.')) : '.png'}`;
-  const credit = interaction.options?.getString?.('credit')?.trim() || null;
+  const creditUser = interaction.options?.getUser?.('credit') || interaction.user;
   const pingUser = interaction.options?.getUser?.('ping_user') || null;
   const pingRole = interaction.options?.getRole?.('ping_role') || null;
 
   const card = buildMediaCard({
     bannerRef: `attachment://${fileName}`,
-    credit,
+    creditUserId: creditUser?.id || null,
     pingUserId: pingUser?.id || null,
     pingRoleId: pingRole?.id || null,
-    posterId: interaction.user.id,
     emoji: resolveCameraEmoji(interaction.guild)
   });
 
