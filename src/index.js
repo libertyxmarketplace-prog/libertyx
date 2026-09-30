@@ -174,6 +174,28 @@ const ticketCommand = new SlashCommandBuilder()
       .setDescription('Post the assistance ticket panel.')
   );
 
+const panelCommand = new SlashCommandBuilder()
+  .setName('panel')
+  .setDescription('Post a server panel (session, tickets, verification, applications).')
+  .addStringOption((opt) =>
+    opt
+      .setName('type')
+      .setDescription('Which panel to post')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Session Panel', value: 'session' },
+        { name: 'Ticket Panel', value: 'ticket' },
+        { name: 'Verification Panel', value: 'verify' },
+        { name: 'Staff Application Panel', value: 'application' }
+      )
+  )
+  .addChannelOption((opt) =>
+    opt.setName('channel').setDescription('Channel to post into (defaults to this channel)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('ping_role').setDescription('Role to ping on the session panel (session only)').setRequired(false)
+  );
+
 const staffCommand = new SlashCommandBuilder()
   .setName('staff')
   .setDescription('Alabama State Roleplay staff management commands.')
@@ -756,6 +778,14 @@ const TICKET_CONFIG = {
       categoryId: '1344841230504169482',
       desc: 'Affiliations, IA+ reports, high-ranking staff concerns, and payments.'
     },
+    deptreport: {
+      id: 'deptreport',
+      name: 'Alabama Department Reports',
+      shortName: 'Department Reports',
+      categoryId: '1553589854200266823',
+      pingRoleId: '1341931745351700534',
+      desc: 'Reports handled by department staff. Opens in the department reports category.'
+    },
     partnership: {
       id: 'partnership',
       name: 'Alabama Partnership Operations',
@@ -1085,9 +1115,7 @@ function buildContainer(stats, opts = {}) {
   const curPlayers = Number(stats?.players) || 0;
   const maxPlayers = Number(stats?.maxPlayers) || 40;
   const isFull = curPlayers >= maxPlayers && maxPlayers > 0;
-  const container = new ContainerBuilder().setAccentColor(
-    isShutdown ? 0xed4245 : (isFull ? 0xed4245 : (live ? 0xff7700 : 0x2b2d31))
-  );
+  const container = new ContainerBuilder();
   if (opts.pingMention) {
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(`||${opts.pingMention}||`)
@@ -5585,6 +5613,7 @@ let ticketDeskState = {
     general: true,
     ia: true,
     highrank: true,
+    deptreport: true,
     partnership: true,
     staff_partnership: true
   }
@@ -5808,9 +5837,7 @@ function saveTickets() {
 }
 
 function buildTicketPanelContainer(bannerOverride) {
-  const accentColor = 0x2b2d31; // side gray accent
-
-  const container = new ContainerBuilder().setAccentColor(accentColor);
+  const container = new ContainerBuilder();
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
     : (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.png' : (TICKET_CONFIG?.bannerUrl || 'https://i.ibb.co/5gf3LYvD/content.webp'));
@@ -5839,6 +5866,14 @@ function buildTicketPanelContainer(bannerOverride) {
   const iaOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.ia;
   const hrOpen = ticketDeskState.status !== 'closed' && !!ticketDeskState.categories.highrank;
   const partnershipOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.partnership !== false);
+  const deptOpen = ticketDeskState.status !== 'closed' && (ticketDeskState.categories.deptreport !== false);
+
+  const deskLabel =
+    ticketDeskState.status === 'online'
+      ? 'Online'
+      : ticketDeskState.status === 'busy'
+        ? 'Busy'
+        : 'Closed';
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -5846,25 +5881,12 @@ function buildTicketPanelContainer(bannerOverride) {
       `**General Support:** ${generalOpen ? 'Community questions, general inquiries, and store assistance.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**Internal Affairs:** ${iaOpen ? 'Staff reports, community concerns, and supervisor review.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**High Rank Support:** ${hrOpen ? 'Executive matters, IA+ reports, and administrative management.' : '[Closed by staff] Currently unavailable.'}\n` +
+      `**Department Reports:** ${deptOpen ? 'Department-level reports handled by department staff.' : '[Closed by staff] Currently unavailable.'}\n` +
       `**Partnership:** ${partnershipOpen ? 'Server partnerships, mutual advertising, paid promotions, and staff transfers.' : '[Closed by staff] Currently unavailable.'}`
     )
   );
 
   container.addSeparatorComponents(thinLine());
-
-  const deskLabel =
-    ticketDeskState.status === 'online'
-      ? '🟢'
-      : ticketDeskState.status === 'busy'
-        ? '🟡'
-        : '🔴';
-
-  const pillStyle =
-    ticketDeskState.status === 'online'
-      ? ButtonStyle.Success
-      : ticketDeskState.status === 'busy'
-        ? ButtonStyle.Secondary
-        : ButtonStyle.Danger;
 
   container.addSectionComponents(
     sectionRow(
@@ -5872,7 +5894,7 @@ function buildTicketPanelContainer(bannerOverride) {
       'Staff availability to assist community members.',
       deskLabel,
       'desk_status_pill',
-      pillStyle
+      ButtonStyle.Secondary
     )
   );
 
@@ -5895,6 +5917,10 @@ function buildTicketPanelContainer(bannerOverride) {
         .setValue('highrank')
         .setDescription(hrOpen ? 'Executive matters, IA+ reports, payments, and management' : '[Closed by staff] Currently unavailable'),
       new StringSelectMenuOptionBuilder()
+        .setLabel('Department Reports')
+        .setValue('deptreport')
+        .setDescription(deptOpen ? 'Department reports handled by department staff' : '[Closed by staff] Currently unavailable'),
+      new StringSelectMenuOptionBuilder()
         .setLabel('Partnership')
         .setValue('partnership')
         .setDescription(partnershipOpen ? 'Server partnerships, staff transfers, and paid promotions' : '[Closed by staff] Currently unavailable')
@@ -5912,8 +5938,7 @@ function buildTicketPanelContainer(bannerOverride) {
 function buildTicketControlContainer(ticket, bannerOverride) {
   const isAiClaimed = ticket.categoryKey === 'partnership' && (ticket.claimedBy === client.user.id || !ticket.claimedBy);
   const isClaimed = !!ticket.claimedBy;
-  const accentColor = isAiClaimed ? 0x3498db : (isClaimed ? 0x57f287 : 0xd35400);
-  const container = new ContainerBuilder().setAccentColor(accentColor);
+  const container = new ContainerBuilder();
   const bannerUrl = (bannerOverride !== undefined)
     ? bannerOverride
     : (TICKET_CONFIG?.bannerUrl || (fs.existsSync(TICKET_BANNER_PATH) ? 'attachment://assistance_banner.png' : null));
@@ -5928,7 +5953,7 @@ function buildTicketControlContainer(ticket, bannerOverride) {
 
   const handlerText = isAiClaimed
     ? `<@${client.user.id}> (Automated AI Assistant)`
-    : (isClaimed ? `<@${ticket.claimedBy}>` : '*None (Awaiting Staff)*');
+    : (isClaimed ? `<@${ticket.claimedBy}>` : 'Awaiting staff');
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -5942,9 +5967,9 @@ function buildTicketControlContainer(ticket, bannerOverride) {
       isAiClaimed
         ? 'Claimed and automated by AI Assistant.'
         : (isClaimed ? `Claimed and handled by <@${ticket.claimedBy}>.` : 'Awaiting an available staff member to claim.'),
-      isAiClaimed ? '🔵 AI Active' : (isClaimed ? 'Claimed' : 'Unclaimed'),
+      isAiClaimed ? 'AI Active' : (isClaimed ? 'Claimed' : 'Unclaimed'),
       'info_ticket_status',
-      isAiClaimed ? ButtonStyle.Primary : (isClaimed ? ButtonStyle.Success : ButtonStyle.Danger)
+      ButtonStyle.Secondary
     )
   );
 
@@ -5973,11 +5998,11 @@ function buildTicketControlContainer(ticket, bannerOverride) {
     );
   } else {
     buttons.push(
-      new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Secondary)
     );
   }
   buttons.push(
-    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Secondary)
   );
 
   if (ticket.categoryKey === 'partnership') {
@@ -5985,7 +6010,7 @@ function buildTicketControlContainer(ticket, bannerOverride) {
       new ButtonBuilder()
         .setCustomId('ticket_partnership_guide')
         .setLabel('Partnership Requirements & Application')
-        .setStyle(ButtonStyle.Primary)
+        .setStyle(ButtonStyle.Secondary)
     );
   }
 
@@ -5994,7 +6019,7 @@ function buildTicketControlContainer(ticket, bannerOverride) {
 }
 
 function buildPartnershipGuideContainer() {
-  const container = new ContainerBuilder().setAccentColor(0x3498db);
+  const container = new ContainerBuilder();
 
   container.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Partnership Requirements & Application'));
   container.addTextDisplayComponents(
@@ -6539,16 +6564,26 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated individuals who are committed to maintaining a professional and engaging community environment.\n\n' +
+      'Interested in joining the **Alabama State Roleplay** staff team? We are looking for mature, active, and dedicated members who are committed to keeping the community professional and welcoming.\n\n' +
       '**Available Positions:**\n' +
-      '• **In-Game Staff:** Moderate the ER:LC private server, enforce roleplay regulations, respond to mod calls, and oversee safe zones.\n' +
-      '• **Discord Moderation Team:** Moderate the Discord server, manage member support tickets, handle verification, and enforce community guidelines.\n\n' +
-      '**Requirements & Standards:**\n' +
-      '• Must be at least 14 years of age\n' +
-      '• Must maintain regular weekly activity in either the ER:LC server or Discord\n' +
+      '• **In-Game Staff:** Patrol the ER:LC private server, enforce roleplay rules, answer mod calls, and monitor safe zones.\n' +
+      '• **Discord Moderation Team:** Moderate the Discord server, handle support tickets and verification, and enforce community guidelines.\n\n' +
+      '**Requirements:**\n' +
+      '• Must be at least 14 years old\n' +
+      '• Must stay active each week in the ER:LC server or Discord\n' +
       '• Must have a working microphone and clip recording software\n\n' +
-      'Select the position you wish to apply for from the dropdown menu below to receive your application in your Direct Messages.\n\n' +
-      '```\nusing ai will be a  imidiete blacklist\n```'
+      'Select the position you want to apply for below. Your application will be sent to your DMs.\n\n' +
+      '> ⚠️ **Notice:** Any use of AI in your application will result in an **immediate blacklist**.'
+    )
+  );
+
+  card.addSeparatorComponents(thinLine());
+
+  // Gray-only quick actions (V2 panel footer).
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('app_start_ingame').setLabel('Apply: In-Game Staff').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('app_start_discord').setLabel('Apply: Discord Moderation').setStyle(ButtonStyle.Secondary)
     )
   );
 
@@ -6890,6 +6925,107 @@ function buildApplicationReviewReaderCard(appData, pageIndex = 0) {
   card.addActionRowComponents(navRow);
 
   return card;
+}
+
+function buildPanelHubCard() {
+  // Single /panel hub - no accent bar, gray buttons only.
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Server Panels'));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('> Post any server panel from one place. Pick a panel below.')
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      '**Session Panel:** Live player counts, join link, and session status.\n' +
+      '**Ticket Panel:** General, IA, High Rank, Department Reports, and Partnership.\n' +
+      '**Verification Panel:** Roblox verification dashboard.\n' +
+      '**Application Panel:** In-Game Staff and Discord Moderation applications.'
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('panel_post_session').setLabel('Session').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_post_ticket').setLabel('Tickets').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_post_verify').setLabel('Verification').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_post_application').setLabel('Applications').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Staff only'));
+  return card;
+}
+
+async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
+  const t = String(type || '').toLowerCase();
+  if (t === 'session') {
+    const channel = targetChannel || postInteraction.channel;
+    const stats = await fetchServerStats();
+    const role = pingRole || null;
+    const pingMention = role ? formatRoleMention(role.id, postInteraction.guildId) : null;
+    const panelKey = `${postInteraction.guildId}:${channel.id}`;
+    if (pingMention) panelPingMentionByChannel.set(panelKey, pingMention);
+    else panelPingMentionByChannel.delete(panelKey);
+    const sent = await channel.send({
+      content: pingMention || undefined,
+      allowedMentions: role ? { roles: [role.id] } : { parse: [] },
+      components: [buildContainer(stats, { pingMention }).toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+    lastPanelByChannel.set(panelKey, sent.id);
+    savePanels();
+    startLiveRefresh(liveKey(postInteraction.guildId, sent.channelId, sent.id), sent, sent.channelId);
+    return `Live session panel posted in <#${channel.id}>.`;
+  }
+  if (t === 'ticket') {
+    const channel = targetChannel || postInteraction.channel;
+    const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
+    const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
+    const sent = await channel.send({ files, components: [buildTicketPanelContainer().toJSON()], flags: MessageFlags.IsComponentsV2 });
+    lastTicketPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
+    saveTicketPanels();
+    return `Live assistance ticket panel posted in <#${channel.id}>.`;
+  }
+  if (t === 'verify') {
+    const bannerPath = fileURLToPath(new URL('./assets/verification_banner.jpg', import.meta.url));
+    const hasBanner = fs.existsSync(bannerPath);
+    const files = hasBanner ? [new AttachmentBuilder(bannerPath, { name: 'alabama_verification.jpg' })] : [];
+    const container = buildVerificationContainer(hasBanner ? 'alabama_verification.jpg' : null);
+    const channel = targetChannel || postInteraction.channel;
+    const sent = await channel.send({ components: [container.toJSON()], files, flags: MessageFlags.IsComponentsV2 });
+    lastVerifyPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
+    saveVerifyPanels();
+    return 'Verification dashboard successfully posted!';
+  }
+  if (t === 'application') {
+    const channel = targetChannel || postInteraction.guild?.channels.cache.get(APP_PANEL_CHANNEL_ID) || postInteraction.channel;
+    const bannerExists = fs.existsSync(APP_BANNER_PATH);
+    const files = bannerExists ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.png' })] : [];
+    const card = buildStaffApplicationPanelCard(bannerExists ? 'attachment://applications_banner.png' : null);
+    const sent = await channel.send({ components: [card.toJSON()], files, flags: MessageFlags.IsComponentsV2 });
+    lastAppPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
+    saveAppPanels();
+    return `Staff Application Panel posted in <#${channel.id}>.`;
+  }
+  throw new Error('Unknown panel type.');
+}
+
+async function handlePanelHubCommand(hubInteraction) {
+  const member = hubInteraction.member || (await hubInteraction.guild?.members.fetch(hubInteraction.user.id).catch(() => null));
+  if (!isStaffMember(member) && !member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await hubInteraction.reply({ content: '❌ You must have staff permissions to post panels.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  await hubInteraction.deferReply({ flags: MessageFlags.Ephemeral });
+  const type = hubInteraction.options?.getString?.('type', true);
+  const targetChannel = hubInteraction.options?.getChannel?.('channel') || hubInteraction.channel;
+  const pingRole = hubInteraction.options?.getRole?.('ping_role') || null;
+  try {
+    const msg = await postPanelByType(hubInteraction, type, targetChannel, pingRole);
+    await hubInteraction.editReply({ content: `✅ ${msg}` });
+  } catch (err) {
+    await hubInteraction.editReply({ content: `❌ Could not post panel (${err.message}).` });
+  }
 }
 
 async function handleStaffApplicationPanelCommand(interaction) {
@@ -7526,6 +7662,7 @@ function getSlashPayload() {
     retriggerCommand.toJSON(),
     sessionCommand.toJSON(),
     ticketCommand.toJSON(),
+    panelCommand.toJSON(),
     staffCommand.toJSON(),
     suggestionCommand.toJSON(),
     suggestCommand.toJSON(),
@@ -8611,10 +8748,12 @@ async function createTicketForUser(client, interaction, catKey, reason) {
     };
 
     // Top ping for department role & user (partnership and staff_partnership NEVER ping staff roles)
-    let deptPingRoleId = null;
-    if (catKey === 'ia') deptPingRoleId = '1341932342343897269';
-    else if (catKey === 'general') deptPingRoleId = '1236052056201105418';
-    else if (catKey === 'highrank') deptPingRoleId = '1341932333741244476';
+    let deptPingRoleId = cat.pingRoleId || null;
+    if (!deptPingRoleId) {
+      if (catKey === 'ia') deptPingRoleId = '1341932342343897269';
+      else if (catKey === 'general') deptPingRoleId = '1236052056201105418';
+      else if (catKey === 'highrank') deptPingRoleId = '1341932333741244476';
+    }
 
     const topPingContent = deptPingRoleId
       ? `<@&${deptPingRoleId}> <@${interaction.user.id}>`
@@ -10016,6 +10155,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       } else if (interaction.commandName === 'antinuke') {
         await handleAntiNukeCommand(interaction);
+        return;
+      } else if (interaction.commandName === 'panel') {
+        await handlePanelHubCommand(interaction);
         return;
       } else if (interaction.commandName === 'verify') {
         await handleVerifyCommand(interaction);
@@ -11422,6 +11564,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && (interaction.customId === 'app_start_ingame' || interaction.customId === 'app_start_discord')) {
       await startStaffApplication(interaction, interaction.customId);
+      return;
+    }
+
+    // ── /panel hub gray buttons → post that panel in this channel ──
+    if (interaction.isButton() && interaction.customId.startsWith('panel_post_')) {
+      const hubMember = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      if (!isStaffMember(hubMember) && !hubMember?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ You must have staff permissions to post panels.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+      const hubType = interaction.customId.replace('panel_post_', '');
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const msg = await postPanelByType(interaction, hubType, interaction.channel, null);
+        await interaction.editReply({ content: `✅ ${msg}` });
+      } catch (err) {
+        await interaction.editReply({ content: `❌ Could not post panel (${err.message}).` });
+      }
       return;
     }
 
