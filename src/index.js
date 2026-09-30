@@ -31,6 +31,7 @@ import {
   ThumbnailBuilder
 } from 'discord.js';
 import { fileURLToPath } from 'node:url';
+import { RULES_PAGES } from './rules.js';
 import http from 'node:http';
 import path from 'node:path';
 import { fork } from 'node:child_process';
@@ -7048,6 +7049,90 @@ function buildPanelHubCard() {
   return card;
 }
 
+// ── Game Rules panel (paginated V2) ───────────────────────────────────────────
+const RULES_ARROW_LEFT = { id: '1554995417681362964', name: 'left' };
+const RULES_ARROW_RIGHT = { id: '1554995281668612196', name: 'right' };
+
+function rulesArrow(customId, emoji, label, disabled) {
+  const btn = new ButtonBuilder()
+    .setCustomId(customId)
+    .setLabel(label)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(disabled);
+  try { btn.setEmoji(emoji); } catch { /* emoji missing — the text label still works */ }
+  return btn;
+}
+
+function buildRulesCard(pageIndex = 0, guild = null) {
+  const total = RULES_PAGES.length;
+  const page = Math.max(0, Math.min(total - 1, Number(pageIndex) || 0));
+  const section = RULES_PAGES[page];
+  const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+
+  const card = new ContainerBuilder();
+  if (bannerExists) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL('attachment://information_banner.png')
+      )
+    );
+  }
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `# Alabama State Roleplay — Rules & Regulations\n` +
+      `*Read these before you queue up. Breaking them can lead to warnings, removals, or bans.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  // Running rule number across every page (R-1, R-2, ... R-55).
+  let ruleNumber = 0;
+  for (let i = 0; i < page; i++) ruleNumber += RULES_PAGES[i].rules.length;
+
+  const body = section.rules
+    .map((r) => `**R-${++ruleNumber} — ${r.t}**\n> ${r.d}`)
+    .join('\n\n');
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`## ${section.title}\n*${section.blurb}*\n\n${body}`)
+  );
+
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      rulesArrow(`rules_page_${page - 1}`, RULES_ARROW_LEFT, 'Previous', page <= 0),
+      new ButtonBuilder()
+        .setCustomId('rules_page_indicator')
+        .setLabel(`${section.title}  •  Page ${page + 1} of ${total}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      rulesArrow(`rules_page_${page + 1}`, RULES_ARROW_RIGHT, 'Next', page >= total - 1)
+    )
+  );
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `-# Alabama State Roleplay • Game Rules • Use the arrows to turn pages`
+    )
+  );
+  return card;
+}
+
+/** Left / right arrow handler for the rules panel. */
+async function handleRulesNav(interaction) {
+  if (!interaction.customId.startsWith('rules_page_')) return false;
+  const target = Number(interaction.customId.replace('rules_page_', ''));
+  if (!Number.isFinite(target)) return false;
+  try {
+    await interaction.update({
+      components: [buildRulesCard(target, interaction.guild).toJSON()],
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (err) {
+    console.warn(`Rules nav failed: ${err.message}`);
+  }
+  return true;
+}
+
 const SHOP_BANNER_PATH = fileURLToPath(new URL('./assets/shop_banner.webp', import.meta.url));
 
 // Tier emoji IDs supplied by the server. If one is ever removed the panel
@@ -7248,15 +7333,20 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     saveAppPanels();
     return `Staff Application Panel posted in <#${channel.id}>.`;
   }
-  if (t === 'information' || t === 'info') {
+  if (t === 'information' || t === 'info' || t === 'rules') {
     const channel = targetChannel || postInteraction.channel;
     const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
     const files = bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [];
-    const card = buildInformationCard('info_overview', postInteraction.guild, true);
-    const sent = await channel.send({ components: [card.toJSON()], files, flags: MessageFlags.IsComponentsV2 });
+    const card = buildRulesCard(0, postInteraction.guild);
+    const sent = await channel.send({
+      allowedMentions: { parse: [] },
+      components: [card.toJSON()],
+      files,
+      flags: MessageFlags.IsComponentsV2
+    });
     lastInfoPanelByChannel.set(`${postInteraction.guildId}:${channel.id}`, sent.id);
     saveInfoPanels();
-    return `Information panel posted in <#${channel.id}>.`;
+    return `Game Rules panel posted in <#${channel.id}>.`;
   }
   if (t === 'shop') {
     const channel = targetChannel || postInteraction.channel;
@@ -12896,6 +12986,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleShopSelect(interaction);
       return;
     }
+
+    // ─────────────── Game Rules: left / right arrows ───────────────
+    if (interaction.isButton() && (await handleRulesNav(interaction))) return;
 
     // ── /panel hub gray buttons → post that panel in this channel ──
     if (interaction.isButton() && interaction.customId.startsWith('panel_post_')) {
