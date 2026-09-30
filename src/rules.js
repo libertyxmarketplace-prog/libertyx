@@ -24,15 +24,15 @@ export const RULES_PAGES = [
     rules: [
       { t: 'Unauthorised Markings', d: 'Liveries, callsigns, vehicles, equipment, or titles reserved for Command, Division, Supervisor, or specialist teams may only be used by authorised ranked members of that department.' },
       { t: 'Equipment Purpose', d: 'Department equipment must be used realistically and only for its intended job. Using it to troll, block roleplay, or create lag is not permitted. Spike strips must never be placed directly in front of a moving vehicle without fair warning, and may not be used to trap stationary vehicles.' },
-      { t: 'Personnel Impersonation', d: 'Impersonating supervisors, command, specialist units, or any ranked member is prohibited - including restricted vehicles, ranked name tags, and ranked callsigns. LED light bars are limited to authorised FHP Crown Vics, and unapproved agencies (FBI, NSA, CIA, Border Patrol, etc.) may not be roleplayed.' },
+      { t: 'Personnel Impersonation', d: 'Impersonating supervisors, command, specialist units, or any ranked member is prohibited - including restricted vehicles, ranked name tags, and ranked callsigns. LED light bars are limited to authorised Tuscaloosa Highway Patrol Crown Vics, and unapproved agencies (FBI, NSA, CIA, Border Patrol, etc.) may not be roleplayed.' },
       { t: 'Callsigns', d: "Ranked personnel follow their department's callsign policy. Unranked members may only use numerical callsigns - letters are reserved for ranked positions." },
-      { t: 'Uniform Standards', d: 'Wear the uniform of the department you are on: Tuscaloosa Police uniforms for police, Tuscaloosa Fire Department uniforms for Fire/Rescue, and DOT uniforms while operating as FDOT. Mixing departments is not permitted.' },
+      { t: 'Uniform Standards', d: 'Wear the uniform of the department you are on: Tuscaloosa Police uniforms for police, Tuscaloosa Fire Department uniforms for Fire/Rescue, and ALDOT uniforms while operating as the Alabama Department of Transportation. Mixing departments is not permitted.' },
       { t: 'Private Security Scope', d: 'Security personnel are not law enforcement. No traffic stops, arrests, pursuits, or emergency equipment to bypass traffic law.' },
-      { t: 'Fire & EMS Deployment', d: 'Fire and EMS apparatus are for emergency response, station duties, training, public events, approved standbys, department business, and reasonable breaks - never general patrol. Only apparatus capable of off-road access may work HRP terrain.' },
-      { t: 'DOT Exclusivity', d: 'Only official FSCO businesses may run non-DOT roleplay on the DOT team, and it must relate to that business.' },
+      { t: 'Fire & EMS Deployment', d: 'Fire and EMS apparatus are for emergency response, station duties, training, public events, approved standbys, department business, and reasonable breaks - never general patrol. Only apparatus capable of off-road access may work rural Alabama terrain.' },
+      { t: 'ALDOT Exclusivity', d: 'Only official Tuscaloosa businesses may run non-ALDOT roleplay on the ALDOT team, and it must relate to that business.' },
       { t: 'Undercover Work', d: 'Undercover vehicles are for authorised ranked personnel within department guidelines. Private vehicles may not be used as undercover vehicles without department approval. Unmarked plates, plain clothes, and detective uniforms are restricted to approved operations.' },
       { t: 'On-Duty Conduct', d: 'While on a department team you may not commit crimes, act unrealistically, or act against your duties. Vehicle misuse, ignoring procedure, and abusing access, equipment, or privileges is prohibited.' },
-      { t: 'Scene Authority', d: 'Law enforcement commands law enforcement scenes, Fire & EMS commands fire and medical scenes, and FDOT commands approved work zones. Reasonable compliance with safety instructions is required.' },
+      { t: 'Scene Authority', d: 'Law enforcement commands law enforcement scenes, Fire & EMS commands fire and medical scenes, and ALDOT commands approved roadway work zones. Reasonable compliance with safety instructions is required.' },
       { t: 'Unranked Units', d: 'Unranked units are exempt from some department regulations, but on an active scene they follow the primary officer and any supervisor. An unranked primary officer holds command until relieved.' }
     ]
   },
@@ -40,14 +40,14 @@ export const RULES_PAGES = [
     title: 'Criminal Activity',
     blurb: 'What is expected of criminal-roleplay characters in Tuscaloosa County.',
     rules: [
-      { t: 'Safe Zones', d: 'No criminal activity in safe zones: Fire/Rescue stations, law enforcement facilities including the prison, the DMV, DOT facilities, and civilian spawn locations.' },
+      { t: 'Safe Zones', d: 'No criminal activity in safe zones: Fire/Rescue stations, law enforcement facilities including the prison, the DMV, ALDOT facilities, and civilian spawn locations.' },
       { t: 'Provoking Enforcement', d: 'Do not deliberately bait officers into stops or pursuits without a believable purpose - no reckless driving for attention, circling police scenes, or disrupting operations.' },
       { t: 'Fleeing a Traffic Stop', d: 'Fleeing a lawful stop needs a believable reason: active warrants, contraband, ongoing criminal activity, or fear of arrest for another crime. Wanting a pursuit or not wanting a ticket is not a valid reason.' },
       { t: 'Abduction Roleplay', d: 'Kidnappings need a believable purpose and may not be random. You may opt out before the scenario begins - once it starts and you have committed, you may not drop out simply because you changed your mind.' },
       { t: 'Hostage Roleplay', d: 'Hostage scenarios need proper development and at least two criminals. No random executions - escalate believably and offer negotiation chances where reasonable. Opting out follows the same rule as abductions.' },
       { t: 'Interfering with Services', d: 'Do not block apparatus bays or responding vehicles, jump on emergency vehicles, enter scenes without authorisation, prevent EMS treatment, or disrupt suppression and rescue operations.' },
       { t: 'Group Limits', d: 'Criminal roleplay is limited to groups of four (4) or fewer. Five (5) or more participants in criminal activity is not permitted.' },
-      { t: 'Terrain Evasion', d: 'HRP, the mountains, and the river may not be used solely to escape law enforcement.' }
+      { t: 'Terrain Evasion', d: 'The mountains, the river, and rural state parks may not be used solely to escape law enforcement.' }
     ]
   },
 {
@@ -58,8 +58,8 @@ export const RULES_PAGES = [
       { t: 'Pursuit Standards', d: 'Pursuits must prioritise realism, public safety, and fair roleplay. Tactics that create unnecessary danger, endanger civilians, or force an outcome are prohibited, as are unrealistic tactics that would not happen in the real world.' },
       { t: 'Off-Roading', d: 'Vehicles may only go where they could realistically function. Sports cars stay off-road, passenger cars do not climb mountains, and high-speed off-roading is prohibited.' },
       { t: 'Warning Devices', d: 'Horn, ELS siren, and airhorn spam - or use without a believable reason for more than 5-10 seconds - is prohibited.' },
-      { t: 'Specialised Equipment', d: 'Lawnmowers operate on grass and sidewalks only, cross at pedestrian crossings, and never take part in pursuits. ATVs and UTVs are limited to HRP and the farms, must be trailered between authorised areas, may only run on closed roads during approved events, and any pursuit involving them stays inside HRP.' },
-      { t: 'Restricted Vehicles', d: 'Banned and restricted vehicles are listed in ESN-Information. Restricted vehicles may not be used.' }
+      { t: 'Specialised Equipment', d: 'Lawnmowers operate on grass and sidewalks only, cross at pedestrian crossings, and never take part in pursuits. ATVs and UTVs are limited to rural Alabama, the farms, and the mountain trails, must be trailered between authorised areas, may only run on closed roads during approved events, and any pursuit involving them stays inside Tuscaloosa County.' },
+      { t: 'Restricted Vehicles', d: 'Banned and restricted vehicles are listed in the vehicle information channel. Restricted vehicles may not be used.' }
     ]
   },
 {

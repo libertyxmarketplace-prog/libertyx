@@ -6491,10 +6491,10 @@ function buildInformationCard(section = 'info_overview', guild = null, includeBa
         `## Server Schedule & Sessions\n` +
         `> Current patrol schedules, session votes, and server start times are posted in <#1232495212333498455>.\n\n` +
         `## How to Join the Server\n` +
-        `> 1. Open **Emergency Response: Liberty County** on Roblox.\n` +
+        `> 1. Open **Emergency Response: Alabama** on Roblox.\n` +
         `> 2. Navigate to **Servers** ➔ **Join Server** ➔ Server Code: \`ALABAM\`\n\n` +
-        `## Callsigns & Sonoran Radio\n` +
-        `> Department officers must display an approved callsign and join the active Sonoran CAD & Radio during patrols.`
+        `## Callsigns & Alabama CAD & Radio\n` +
+        `> Department officers must display an approved callsign and join the active Alabama CAD & Radio during patrols.`
       )
     );
   } else {
