@@ -358,8 +358,19 @@ const LOA_CHANNEL_ID = '1232495214162214922';
 const LOA_ACTION_CHANNEL_ID = '1536215478584868874';
 // Only these management roles (or Administrators) may Approve / Deny an LOA.
 const LOA_APPROVER_ROLE_IDS = ['1341931745351700534', '1341932322970276022'];
-// Roles that stay on the member while their LOA is active (@everyone + the keep role).
+// Roles that stay on the member while their LOA is active (@everyone + Staff Team).
 const LOA_KEEP_ROLE_IDS = ['1232495211490443285', '1341965114101731418'];
+// Only these staff/rank roles are suspended during an LOA. Everything else
+// (colour, region, cosmetic, event roles) is untouched so the member can still
+// see the whole server while they are away.
+const LOA_STAFF_ROLE_IDS = [
+  ...LOA_APPROVER_ROLE_IDS,
+  '1341931745351700534', '1341931438043430953', '1341931746949857353', '1546706186047590451',
+  '1554680683924824125', '1346603583432425502',
+  '1236052056201105418', '1341932342343897269', '1341932333741244476'
+];
+const LOA_STAFF_ROLE_NAME =
+  /(staff|admin|mod\b|moderator|supervisor|director|executive|management|trainee|junior\s*mod|senior\s*mod|trial\s*mod|head\s*admin|co-?owner|owner|high\s*rank|lead|hr\b)/i;
 // Renders as: 𝑳𝑶𝑨┃
 const LOA_NICK_PREFIX = '\u{1D473}\u{1D476}\u{1D468}\u2503';
 // Banner is uploaded from our own assets so it can never expire.
@@ -7269,8 +7280,12 @@ async function applyLoaToMember(guild, userId) {
   const blockedRoles = [];
   for (const role of member.roles.cache.values()) {
     if (keep.has(role.id) || role.managed) continue;
+    // Only staff/rank roles are suspended — the member keeps every other role
+    // so they can still see the whole server while they are on leave.
+    const isStaffRole = LOA_STAFF_ROLE_IDS.includes(role.id) || LOA_STAFF_ROLE_NAME.test(role.name || '');
+    if (!isStaffRole) continue;
     try {
-      await member.roles.remove(role.id, 'LOA approved — temporary role removal');
+      await member.roles.remove(role.id, 'LOA approved — staff roles suspended');
       removedRoleIds.push(role.id);
     } catch (err) {
       blockedRoles.push(role.name);
@@ -8158,6 +8173,38 @@ function setVoteTimer(client, vote) {
   );
 }
 
+/** True only when the vote card is genuinely gone (deleted), not a blip. */
+function isVoteMessageGone(err) {
+  const code = err?.code ?? err?.rawError?.code;
+  const msg = String(err?.message ?? err ?? '');
+  return code === 10008 || /Unknown Message|Missing Access|Unknown Channel/i.test(msg);
+}
+
+/**
+ * Vote lookup that self-heals. If a vote ever falls out of memory (restart,
+ * failed boot restore, transient error) it is pulled back from votes.json,
+ * re-armed and its card refreshed — so clicking Vote always works.
+ */
+async function getVoteById(client, voteId) {
+  let vote = activeVotes.get(voteId);
+  if (vote) return vote;
+  try {
+    if (!voteId || !fs.existsSync(VOTES_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(VOTES_FILE, 'utf8'));
+    const stored = raw[voteId];
+    if (stored && !stored.started && !stored.expired && !stored.cancelled) {
+      vote = stored;
+      activeVotes.set(voteId, vote);
+      setVoteTimer(client, vote);
+      console.log(`[votes] recovered vote ${voteId} from disk — buttons are live again.`);
+      void editVoteMessage(client, vote);
+    }
+  } catch (err) {
+    console.warn(`[votes] could not recover ${voteId}: ${err.message}`);
+  }
+  return vote ?? null;
+}
+
 // Boot: restore persisted votes, re-fetch their messages, re-arm timers.
 async function restoreVotes(client) {
   loadVotes();
@@ -8166,10 +8213,19 @@ async function restoreVotes(client) {
       activeVotes.delete(id);
       continue;
     }
-    const ok = await editVoteMessage(client, vote);
-    if (!ok) {
-      activeVotes.delete(id); // message deleted while we were down
-      continue;
+    // Only drop the vote when its card really is gone. A rate limit, a slow
+    // fetch or a momentary network error must NEVER kill a live vote.
+    try {
+      const channel = await client.channels.fetch(vote.channelId);
+      await channel.messages.fetch(vote.messageId);
+      await editVoteMessage(client, vote);
+    } catch (err) {
+      if (isVoteMessageGone(err)) {
+        console.log(`[votes] ${id} card was deleted — dropping it.`);
+        activeVotes.delete(id);
+        continue;
+      }
+      console.warn(`[votes] ${id} card not reachable (${err.message}) — keeping the vote alive.`);
     }
     setVoteTimer(client, vote);
     await checkVoteGoal(client, vote);
@@ -8326,7 +8382,7 @@ function applyPostpone(client, vote, ms) {
 // Modal submit for the "Custom…" postpone length.
 async function handlePostponeModal(client, interaction) {
   const id = interaction.customId.replace('vote_delay_custom_', '');
-  const vote = activeVotes.get(id);
+  const vote = await getVoteById(client, id);
   if (!vote || vote.started || vote.expired) {
     await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
     return;
@@ -11059,7 +11115,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_click_')) {
-      const vote = activeVotes.get(interaction.customId.replace('vote_click_', ''));
+      const vote = await getVoteById(client, interaction.customId.replace('vote_click_', ''));
       if (!vote || vote.started || vote.expired || vote.cancelled) {
         await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
         return;
@@ -11079,7 +11135,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_start_')) {
-      const vote = activeVotes.get(interaction.customId.replace('vote_start_', ''));
+      const vote = await getVoteById(client, interaction.customId.replace('vote_start_', ''));
       if (!vote || vote.started || vote.expired || vote.cancelled) {
         await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
         return;
@@ -11093,7 +11149,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_postpone_')) {
-      const vote = activeVotes.get(interaction.customId.replace('vote_postpone_', ''));
+      const vote = await getVoteById(client, interaction.customId.replace('vote_postpone_', ''));
       if (!vote || vote.started || vote.expired || vote.cancelled) {
         await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
         return;
@@ -11107,7 +11163,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('vote_delay_custom_')) {
-      const vote = activeVotes.get(interaction.customId.replace('vote_delay_custom_', ''));
+      const vote = await getVoteById(client, interaction.customId.replace('vote_delay_custom_', ''));
       if (!vote || vote.started || vote.expired || vote.cancelled) {
         await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
         return;
@@ -11140,7 +11196,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const parts = interaction.customId.split('_');
       const voteId = parts[2];
       const key = parts[3];
-      const vote = activeVotes.get(voteId);
+      const vote = await getVoteById(client, voteId);
       // NOTE: the vote card is a Components V2 message - it can never be
       // updated with `content`, so all feedback is sent as an ephemeral reply.
       if (!vote || vote.started || vote.expired || vote.cancelled) {
