@@ -8142,22 +8142,9 @@ async function notifyHostReady(client, vote) {
     files: hasBanner ? [new AttachmentBuilder(bannerPath, { name: 'vote_banner.png' })] : [],
     flags: MessageFlags.IsComponentsV2
   });
+  // DM only — the host's "session ready" card is never posted in the channel.
   if (!ok) {
-    // DMs closed - fall back to a channel ping so the host is never stranded.
-    try {
-      const channel = await client.channels.fetch(vote.channelId);
-      await channel.send({
-        content: `<@${vote.hostId}> your session vote reached **${Object.keys(vote.voters).length}/${vote.needed}** - decide below.`,
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`vote_start_${vote.id}`).setLabel('Start Session').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`vote_postpone_${vote.id}`).setLabel('Postpone').setStyle(ButtonStyle.Secondary)
-          )
-        ]
-      });
-    } catch {
-      // Channel gone - nothing else we can do.
-    }
+    console.log(`[votes] could not DM the ready card to host ${vote.hostId} (DMs are probably closed).`);
   }
 }
 
@@ -8420,8 +8407,10 @@ async function startSessionFromVote(client, vote, interaction) {
   // Remember the final voter list so /session shutdown can DM them later.
   lastVoteVotersByChannel.set(`${vote.guildId}:${vote.channelId}`, Object.keys(vote.voters ?? {}));
 
-  // Flip every live Session Information panel in this guild ORANGE -
-  // the side bar + status pill now read "Session On", alerting everyone the session is live.
+  // Flip every live Session Information panel in this guild to LIVE so the
+  // status pill reads "Session On". If none exists yet, post the session panel
+  // itself — that card is the only thing that goes out when a vote ends.
+  let flipped = 0;
   for (const key of [...liveSessions.keys()]) {
     if (!key.startsWith(`${vote.guildId}:`)) continue;
     sessionLivePanels.add(key);
@@ -8433,8 +8422,33 @@ async function startSessionFromVote(client, vote, interaction) {
         components: [buildContainer(stats, { sessionLive: true }).toJSON()],
         flags: MessageFlags.IsComponentsV2
       });
+      flipped += 1;
     } catch {
       // Panel already gone - skip.
+    }
+  }
+
+  if (!flipped) {
+    try {
+      const ch = await client.channels.fetch(vote.channelId);
+      if (ch?.isTextBased()) {
+        const fresh = await fetchServerStats();
+        fresh.staff = staffRoleCount(vote.guildId) ?? fresh.staff;
+        const sent = await ch.send({
+          components: [buildContainer(fresh, { sessionLive: true }).toJSON()],
+          allowedMentions: { parse: [] },
+          flags: MessageFlags.IsComponentsV2
+        });
+        const panelKey = `${vote.guildId}:${ch.id}`;
+        lastPanelByChannel.set(panelKey, sent.id);
+        savePanels();
+        sessionLivePanels.add(panelKey);
+        const key = liveKey(vote.guildId, ch.id, sent.id);
+        liveSessions.set(key, { channelId: ch.id, messageId: sent.id });
+        startLiveRefresh(key, sent, ch.id);
+      }
+    } catch (err) {
+      console.warn('Could not post the session panel:', err.message);
     }
   }
 
@@ -8447,25 +8461,11 @@ async function startSessionFromVote(client, vote, interaction) {
     // Already gone - fine.
   }
 
-
-  // Announce session launch in channel with actual role ping!
-  try {
-    const pubChannel = await client.channels.fetch(vote.channelId);
-    if (pubChannel && pubChannel.isTextBased()) {
-      await pubChannel.send({
-        content: `<@&${vote.roleId}> 🚀 **The session is starting now!** Hop into the server and join the patrol.\n**Join URL:** <${link}>`,
-        allowedMentions: { roles: [vote.roleId] }
-      });
-    }
-  } catch (err) {
-    console.warn('Could not post session start ping:', err.message);
-  }
-
   activeVotes.delete(vote.id);
   saveVotes();
   const pingText = formatRoleMention(vote.roleId, vote.guildId);
   await interaction.reply({
-    content: `✅ Session started - **${delivered}/${count}** voters were notified in DMs${pingText ? ` (role: ${pingText})` : ''}. Vote embed removed.`,
+    content: `✅ Session started - the session panel is now live${flipped ? ' (existing panel updated)' : ''}. **${delivered}/${count}** voters were notified in DMs${pingText ? ` (role: ${pingText})` : ''}. Vote embed removed.`,
     flags: MessageFlags.Ephemeral
   });
 }
