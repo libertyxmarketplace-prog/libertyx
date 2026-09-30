@@ -11663,7 +11663,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const chosen = interaction.values?.[0] || 'info_overview';
       const isEphemeral = Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral));
 
-      // "Roleplay Rules & Regulations" opens the full paginated Game Rules panel.
+      // "Roleplay Rules & Regulations" opens the paginated Game Rules — privately,
+      // so only the person who picked it sees the rules.
       if (chosen === 'info_roleplay_rules') {
         const rulesCard = buildRulesCard(0, interaction.guild);
         if (isEphemeral) {
@@ -11672,10 +11673,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             flags: MessageFlags.IsComponentsV2
           });
         } else {
-          // Public panel: swap the panel itself so everyone can browse the pages.
-          await interaction.update({
+          const bannerExists = fs.existsSync(INFORMATION_BANNER_PATH);
+          await interaction.reply({
             components: [rulesCard.toJSON()],
-            flags: MessageFlags.IsComponentsV2
+            // Ephemeral messages cannot reuse the panel's attachment.
+            files: bannerExists ? [new AttachmentBuilder(INFORMATION_BANNER_PATH, { name: 'information_banner.png' })] : [],
+            flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2
           });
         }
         return;
