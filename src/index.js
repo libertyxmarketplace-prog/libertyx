@@ -7440,7 +7440,7 @@ async function startSessionFromVote(client, vote, interaction) {
     if (pubChannel && pubChannel.isTextBased()) {
       await pubChannel.send({
         content: `<@&${vote.roleId}> 🚀 **The session is starting now!** Hop into the server and join the patrol.\n**Join URL:** <${link}>`,
-        allowedMentions: { roles: [vote.roleId], parse: ['roles'] }
+        allowedMentions: { roles: [vote.roleId] }
       });
     }
   } catch (err) {
@@ -9716,7 +9716,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           await existingMsg.edit({
             content: pingMention || undefined,
-            allowedMentions: selectedRole ? { roles: [selectedRole.id], parse: ['roles'] } : { parse: [] },
+            allowedMentions: selectedRole ? { roles: [selectedRole.id] } : { parse: [] },
             components: [buildContainer(stats, { pingMention }).toJSON()],
             flags: MessageFlags.IsComponentsV2
           });
@@ -9740,7 +9740,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         sent = await channel.send({
           content: pingMention || undefined,
-          allowedMentions: selectedRole ? { roles: [selectedRole.id], parse: ['roles'] } : { parse: [] },
+          allowedMentions: selectedRole ? { roles: [selectedRole.id] } : { parse: [] },
           components: [buildContainer(stats, { pingMention }).toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
@@ -9823,13 +9823,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
           ? [new AttachmentBuilder(VOTE_BANNER_PATH, { name: 'vote_banner.png' })]
           : [];
         try {
-          sent = await interaction.channel.send({
-            content: `<@&${role.id}>`,
-            allowedMentions: { roles: [role.id], parse: ['roles'] },
-            components: [buildVoteContainer(vote).toJSON()],
-            files: voteFiles,
-            flags: MessageFlags.IsComponentsV2
-          });
+          try {
+            sent = await interaction.channel.send({
+              content: `<@&${role.id}>`,
+              // NOTE: `parse` and `roles` are mutually exclusive — never send both.
+              allowedMentions: { roles: [role.id] },
+              components: [buildVoteContainer(vote).toJSON()],
+              files: voteFiles,
+              flags: MessageFlags.IsComponentsV2
+            });
+          } catch (sendErr) {
+            // Self-heal: if the role ping itself is rejected (stale build, unmentionable
+            // role, Discord merging a default parse, etc.), still post the vote card
+            // with mentions disabled so the vote is never blocked by a ping.
+            const msg = String(sendErr?.message ?? sendErr);
+            if (!/allowed_mentions|Invalid Form Body|parse/i.test(msg)) throw sendErr;
+            console.warn(`Vote ping rejected (${msg}) - retrying without role ping.`);
+            sent = await interaction.channel.send({
+              components: [buildVoteContainer(vote).toJSON()],
+              files: voteFiles,
+              allowedMentions: { parse: [] },
+              flags: MessageFlags.IsComponentsV2
+            });
+          }
         } catch (err) {
           await interaction.editReply({
             content: `❌ I could not post the vote card here (${err.message}). Make sure I have **Send Messages** + **Embed Links** in this channel, or run /session vote somewhere I can post.`
