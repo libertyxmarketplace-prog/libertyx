@@ -80,7 +80,7 @@ export const RULES_PAGES = [
       { t: 'Interfering with Staff', d: 'Interfering with staff duties, moderation actions, or any staff scene is prohibited.' },
       { t: 'Loopholes', d: 'Exploiting technicalities, unclear wording, or omissions to gain an advantage or dodge punishment is prohibited.' },
       { t: 'Alternate Accounts', d: 'Alts may not be used to evade punishment, bypass restrictions, gain advantages, or steer roleplay.' },
-      { t: 'Impersonating H95 Staff', d: 'Impersonating H95 staff, Management, Leadership, or PRC staff with the intent to deceive is prohibited.' },
+      { t: 'Impersonating Staff', d: 'Impersonating Alabama State Roleplay staff, Management, or Leadership with the intent to deceive is prohibited.' },
       { t: 'Misuse of !mod', d: 'False reports, fabricated evidence, or misleading staff during investigations is prohibited. Use !mod for real issues - not for refreshes, loads, or teleports.' },
       { t: 'Common Sense', d: 'Use common sense. Clearly disruptive, abusive, unrealistic, or harmful behaviour may be actioned even if it is not written here.' },
       { t: 'Adults Only', d: 'Any roleplay depicting a child or anyone under 18 is not allowed.' },
