@@ -747,7 +747,9 @@ const TICKET_CONFIG = {
       name: 'Alabama Department Support',
       shortName: 'Department Support',
       categoryId: '1553589854200266823',
-      pingRoleId: '1341931745351700534',
+      // Both department roles are pinged when this ticket type opens.
+      pingRoleIds: ['1554680683924824125', '1346603583432425502'],
+      pingRoleId: '1554680683924824125',
       desc: 'Reports handled by department staff. Opens in the department support category.'
     },
     partnership: {
@@ -1445,6 +1447,13 @@ function buildVoteContainer(vote) {
   if (banner) {
     box.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner))
+    );
+  }
+  // Components V2 does not allow the legacy `content` field, so the ping role
+  // lives INSIDE the card as a hidden spoiler line (persists across refreshes).
+  if (vote.pingMention) {
+    box.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`||${vote.pingMention}||`)
     );
   }
   box.addTextDisplayComponents(
@@ -4742,6 +4751,22 @@ let commandLogsInitialized = false;
 
 const EXPLOIT_KEYWORDS = /\b(exploit|exploiting|exploiter|hack|hacker|hacking|speed|fly|flying|fling|flinging|godmode|god\s*mode|kill\s*all|killall|noclip|btools|invis|invisible|tp\s*kill|crasher)\b/i;
 
+/**
+ * Components V2 rejects the legacy `content` field, so alert headlines are
+ * rendered INSIDE the card instead. Returns a NEW container (the original card
+ * is left untouched) with a headline block spliced onto the top.
+ */
+function withAlertHeadline(card, headline) {
+  const clone = new ContainerBuilder();
+  clone.addTextDisplayComponents(new TextDisplayBuilder().setContent(headline));
+  try {
+    clone.spliceComponents(1, 0, ...(card.toJSON().components || []));
+  } catch (err) {
+    console.warn(`Could not clone alert card: ${err.message}`);
+  }
+  return clone;
+}
+
 async function triggerExploitAlert(discordClient, alertData) {
   const { suspect, suspectRobloxId, reason, detectionSource, evidence, actionTaken } = alertData;
   console.log(`[EXPLOIT DETECTED] Suspect: ${suspect} | Source: ${detectionSource} | Reason: ${reason}`);
@@ -4807,8 +4832,9 @@ async function triggerExploitAlert(discordClient, alertData) {
       const secChan = await discordClient.channels.fetch('1277365829247307857').catch(() => null);
       if (secChan && secChan.isTextBased()) {
         await secChan.send({
-          content: '🚨 **URGENT EXPLOITER ALERT** - Staff response required!',
-          components: [card.toJSON()],
+          allowedMentions: { parse: [] },
+          // Components V2 forbids `content` — headline lives inside the card.
+          components: [withAlertHeadline(card, '🚨 **URGENT EXPLOITER ALERT** — Staff response required!\n-# Full threat details below.').toJSON()],
           flags: MessageFlags.IsComponentsV2
         });
       }
@@ -4820,8 +4846,8 @@ async function triggerExploitAlert(discordClient, alertData) {
       if (onDuty && onDuty.length) {
         for (const staffMember of onDuty.slice(0, 4)) {
           await dmUser(discordClient, staffMember.user.id, {
-            content: `🚨 **Exploiter Alert in Server:** \`${suspect}\` detected via ${detectionSource}!`,
-            components: [card.toJSON()],
+            allowedMentions: { parse: [] },
+            components: [withAlertHeadline(card, `🚨 **Exploiter Alert in Server:** \`${suspect}\` detected via ${detectionSource}!\n-# Full threat details below.`).toJSON()],
             flags: MessageFlags.IsComponentsV2
           }).catch(() => null);
         }
@@ -6940,8 +6966,10 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     const panelKey = `${postInteraction.guildId}:${channel.id}`;
     if (pingMention) panelPingMentionByChannel.set(panelKey, pingMention);
     else panelPingMentionByChannel.delete(panelKey);
+    // NOTE: Components V2 forbids the legacy `content` field — the ping is
+    // already rendered INSIDE the card as a spoiler TextDisplay, so we only
+    // need allowedMentions here (that is what makes the in-card mention fire).
     const sent = await channel.send({
-      content: pingMention || undefined,
       allowedMentions: role ? { roles: [role.id] } : { parse: [] },
       components: [buildContainer(stats, { pingMention }).toJSON()],
       flags: MessageFlags.IsComponentsV2
@@ -6995,12 +7023,17 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
 }
 
 // ── /loa + -loa Leave of Absence system ──
-function buildLoaCard({ roblox, rank, start, end, reason, user, status = 'pending' }) {
+function buildLoaCard({ roblox, rank, start, end, reason, user, status = 'pending', ping = null }) {
   const card = new ContainerBuilder();
   if (LOA_BANNER_URL) {
     card.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(LOA_BANNER_URL))
     );
+  }
+  // Components V2 rejects the legacy `content` field, so any ping has to live
+  // INSIDE the card (allowedMentions still decides whether it actually fires).
+  if (ping) {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(ping));
   }
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -7043,6 +7076,78 @@ function buildLoaCard({ roblox, rank, start, end, reason, user, status = 'pendin
   return card;
 }
 
+// Posts an LOA card, trying the configured LOA channel first and falling back
+// to the channel the command was used in. Returns { ok, channelId, error }.
+async function postLoaCard(client, interactionOrMessage, cardOptions) {
+  const attempts = [];
+  let loaChannel = null;
+  try {
+    loaChannel = await client.channels.fetch(LOA_CHANNEL_ID);
+  } catch (err) {
+    console.warn(`LOA channel ${LOA_CHANNEL_ID} could not be fetched: ${err.message}`);
+  }
+  const fallbackChannel = interactionOrMessage.channel || null;
+  if (loaChannel) attempts.push(loaChannel);
+  if (fallbackChannel && fallbackChannel.id !== loaChannel?.id) attempts.push(fallbackChannel);
+
+  let lastError = null;
+  for (const target of attempts) {
+    try {
+      const sent = await target.send({
+        allowedMentions: { users: [cardOptions.user.id], parse: [] },
+        components: [buildLoaCard(cardOptions).toJSON()],
+        flags: MessageFlags.IsComponentsV2
+      });
+      return { ok: true, channelId: target.id, message: sent };
+    } catch (err) {
+      lastError = err;
+      console.warn(`Could not post LOA card in #${target.id} (${target.name || 'unknown'}): ${err.message}`);
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
+/**
+ * Rewrites an already-posted LOA card: strips the Approve/Deny/Conclude button
+ * row and appends the decision line, so a request can only be actioned once.
+ */
+function appendLoaDecision(cardJsonArray, statusLine) {
+  try {
+    const container = JSON.parse(JSON.stringify(cardJsonArray?.[0] || null));
+    if (!container) return null;
+    container.components = (container.components || []).filter((c) => c.type !== 1);
+    container.components.push({ type: 14, divider: true, spacing: 1 });
+    container.components.push({ type: 10, content: statusLine });
+    return container;
+  } catch (err) {
+    console.warn(`Could not update LOA card: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Edits an existing LOA card to show its decision. Tries discord.js first and
+ * falls back to a raw REST PATCH so a validation quirk can never block staff.
+ */
+async function editLoaCard(client, message, containerJson) {
+  if (!message || !containerJson) return false;
+  try {
+    await message.edit({ components: [containerJson], flags: MessageFlags.IsComponentsV2 });
+    return true;
+  } catch (err) {
+    console.warn(`Could not edit LOA card via discord.js (${err.message}) — retrying via REST.`);
+  }
+  try {
+    await client.rest.patch(Routes.channelMessage(message.channelId, message.id), {
+      body: { components: [containerJson] }
+    });
+    return true;
+  } catch (err) {
+    console.warn(`Could not edit LOA card via REST: ${err.message}`);
+    return false;
+  }
+}
+
 async function handleLoaCommand(interaction) {
   try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
   const roblox = interaction.options?.getString?.('roblox_username', true) || 'N/A';
@@ -7050,11 +7155,31 @@ async function handleLoaCommand(interaction) {
   const start = interaction.options?.getString?.('start_date', true) || 'N/A';
   const end = interaction.options?.getString?.('end_date', true) || 'N/A';
   const reason = interaction.options?.getString?.('reason', true) || 'N/A';
-  const target = await interaction.client.channels.fetch(LOA_CHANNEL_ID).catch(() => interaction.channel);
-  const card = buildLoaCard({ roblox, rank, start, end, reason, user: interaction.user });
-  const sent = await target.send({ content: `<@${interaction.user.id}> LOA submitted — pending management review.`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch((e) => null);
-  if (!sent) { await interaction.editReply({ content: '❌ Could not post LOA (missing channel access).' }); return; }
-  await interaction.editReply({ content: `✅ LOA submitted in <#${target.id}>. Format:\n\`\`\`\n### Leave of Absence (LOA) Format\n- Roblox Username: ${roblox}\n- Staff Rank: ${rank}\n- Start Date: ${start}\n- End Date: ${end}\n- Reason for LOA: ${reason}\n\`\`\`` });
+
+  const result = await postLoaCard(interaction.client, interaction, {
+    roblox, rank, start, end, reason, user: interaction.user,
+    ping: `<@${interaction.user.id}> submitted a Leave of Absence request — pending management review.`
+  });
+
+  const formatBlock =
+    '```\n### Leave of Absence (LOA) Format\n' +
+    `- Roblox Username: ${roblox}\n` +
+    `- Staff Rank: ${rank}\n` +
+    `- Start Date: ${start}\n` +
+    `- End Date: ${end}\n` +
+    `- Reason for LOA: ${reason}\n` +
+    '```';
+
+  if (!result.ok) {
+    await interaction.editReply({
+      content: `❌ Could not post the LOA card — ${result.error?.message || 'unknown error'}.\n` +
+        `Make sure I can **View Channel** + **Send Messages** in <#${LOA_CHANNEL_ID}>, then try again.\n\n${formatBlock}`
+    });
+    return;
+  }
+  await interaction.editReply({
+    content: `✅ LOA submitted in <#${result.channelId}>.\n\n${formatBlock}`
+  });
 }
 
 async function handlePanelHubCommand(hubInteraction) {
@@ -8792,16 +8917,19 @@ async function createTicketForUser(client, interaction, catKey, reason) {
       controlMessageId: null
     };
 
-    // Top ping for department role & user (partnership and staff_partnership NEVER ping staff roles)
-    let deptPingRoleId = cat.pingRoleId || null;
-    if (!deptPingRoleId) {
-      if (catKey === 'ia') deptPingRoleId = '1341932342343897269';
-      else if (catKey === 'general') deptPingRoleId = '1236052056201105418';
-      else if (catKey === 'highrank') deptPingRoleId = '1341932333741244476';
+    // Top ping for department roles & user (partnership and staff_partnership NEVER ping staff roles)
+    let deptPingRoleIds = Array.isArray(cat.pingRoleIds)
+      ? [...cat.pingRoleIds]
+      : (cat.pingRoleId ? [cat.pingRoleId] : []);
+    if (!deptPingRoleIds.length) {
+      if (catKey === 'ia') deptPingRoleIds = ['1341932342343897269'];
+      else if (catKey === 'general') deptPingRoleIds = ['1236052056201105418'];
+      else if (catKey === 'highrank') deptPingRoleIds = ['1341932333741244476'];
     }
+    deptPingRoleIds = [...new Set(deptPingRoleIds.filter(Boolean))];
 
-    const topPingContent = deptPingRoleId
-      ? `<@&${deptPingRoleId}> <@${interaction.user.id}>`
+    const topPingContent = deptPingRoleIds.length
+      ? `${deptPingRoleIds.map((id) => `<@&${id}>`).join(' ')} <@${interaction.user.id}>`
       : `<@${interaction.user.id}>`;
 
     const isStaffPartnership = catKey === 'staff_partnership';
@@ -8814,7 +8942,7 @@ async function createTicketForUser(client, interaction, catKey, reason) {
             : 'Welcome to your assistance ticket. Staff will assist you shortly!'),
       allowedMentions: {
         users: [interaction.user.id],
-        roles: deptPingRoleId ? [deptPingRoleId] : []
+        roles: deptPingRoleIds
       }
     });
 
@@ -9946,7 +10074,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (existingMsg) {
         try {
           await existingMsg.edit({
-            content: pingMention || undefined,
             allowedMentions: selectedRole ? { roles: [selectedRole.id] } : { parse: [] },
             components: [buildContainer(stats, { pingMention }).toJSON()],
             flags: MessageFlags.IsComponentsV2
@@ -9970,7 +10097,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       let sent;
       try {
         sent = await channel.send({
-          content: pingMention || undefined,
           allowedMentions: selectedRole ? { roles: [selectedRole.id] } : { parse: [] },
           components: [buildContainer(stats, { pingMention }).toJSON()],
           flags: MessageFlags.IsComponentsV2
@@ -10042,6 +10168,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           hostName: interaction.user.globalName ?? interaction.user.username,
           needed,
           roleId: role.id,
+          // Rendered as a hidden spoiler line INSIDE the card (V2 bans `content`).
+          pingMention: formatRoleMention(role.id, interaction.guildId),
           endTs: Date.now() + durationMs,
           ready: false,
           postponed: false,
@@ -10056,8 +10184,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           try {
             sent = await interaction.channel.send({
-              content: `<@&${role.id}>`,
               // NOTE: `parse` and `roles` are mutually exclusive — never send both.
+              // The mention itself sits inside the card (V2 forbids `content`).
               allowedMentions: { roles: [role.id] },
               components: [buildVoteContainer(vote).toJSON()],
               files: voteFiles,
@@ -10437,8 +10565,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const voteId = parts[2];
       const key = parts[3];
       const vote = activeVotes.get(voteId);
+      // NOTE: the vote card is a Components V2 message - it can never be
+      // updated with `content`, so all feedback is sent as an ephemeral reply.
       if (!vote || vote.started || vote.expired || vote.cancelled) {
-        await interaction.update({ content: 'This vote is no longer active.', components: [] });
+        await interaction.reply({ content: 'This vote is no longer active.', flags: MessageFlags.Ephemeral });
         return;
       }
       if (interaction.user.id !== vote.hostId) {
@@ -10447,13 +10577,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       const ms = VOTE_DURATIONS[key];
       if (!ms) {
-        await interaction.update({ content: 'Unknown postpone option.', components: [] });
+        await interaction.reply({ content: 'Unknown postpone option.', flags: MessageFlags.Ephemeral });
         return;
       }
       const endTs = applyPostpone(client, vote, ms);
-      await interaction.update({
-        content: `Postponed - vote now ends <t:${Math.floor(endTs / 1000)}:R>. I'll DM you again when the timer runs out.`,
-        components: []
+      await interaction.reply({
+        content: `Postponed — vote now ends <t:${Math.floor(endTs / 1000)}:R>. I'll DM you again when the timer runs out.`,
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
@@ -10609,6 +10739,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (ticket.report) {
         const r = ticket.report;
         const card = new ContainerBuilder();
+        // Ping lives inside the card — Components V2 rejects the `content` field.
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(`<@${interaction.user.id}> — full report details below.`)
+        );
         card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## Report Summary (Alabama Utilities)'));
         card.addSeparatorComponents(thinLine());
         card.addTextDisplayComponents(
@@ -10623,7 +10757,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `-# Auto-summarised by Alabama Utilities`
           )
         );
-        await interaction.channel.send({ content: `<@${interaction.user.id}> — full report details:`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        await interaction.channel.send({
+          allowedMentions: { users: [interaction.user.id], parse: [] },
+          components: [card.toJSON()],
+          flags: MessageFlags.IsComponentsV2
+        }).catch(() => null);
       }
 
       await interaction.reply({
@@ -10755,18 +10893,58 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // ─────────────── LOA buttons ───────────────
+    // ─────────────── LOA Approve / Deny / Conclude ───────────────
     if (interaction.isButton() && (interaction.customId === 'loa_approve' || interaction.customId === 'loa_deny' || interaction.customId === 'loa_conclude')) {
       const action = interaction.customId.replace('loa_', '');
-      try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
-      if (action === 'conclude') {
-        const done = buildLoaCard({ status: 'concluded' });
-        await interaction.message?.reply({ components: [done.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
-        await interaction.editReply({ content: '✅ LOA concluded — conclusion card posted with banner.' });
+      const loaMember = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+      if (!isStaffMember(loaMember) && !loaMember?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+        await interaction.reply({ content: '❌ Only management staff can action a Leave of Absence request.', flags: MessageFlags.Ephemeral });
         return;
       }
-      await interaction.message?.reply({ content: action === 'approve' ? `✅ LOA **approved** by <@${interaction.user.id}>.` : `❌ LOA **denied** by <@${interaction.user.id}>.` }).catch(() => null);
-      await interaction.editReply({ content: `✅ Recorded LOA decision: ${action}.` });
+      try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
+
+      // Recover the card JSON + the staff member who filed the LOA.
+      let cardJson = [];
+      try {
+        cardJson = (interaction.message?.components || []).map((c) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
+      } catch {}
+      const authorMatch = JSON.stringify(cardJson).match(/<@!?(\d{15,20})>/);
+      const loaAuthorId = authorMatch ? authorMatch[1] : null;
+      const mentionOpts = { users: loaAuthorId ? [loaAuthorId] : [], parse: [] };
+      const channel = interaction.channel;
+
+      if (action === 'conclude') {
+        const done = buildLoaCard({
+          status: 'concluded',
+          ping: loaAuthorId ? `<@${loaAuthorId}> your Leave of Absence has concluded.` : null
+        });
+        await channel?.send({ allowedMentions: mentionOpts, components: [done.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+        const updated = appendLoaDecision(cardJson, `## 🏁 LOA Concluded\n> Concluded by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.`);
+        await editLoaCard(client, interaction.message, updated);
+        if (loaAuthorId) {
+          await dmUser(client, loaAuthorId, {
+            content: '🏁 Your **Leave of Absence** has concluded.\n> Your nickname has been restored and you are expected to resume full moderation activity. Submit a new `/loa` if you need an extension.'
+          }).catch(() => null);
+        }
+        await interaction.editReply({ content: '✅ LOA concluded — conclusion card posted and the member was notified.' });
+        return;
+      }
+
+      const approved = action === 'approve';
+      const statusLine = approved
+        ? `## ✅ LOA Approved\n> Approved by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.\n> You may now go inactive for the approved window — submit a new \`/loa\` to extend it.`
+        : `## ❌ LOA Denied\n> Denied by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.\n> Contact a member of Management if you believe this was a mistake.`;
+      const updated = appendLoaDecision(cardJson, statusLine);
+      await editLoaCard(client, interaction.message, updated);
+      if (loaAuthorId) {
+        await channel?.send({ allowedMentions: mentionOpts, content: `<@${loaAuthorId}> — your Leave of Absence was **${approved ? 'approved' : 'denied'}** by <@${interaction.user.id}>.` }).catch(() => null);
+        await dmUser(client, loaAuthorId, {
+          content: approved
+            ? '✅ Your **Leave of Absence** request was **approved** by management. You may go inactive for the approved window.'
+            : '❌ Your **Leave of Absence** request was **denied**. Contact management if you believe this was a mistake.'
+        }).catch(() => null);
+      }
+      await interaction.editReply({ content: `✅ Recorded LOA decision: **${approved ? 'approved' : 'denied'}**.` });
       return;
     }
 
@@ -13653,10 +13831,25 @@ client.on(Events.MessageCreate, async (message) => {
         const start = parts[2] || 'ASAP';
         const end = parts[3] || 'TBD';
         const reason = parts.slice(4).join(' | ') || payload || 'No reason provided';
-        const target = await message.client.channels.fetch(LOA_CHANNEL_ID).catch(() => message.channel);
-        const card = buildLoaCard({ roblox, rank, start, end, reason, user: message.author });
-        await target.send({ content: `<@${message.author.id}> LOA submitted via \`-loa\` — pending management review.`, components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
-        await autoDeleteReply(message, `✅ LOA submitted in <#${target.id}>. Format:\n\`\`\`\n### Leave of Absence (LOA) Format\n- Roblox Username: ${roblox}\n- Staff Rank: ${rank}\n- Start Date: ${start}\n- End Date: ${end}\n- Reason for LOA: ${reason}\n\`\`\``, 30000);
+        const result = await postLoaCard(message.client, message, {
+          roblox, rank, start, end, reason, user: message.author,
+          ping: `<@${message.author.id}> submitted a Leave of Absence request via \`-loa\` — pending management review.`
+        });
+        const formatBlock =
+          '```\n### Leave of Absence (LOA) Format\n' +
+          `- Roblox Username: ${roblox}\n` +
+          `- Staff Rank: ${rank}\n` +
+          `- Start Date: ${start}\n` +
+          `- End Date: ${end}\n` +
+          `- Reason for LOA: ${reason}\n` +
+          '```';
+        await autoDeleteReply(
+          message,
+          result.ok
+            ? `✅ LOA submitted in <#${result.channelId}>.\n\n${formatBlock}`
+            : `❌ Could not post the LOA card — ${result.error?.message || 'unknown error'}.`,
+          30000
+        );
         return;
       }
 
