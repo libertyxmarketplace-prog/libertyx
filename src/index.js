@@ -367,8 +367,9 @@ const LOA_BANNER_PATH = fileURLToPath(new URL('./assets/loa_banner.webp', import
 const LOA_BANNER_FALLBACK_PATH = fileURLToPath(new URL('./assets/vote_banner.png', import.meta.url));
 const LOA_BANNER_URL = 'https://i.ibb.co/5gf3LYvD/content.webp';
 const LOA_FILE = fileURLToPath(new URL('../loas.json', import.meta.url));
-// /media — only this role may post media drops.
+// /media — only this role may post media drops, and only in the media channel.
 const MEDIA_ROLE_ID = '1360982598062702722';
+const MEDIA_CHANNEL_ID = '1360798150910021735';
 const MEDIA_CAMERA_EMOJI = '<:cameras:1554959653107138690>';
 
 const banCommand = new SlashCommandBuilder()
@@ -7639,18 +7640,15 @@ function buildMediaCard({ bannerRef, creditUserId, pingUserId, pingRoleId, emoji
     card.addSeparatorComponents(thinLine());
   }
 
-  // Just the camera emoji above the media — nothing else.
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(emoji));
+  // Camera emoji with the credited user right next to it, above the media.
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(creditUserId ? `${emoji}  <@${creditUserId}>` : emoji)
+  );
 
   if (bannerRef) {
     card.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerRef))
     );
-  }
-
-  // Credit is simply the user's Discord — no labels, no clutter.
-  if (creditUserId) {
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`<@${creditUserId}>`));
   }
   return card;
 }
@@ -7689,7 +7687,18 @@ async function handleMediaCommand(interaction) {
 
   try {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const sent = await interaction.channel.send({
+
+    // Media always lands in the one media channel, never where the command ran.
+    const target = await interaction.client.channels.fetch(MEDIA_CHANNEL_ID).catch(() => null);
+    if (!target?.isTextBased?.()) {
+      await interaction.editReply({
+        content: `I cannot reach the media channel (<#${MEDIA_CHANNEL_ID}>).\n` +
+          `Please make sure I have **View Channel** and **Send Messages** there.`
+      });
+      return;
+    }
+
+    const sent = await target.send({
       allowedMentions: {
         users: pingUser ? [pingUser.id] : [],
         roles: pingRole ? [pingRole.id] : [],
