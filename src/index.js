@@ -119,17 +119,6 @@ const sessionCommand = new SlashCommandBuilder()
   .setDescription('Alabama State Roleplay session tools.')
   .addSubcommand((sub) =>
     sub
-      .setName('panel')
-      .setDescription('Post the live session panel.')
-      .addRoleOption((opt) =>
-        opt
-          .setName('ping_role')
-          .setDescription('Role to ping at the top of the panel (hidden spoiler ping).')
-          .setRequired(false)
-      )
-  )
-  .addSubcommand((sub) =>
-    sub
       .setName('vote')
       .setDescription('Open a live vote - when enough members join, the host can launch the session.')
       .addIntegerOption((opt) =>
@@ -165,14 +154,7 @@ const sessionCommand = new SlashCommandBuilder()
       .setDescription('Close the session - red Session Closed card, panel goes down, voters get a DM.')
   );
 
-const ticketCommand = new SlashCommandBuilder()
-  .setName('ticket')
-  .setDescription('Assistance ticket tools.')
-  .addSubcommand((sub) =>
-    sub
-      .setName('panel')
-      .setDescription('Post the assistance ticket panel.')
-  );
+// Standalone /ticket panel removed — use /panel type:ticket instead.
 
 const panelCommand = new SlashCommandBuilder()
   .setName('panel')
@@ -300,19 +282,6 @@ const staffCommand = new SlashCommandBuilder()
       )
       .addChannelOption((opt) =>
         opt.setName('channel').setDescription('Channel to post notice (defaults to derank/infraction channel)').setRequired(false)
-      )
-  )
-  .addSubcommandGroup((grp) =>
-    grp
-      .setName('application')
-      .setDescription('Staff application panel commands.')
-      .addSubcommand((sub) =>
-        sub
-          .setName('panel')
-          .setDescription('Post the staff application desk panel.')
-          .addChannelOption((opt) =>
-            opt.setName('channel').setDescription('Channel to post panel into (defaults to #applications)').setRequired(false)
-          )
       )
   );
 
@@ -476,12 +445,7 @@ const antiNukeCommand = new SlashCommandBuilder()
       )
   );
 
-const verifyCommand = new SlashCommandBuilder()
-  .setName('verify')
-  .setDescription('Roblox verification tools.')
-  .addSubcommand((sub) =>
-    sub.setName('panel').setDescription('Post the official Roblox verification panel.')
-  );
+// Standalone /verify panel removed — use /panel type:verify instead.
 
 const erlcCommand = new SlashCommandBuilder()
   .setName('erlc')
@@ -735,20 +699,7 @@ const exploitCommand = new SlashCommandBuilder()
   );
 
 
-const informationCommand = new SlashCommandBuilder()
-  .setName('information')
-  .setDescription('Official Alabama State Roleplay information system.')
-  .addSubcommand((sub) =>
-    sub
-      .setName('panel')
-      .setDescription('Post or view the official information panel.')
-      .addChannelOption((opt) =>
-        opt
-          .setName('channel')
-          .setDescription('Target channel to post the information panel to (Staff only)')
-          .setRequired(false)
-      )
-  );
+// Standalone /information panel removed — use /panel type:information instead.
 
 const STAFF_CONFIG = {
   color: 0xd69a5c,
@@ -7754,10 +7705,8 @@ function toggleVoter(vote, userId) {
 function getSlashPayload() {
   return [
     commandsCommand.toJSON(),
-    informationCommand.toJSON(),
     retriggerCommand.toJSON(),
     sessionCommand.toJSON(),
-    ticketCommand.toJSON(),
     panelCommand.toJSON(),
     staffCommand.toJSON(),
     suggestionCommand.toJSON(),
@@ -7769,7 +7718,6 @@ function getSlashPayload() {
     purgeCommand.toJSON(),
     sayCommand.toJSON(),
     antiNukeCommand.toJSON(),
-    verifyCommand.toJSON(),
     erlcCommand.toJSON(),
     jailCommand.toJSON(),
     unjailCommand.toJSON(),
@@ -10047,9 +9995,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    // ─────────────────────────── /information ───────────────────────────
+    // ── /information removed — use /panel type:information ──
     if (interaction.isChatInputCommand() && interaction.commandName === 'information') {
-      await handleInformationCommand(interaction);
+      await interaction.reply({ content: '`/information panel` was removed — use **/panel type:Information** instead.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -10068,9 +10016,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       console.log(`[session] sub=${sub} by ${interaction.user?.tag ?? interaction.user?.id}`);
       // Unknown / stale subcommand (or missing) - NEVER fall through to the
       // panel. This was the hole that could post "Session Information".
-      if (sub !== 'panel' && sub !== 'vote' && sub !== 'shutdown') {
+      if (sub !== 'vote' && sub !== 'shutdown') {
         await interaction.reply({
-          content: `Unknown /session option - use **/session panel**, **/session vote** or **/session shutdown**. Press Ctrl+R in Discord if the command list looks stale. (build: vote-engine-2)`,
+          content: `**/session panel** was removed — use **/panel type:Session** instead. Other options: **/session vote** or **/session shutdown**. Press Ctrl+R if the command list looks stale.`,
           flags: MessageFlags.Ephemeral
         });
         return;
@@ -10164,72 +10112,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // ── /session panel → live session card ──
       if (sub === 'panel') {
-        await handleSessionPanel(interaction);
+        // Legacy /session panel slot removed from registration — redirect to /panel hub.
+        await interaction.reply({ content: '`/session panel` was removed — use **/panel type:Session** instead.', flags: MessageFlags.Ephemeral });
         return;
       }
     }
 
-    // ─────────────────────────── /ticket panel ─────────────────────
+    // ── /ticket panel removed — use /panel type:ticket ──
     if (interaction.isChatInputCommand() && interaction.commandName === 'ticket') {
-      let sub = null;
-      try {
-        sub = interaction.options.getSubcommand();
-      } catch {
-        sub = interaction.options?.data?.[0]?.name ?? null;
-      }
-      sub = typeof sub === 'string' ? sub.toLowerCase().trim() : sub;
-      if (sub === 'panel' || !sub) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const targetChannel = interaction.channel;
-        if (!targetChannel) {
-          await interaction.editReply({ content: '❌ Could not find target channel to post the ticket panel.' });
-          return;
-        }
-
-        const chanKey = `${interaction.guildId}:${targetChannel.id}`;
-        let existingMsg = await findExistingPanelMessage(targetChannel, 'ticket');
-
-        const bannerExists = fs.existsSync(TICKET_BANNER_PATH);
-        const files = bannerExists ? [new AttachmentBuilder(TICKET_BANNER_PATH, { name: 'assistance_banner.png' })] : [];
-
-        if (existingMsg) {
-          try {
-            await existingMsg.edit({
-              files,
-              components: [buildTicketPanelContainer().toJSON()],
-              flags: MessageFlags.IsComponentsV2
-            });
-            lastTicketPanelByChannel.set(chanKey, existingMsg.id);
-            saveTicketPanels();
-            await interaction.editReply({
-              content: `✅ Refreshed existing assistance ticket panel in <#${targetChannel.id}>.`
-            });
-            return;
-          } catch (editErr) {
-            console.warn('Could not edit existing ticket panel, posting new:', editErr.message);
-            lastTicketPanelByChannel.delete(chanKey);
-          }
-        }
-
-        try {
-          const sent = await targetChannel.send({
-            files,
-            components: [buildTicketPanelContainer().toJSON()],
-            flags: MessageFlags.IsComponentsV2
-          });
-          lastTicketPanelByChannel.set(chanKey, sent.id);
-          saveTicketPanels();
-          await interaction.editReply({
-            content: `✅ Live assistance ticket panel posted in <#${targetChannel.id}>.`
-          });
-        } catch (err) {
-          console.error('Failed to post ticket panel:', err);
-          await interaction.editReply({
-            content: `❌ Could not post ticket panel (${err.message}). Ensure I have **Send Messages** and **Embed Links** permissions.`
-          });
-        }
-        return;
-      }
+      await interaction.reply({ content: '`/ticket panel` was removed — use **/panel type:Ticket** instead.', flags: MessageFlags.Ephemeral });
+      return;
     }
 
     // ─────────────────────────── /proof, /staff, /promote, /derank ──
@@ -10256,7 +10148,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         let grp = null;
         try { grp = interaction.options.getSubcommandGroup(false); } catch {}
         if (grp === 'application' || sub === 'application') {
-          await handleStaffApplicationPanelCommand(interaction);
+          await interaction.reply({ content: '`/staff application panel` was removed — use **/panel type:Staff Application** instead.', flags: MessageFlags.Ephemeral });
           return;
         }
         if (sub === 'promotion' || sub === 'promote') {
@@ -10305,7 +10197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await handlePanelHubCommand(interaction);
         return;
       } else if (interaction.commandName === 'verify') {
-        await handleVerifyCommand(interaction);
+        await interaction.reply({ content: '`/verify panel` was removed — use **/panel type:Verification** instead.', flags: MessageFlags.Ephemeral });
         return;
       } else if (interaction.commandName === 'erlc') {
         await handleErlcCommand(interaction);
@@ -13195,8 +13087,8 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Session Operations\n` +
         `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
-        `</session panel:1549298204271448167> </session vote:1549298204271448167> </session shutdown:1549298204271448167>\n\n` +
-        `> • **Session Panel:** Post live session panel with player counts & direct join\n` +
+        `</panel:1549298204271448168> </session vote:1549298204271448167> </session shutdown:1549298204271448167>\n\n` +
+        `> • **Panel Hub:** Post session / ticket / verify / application / information panels\n` +
         `> • **Session Vote:** Open an interactive session startup vote with goal & timer\n` +
         `> • **Session Shutdown:** Safely end session, lock panel & notify voters`
       )
@@ -13206,12 +13098,11 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Staff & Management\n` +
         `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
-        `</staff panel:1549298204271448169> </staff promotion:1549298204271448169> </staff derank:1549298204271448169> </staff feedback:1549298204271448169> </staff application panel:1549298204271448169>\n\n` +
-        `> • **Staff Panel:** Post live staff control & session management panel\n` +
+        `</staff promotion:1549298204271448169> </staff derank:1549298204271448169> </staff feedback:1549298204271448169> </panel:1549298204271448168>\n\n` +
         `> • **Staff Promotion:** Issue promotion announcement & update user roles\n` +
         `> • **Staff Derank:** Demote staff member & strip designated roles\n` +
         `> • **Staff Feedback:** Submit a 1–5 star rating & review for a staff member\n` +
-        `> • **Application Desk:** Post the interactive staff application panel`
+        `> • **Panel Hub:** Post staff application / session / ticket panels via /panel`
       )
     );
   } else if (page === 2) {
@@ -13243,9 +13134,9 @@ function buildCommandsGuidePage(pageIndex = 0) {
       new TextDisplayBuilder().setContent(
         `## Command Directory — Tickets, Roblox & Community\n` +
         `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
-        `</ticket panel:1549298204271448168> </add:1549610085385240646> </unadd:1549610085385240647> </verify panel:1549298204724691008> </proof partnership:1549298204271448172> </suggest:1549298204271448171>\n\n` +
-        `> • **Ticket Desk:** Post assistance support panel & manage ticket participants\n` +
-        `> • **Roblox & Proof:** Post verification panel and upload partnership proof\n` +
+        `</panel:1549298204271448168> </add:1549610085385240646> </unadd:1549610085385240647> </proof partnership:1549298204271448172> </suggest:1549298204271448171>\n\n` +
+        `> • **Panel Hub:** Post ticket / verification / session panels & manage ticket participants\n` +
+        `> • **Roblox & Proof:** Upload partnership proof\n` +
         `> • **Community:** Submit interactive suggestions with voter cards\n\n` +
         `### Prefix Controls (-)\n` +
         `> • **-busy** Set ticket desk to 🟡 Busy (panel turns yellow)\n` +
@@ -14937,7 +14828,6 @@ export {
   fetchServerStats,
   serverStatus,
   sessionCommand,
-  ticketCommand,
   staffCommand,
   proofCommand,
   STAFF_CONFIG,
@@ -14961,7 +14851,6 @@ export {
   backupGuildState,
   handleAntiNukeTrigger,
   handleAntiNukeButton,
-  verifyCommand,
   erlcCommand,
   jailCommand,
   unjailCommand,
@@ -14982,7 +14871,6 @@ export {
   unaddCommand,
   handleRetriggerCommand,
   buildCommandsGuidePage,
-  informationCommand,
   buildInformationCard,
   handleInformationCommand
 };
