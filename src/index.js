@@ -337,19 +337,39 @@ const loaCommand = new SlashCommandBuilder()
   .addStringOption((opt) => opt.setName('end_date').setDescription('LOA end date (e.g. 2026-10-12)').setRequired(true))
   .addStringOption((opt) => opt.setName('reason').setDescription('Reason for LOA').setRequired(true));
 
+const mediaCommand = new SlashCommandBuilder()
+  .setName('media')
+  .setDescription('Post a media drop with a banner, credit and an optional ping.')
+  .addAttachmentOption((opt) =>
+    opt.setName('banner').setDescription('The image/video to post').setRequired(true)
+  )
+  .addStringOption((opt) =>
+    opt.setName('credit').setDescription('Credit for the media (who made it) — shown inside the card').setRequired(false)
+  )
+  .addUserOption((opt) =>
+    opt.setName('ping_user').setDescription('User to ping above the card (optional)').setRequired(false)
+  )
+  .addRoleOption((opt) =>
+    opt.setName('ping_role').setDescription('Role to ping above the card (optional)').setRequired(false)
+  );
+
 const LOA_CHANNEL_ID = '1232495214162214922';
-// Only these management roles (or Administrators) may Approve / Deny / Conclude an LOA.
+// Voice-channel chat that carries the Approve / Deny buttons for new requests.
+const LOA_ACTION_CHANNEL_ID = '1536215478584868874';
+// Only these management roles (or Administrators) may Approve / Deny an LOA.
 const LOA_APPROVER_ROLE_IDS = ['1341931745351700534', '1341932322970276022'];
 // Roles that stay on the member while their LOA is active (@everyone + the keep role).
 const LOA_KEEP_ROLE_IDS = ['1232495211490443285', '1341965114101731418'];
 // Renders as: 𝑳𝑶𝑨┃
 const LOA_NICK_PREFIX = '\u{1D473}\u{1D476}\u{1D468}\u2503';
-// Dedicated banner (drop src/assets/loa_banner.png in to use your own);
-// falls back to the local vote banner, then to a remote URL.
-const LOA_BANNER_PATH = fileURLToPath(new URL('./assets/loa_banner.png', import.meta.url));
+// Banner is uploaded from our own assets so it can never expire.
+const LOA_BANNER_PATH = fileURLToPath(new URL('./assets/loa_banner.webp', import.meta.url));
 const LOA_BANNER_FALLBACK_PATH = fileURLToPath(new URL('./assets/vote_banner.png', import.meta.url));
 const LOA_BANNER_URL = 'https://i.ibb.co/5gf3LYvD/content.webp';
 const LOA_FILE = fileURLToPath(new URL('../loas.json', import.meta.url));
+// /media — only this role may post media drops.
+const MEDIA_ROLE_ID = '1360982598062702722';
+const MEDIA_CAMERA_EMOJI = '<:cameras:1554959653107138690>';
 
 const banCommand = new SlashCommandBuilder()
   .setName('ban')
@@ -7096,10 +7116,10 @@ function saveLoas() {
   }
 }
 
-/** Local banner file + the attachment:// URL that renders it (always works). */
+/** Uploads the banner from our own assets so it can never expire. */
 function loaBanner() {
   if (fs.existsSync(LOA_BANNER_PATH)) {
-    return { path: LOA_BANNER_PATH, name: 'loa_banner.png', url: 'attachment://loa_banner.png' };
+    return { path: LOA_BANNER_PATH, name: 'loa_banner.webp', url: 'attachment://loa_banner.webp' };
   }
   if (fs.existsSync(LOA_BANNER_FALLBACK_PATH)) {
     return { path: LOA_BANNER_FALLBACK_PATH, name: 'loa_banner.png', url: 'attachment://loa_banner.png' };
@@ -7114,126 +7134,159 @@ function isLoaApprover(member) {
   return Boolean(member.roles?.cache?.some((r) => LOA_APPROVER_ROLE_IDS.includes(r.id)));
 }
 
-function buildLoaCard({
-  roblox, rank, start, end, reason, user,
-  status = 'pending', ping = null, bannerUrl = null, decisionLine = null
-}) {
+function loaFieldBlock({ roblox, rank, start, end, reason, user }) {
+  return (
+    `> **Staff Member:** <@${user?.id || 'unknown'}>\n` +
+    `> **Roblox Username:** ${roblox || 'Not provided'}\n` +
+    `> **Staff Rank:** ${rank || 'Not provided'}\n` +
+    `> **Start Date:** ${start || 'Not provided'}\n` +
+    `> **End Date:** ${end || 'Not provided'}\n` +
+    `> **Reason for LOA:** ${reason || 'Not provided'}`
+  );
+}
+
+/** The permanent log posted in the LOA channel (no buttons — a clean record). */
+function buildLoaLogCard(opts) {
   const card = new ContainerBuilder();
-  const banner = bannerUrl || loaBanner().url;
+  const banner = opts.bannerUrl || loaBanner().url;
   if (banner) {
     card.addMediaGalleryComponents(
       new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner))
     );
   }
-  // Components V2 rejects the legacy `content` field, so any ping lives INSIDE the card.
-  if (ping) {
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(ping));
-  }
-
-  if (status === 'concluded') {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `## 🏁 Leave of Absence Concluded\n` +
-        `*Your scheduled leave in Alabama State Roleplay has officially ended.*`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `> **Roles Restored:** Every role you held before your leave has been given back automatically.\n` +
-        `> **Nickname:** Your normal nickname has been restored.\n` +
-        `> **Activity:** You are expected to resume full moderation activity and session attendance.\n` +
-        `> **Extensions:** Need more time off? Submit a brand new request with /loa.`
-      )
-    );
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### Welcome back to active service!\n-# Alabama State Roleplay • Leave of Absence System`
-      )
-    );
-    return card;
-  }
-
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## 📋 Leave of Absence Request\n` +
-      `*Submitted for management review — nothing changes until a manager approves it.*`
+      `## Leave of Absence Request\n*Logged for management review — ${opts.user?.tag || 'unknown'} on <t:${Math.floor(Date.now() / 1000)}:F>.*`
     )
   );
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `> **Staff Member:** <@${user?.id || 'unknown'}>\n` +
-      `> **Roblox Username:** ${roblox || 'Not provided'}\n` +
-      `> **Staff Rank:** ${rank || 'Not provided'}\n` +
-      `> **Start Date:** ${start || 'Not provided'}\n` +
-      `> **End Date:** ${end || 'Not provided'}\n` +
-      `> **Reason for LOA:** ${reason || 'Not provided'}`
-    )
-  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(loaFieldBlock(opts)));
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `### What each action does\n` +
-      `> • **Approve** — removes every role except <@&${LOA_KEEP_ROLE_IDS[1]}> and renames them to ${LOA_NICK_PREFIX}name for the leave.\n` +
-      `> • **Deny** — keeps the member fully active, no changes are made.\n` +
-      `> • **Conclude LOA** — gives every removed role back, restores their nickname and posts the return notice.`
-    )
-  );
-  if (decisionLine) {
-    card.addSeparatorComponents(thinLine());
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(decisionLine));
-  }
-  card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('loa_approve').setLabel('Approve').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('loa_deny').setLabel('Deny').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('loa_conclude').setLabel('Conclude LOA').setStyle(ButtonStyle.Secondary)
-    )
-  );
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `-# LOA management only — these buttons ignore everyone else.\n-# Alabama State Roleplay • Leave of Absence System`
+      `> **Status:** Awaiting decision\n-# Alabama State Roleplay • Leave of Absence System`
     )
   );
   return card;
 }
 
+/** The action card posted in the management chat — Approve / Deny only. */
+function buildLoaActionCard(opts) {
+  const card = new ContainerBuilder();
+  const banner = opts.bannerUrl || loaBanner().url;
+  if (banner) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner))
+    );
+  }
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Leave of Absence — Decision Required\n` +
+      `<@${opts.user?.id || 'unknown'}> requested leave. Nothing has changed yet.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(loaFieldBlock(opts)));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **Approve** — suspends their staff roles for the leave (the leave ends automatically on the end date).\n` +
+      `> **Deny** — leaves them fully active, no changes are made.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('loa_approve').setLabel('Approve').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('loa_deny').setLabel('Deny').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `-# Only ${LOA_APPROVER_ROLE_IDS.map((id) => `<@&${id}>`).join(' and ')} (or an Administrator) can action this.`
+    )
+  );
+  return card;
+}
+
+/** The DM the member receives when their LOA ends. */
+function buildLoaConcludedCard() {
+  const card = new ContainerBuilder();
+  const banner = loaBanner().url;
+  if (banner) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner))
+    );
+  }
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Your Leave of Absence Has Ended\n*Thank you for your patience — you are back on the roster.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `> **Roles Restored** — every role you held before your leave has been given back automatically.\n` +
+      `> **Nickname** — your normal nickname is back in place.\n` +
+      `> **Activity** — normal moderation duties and session attendance resume immediately.\n` +
+      `> **Extensions** — submit a fresh request any time with /loa.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('> Welcome back to active service.\n-# Alabama State Roleplay • Leave of Absence System')
+  );
+  return card;
+}
+
 /**
- * Removes every role except the keep-list, then prefixes the nickname with 𝑳𝑶𝑨┃.
- * Returns the removed role IDs + the original nickname so they can be restored.
+ * Suspends the member's staff roles for their leave and applies the 𝑳𝑶𝑨┃ nickname.
+ * Reports exactly what succeeded AND what the bot is not allowed to touch, so
+ * management always sees the real reason instead of a silent failure.
  */
 async function applyLoaToMember(guild, userId) {
   const member = await guild.members.fetch(userId).catch(() => null);
   if (!member) return { ok: false, reason: 'Member is no longer in the server.' };
 
-  const keep = new Set([...LOA_KEEP_ROLE_IDS, guild.id]);
   const me = guild.members.me;
+  const issues = [];
+  if (!me?.permissions?.has?.(PermissionFlagsBits.ManageRoles)) {
+    issues.push('the bot role is missing **Manage Roles**');
+  }
+  if (!me?.permissions?.has?.(PermissionFlagsBits.ManageNicknames)) {
+    issues.push('the bot role is missing **Manage Nicknames**');
+  }
+  if (me && !member.manageable) {
+    issues.push(
+      `my role (**${me.roles.highest?.name || 'unknown'}**, position ${me.roles.highest?.position}) ` +
+      `must sit **above** theirs (**${member.roles.highest?.name || 'unknown'}**, position ${member.roles.highest?.position})`
+    );
+  }
+
+  const keep = new Set([...LOA_KEEP_ROLE_IDS, guild.id]);
   const removedRoleIds = [];
+  const blockedRoles = [];
   for (const role of member.roles.cache.values()) {
     if (keep.has(role.id) || role.managed) continue;
-    if (me && role.position >= me.roles.highest.position) continue; // above the bot — cannot touch
     try {
       await member.roles.remove(role.id, 'LOA approved — temporary role removal');
       removedRoleIds.push(role.id);
     } catch (err) {
-      console.warn(`Could not remove role ${role.id} during LOA: ${err.message}`);
+      blockedRoles.push(role.name);
     }
   }
 
   const originalNickname = member.nickname || null;
-  const base = (member.nickname || member.user.username).slice(0, 24);
+  const base = (originalNickname || member.user.username).slice(0, 24);
   let nicknameChanged = false;
   try {
     await member.setNickname(`${LOA_NICK_PREFIX}${base}`.slice(0, 32), 'LOA approved');
     nicknameChanged = true;
   } catch (err) {
-    console.warn(`Could not set LOA nickname for ${userId}: ${err.message}`);
+    // Almost always a role-position or Manage Nicknames problem — surfaced to staff below.
   }
 
-  return { ok: true, removedRoleIds, originalNickname, nicknameChanged };
+  return { ok: true, issues, removedRoleIds, blockedRoles, nicknameChanged, originalNickname };
 }
 
 /** Gives every stored role back and clears the 𝑳𝑶𝑨┃ nickname prefix. */
@@ -7265,45 +7318,204 @@ async function concludeLoaForMember(guild, record) {
   return { ok: true, restoredRoles: restore.length };
 }
 
-// Posts an LOA card, trying the configured LOA channel first and falling back
-// to the channel the command was used in. Returns { ok, channelId, message, error }.
-async function postLoaCard(client, interactionOrMessage, cardOptions) {
-  const attempts = [];
-  let loaChannel = null;
+// ── Automatic end-of-LOA ──────────────────────────────────────────────────────
+const loaTimers = new Map();
+const MAX_TIMER_MS = 2_147_000_000; // ~24.8 days — the setTimeout ceiling
+
+/** Best-effort parse of the end date the member typed (ISO, M/D/Y, "12 Oct 2026"...). */
+function parseLoaEndDate(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw || /^(tbd|unknown|n\/a|none)$/i.test(raw)) return null;
+
+  const direct = Date.parse(raw);
+  if (!Number.isNaN(direct)) return direct;
+
+  const m = raw.match(/(\d{1,2})[\/\-. ](\d{1,2})[\/\-. ](\d{2,4})/); // 12/10/2026 or 12-10-26
+  if (m) {
+    let [, a, b, y] = m;
+    a = Number(a); b = Number(b); y = Number(y);
+    if (y < 100) y += 2000;
+    // If the first number cannot be a month, treat it as day/month.
+    if (a > 12 && b <= 12) [a, b] = [b, a];
+    const d = new Date(y, b - 1, a, 23, 59, 59);
+    if (!Number.isNaN(d.getTime())) return d.getTime();
+  }
+  return null;
+}
+
+/** Ends the leave: restores roles + nickname, DMs the member, logs it in the LOA channel. */
+async function autoConcludeLoa(client, record, { reason = 'end date reached' } = {}) {
+  if (record.status === 'concluded') return;
+  const guild = client.guilds.cache.get(record.guildId) || client.guilds.cache.first();
+  let restoredNote = '';
+  if (guild) {
+    const done = await concludeLoaForMember(guild, record);
+    restoredNote = done.ok
+      ? `\n> **Roles Restored:** ${done.restoredRoles} role(s) returned automatically.`
+      : `\n> Could not restore automatically — ${done.reason}`;
+  }
+
+  // The member gets a clean, well-designed DM.
+  const banner = loaBanner();
+  const dmCard = buildLoaConcludedCard();
+  const dmFiles = banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [];
+  await dmUser(client, record.userId, {
+    components: [dmCard.toJSON()],
+    files: dmFiles,
+    flags: MessageFlags.IsComponentsV2
+  }).catch(() => null);
+
+  // Permanent record in the LOA channel.
   try {
-    loaChannel = await client.channels.fetch(LOA_CHANNEL_ID);
+    const ch = await client.channels.fetch(record.logChannelId || LOA_CHANNEL_ID).catch(() => null);
+    if (ch) {
+      const logCard = new ContainerBuilder();
+      logCard.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner.url || LOA_BANNER_URL))
+      );
+      logCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `## Leave of Absence Ended\n<@${record.userId}> is back on active duty as of <t:${Math.floor(Date.now() / 1000)}:F>.`
+        )
+      );
+      logCard.addSeparatorComponents(thinLine());
+      logCard.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `> **Reason:** ${reason}\n` +
+          `> **Window:** ${record.start || 'Not provided'} → ${record.end || 'Not provided'}\n` +
+          `> **Member notified:** Yes (DM)${restoredNote}\n` +
+          `-# Alabama State Roleplay • Leave of Absence System`
+        )
+      );
+      await ch.send({
+        components: [logCard.toJSON()],
+        files: banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [],
+        allowedMentions: { parse: [] },
+        flags: MessageFlags.IsComponentsV2
+      }).catch(() => null);
+    }
+  } catch { /* logging must never break the flow */ }
+
+  record.status = 'concluded';
+  record.concludedAt = Date.now();
+  record.concludedReason = reason;
+  saveLoas();
+  const timer = loaTimers.get(record.key);
+  if (timer) { clearTimeout(timer); loaTimers.delete(record.key); }
+}
+
+/** (Re)arms the automatic conclusion timer for an approved LOA. */
+function scheduleLoaConclude(client, record) {
+  if (!record?.userId || record.status !== 'approved') return;
+  if (loaTimers.has(record.key)) clearTimeout(loaTimers.get(record.key));
+
+  const endsAt = record.endsAt || parseLoaEndDate(record.end);
+  if (!endsAt) {
+    console.log(`[LOA] No parsable end date for <@${record.userId}> ("${record.end}") — will not auto-conclude.`);
+    return;
+  }
+  record.endsAt = endsAt;
+  saveLoas();
+
+  const delay = endsAt - Date.now();
+  if (delay <= 0) {
+    setTimeout(() => autoConcludeLoa(client, record, { reason: 'end date had already passed' }), 5_000);
+    return;
+  }
+  // setTimeout cannot exceed ~24.8 days — re-arm in chunks for long leaves.
+  const arm = () => {
+    const remaining = endsAt - Date.now();
+    if (remaining <= 0) {
+      autoConcludeLoa(client, record, { reason: 'end date reached' }).catch((err) =>
+        console.warn(`[LOA] auto-conclude failed: ${err.message}`));
+      return;
+    }
+    const timer = setTimeout(arm, Math.min(remaining, MAX_TIMER_MS));
+    loaTimers.set(record.key, timer);
+  };
+  arm();
+}
+
+/** On boot: pick up LOAs that were approved but whose leave already ended. */
+function resumeLoaTimers(client) {
+  for (const [msgId, record] of activeLoas) {
+    if (!record.key) record.key = msgId;
+    if (record.status === 'approved') scheduleLoaConclude(client, record);
+  }
+}
+
+/**
+ * Publishes a new LOA request:
+ *   • a permanent log card in the LOA channel (no buttons)
+ *   • an action card with Approve / Deny in the management chat
+ * Returns { ok, log, action, error }.
+ */
+async function postLoaCard(client, interactionOrMessage, cardOptions) {
+  const banner = loaBanner();
+  const files = banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [];
+
+  // 1) Log card — LOA channel, falling back to wherever the command was used.
+  const logTargets = [];
+  try {
+    const loaChannel = await client.channels.fetch(LOA_CHANNEL_ID);
+    if (loaChannel) logTargets.push(loaChannel);
   } catch (err) {
     console.warn(`LOA channel ${LOA_CHANNEL_ID} could not be fetched: ${err.message}`);
   }
   const fallbackChannel = interactionOrMessage.channel || null;
-  if (loaChannel) attempts.push(loaChannel);
-  if (fallbackChannel && fallbackChannel.id !== loaChannel?.id) attempts.push(fallbackChannel);
+  if (fallbackChannel && fallbackChannel.id !== LOA_CHANNEL_ID) logTargets.push(fallbackChannel);
 
-  // Attach the banner as a real file so it always renders (expiring CDN links don't).
-  const banner = loaBanner();
-  const files = banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [];
-
+  let log = null;
   let lastError = null;
-  for (const target of attempts) {
+  for (const target of logTargets) {
     try {
-      const sent = await target.send({
+      log = await target.send({
         allowedMentions: { users: [cardOptions.user.id], parse: [] },
-        components: [buildLoaCard({ ...cardOptions, bannerUrl: banner.url }).toJSON()],
+        components: [buildLoaLogCard({ ...cardOptions, bannerUrl: banner.url }).toJSON()],
         files,
         flags: MessageFlags.IsComponentsV2
       });
-      return { ok: true, channelId: target.id, message: sent };
+      break;
     } catch (err) {
       lastError = err;
-      console.warn(`Could not post LOA card in #${target.id} (${target.name || 'unknown'}): ${err.message}`);
+      console.warn(`Could not post LOA log in #${target.id}: ${err.message}`);
     }
   }
-  return { ok: false, error: lastError };
+
+  // 2) Action card — the management voice-channel chat (Approve / Deny).
+  let action = null;
+  const actionChannel = await client.channels.fetch(LOA_ACTION_CHANNEL_ID).catch((err) => {
+    console.warn(`LOA action channel ${LOA_ACTION_CHANNEL_ID} unavailable: ${err.message}`);
+    return null;
+  });
+  if (actionChannel?.send) {
+    try {
+      action = await actionChannel.send({
+        allowedMentions: { users: [cardOptions.user.id], parse: [] },
+        components: [buildLoaActionCard({ ...cardOptions, bannerUrl: banner.url }).toJSON()],
+        files,
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (err) {
+      lastError = err;
+      console.warn(`Could not post LOA action card: ${err.message}`);
+    }
+  }
+
+  return {
+    ok: Boolean(log || action),
+    log,
+    action,
+    channelId: (log || action)?.channelId || null,
+    message: log || action,
+    error: (log || action) ? null : (lastError || new Error('No LOA channel is available.'))
+  };
 }
 
 /**
- * Rewrites an already-posted LOA card: strips the Approve/Deny/Conclude button
- * row and appends the decision line, so a request can only be actioned once.
+ * Rewrites an already-posted LOA card: strips the Approve/Deny button row and
+ * appends the decision line, so a request can only be actioned once.
  */
 function appendLoaDecision(cardJsonArray, statusLine) {
   try {
@@ -7317,6 +7529,31 @@ function appendLoaDecision(cardJsonArray, statusLine) {
     console.warn(`Could not update LOA card: ${err.message}`);
     return null;
   }
+}
+
+/** Registers a brand-new LOA request (log card + action card) and returns the record. */
+function registerLoaRequest(result, cardOptions, guildId) {
+  const key = result.action?.id || result.log?.id || `loa_${Date.now().toString(36)}`;
+  const record = {
+    key,
+    userId: cardOptions.user.id,
+    userTag: cardOptions.user.tag,
+    guildId,
+    logChannelId: result.log?.channelId || LOA_CHANNEL_ID,
+    logMessageId: result.log?.id || null,
+    actionMessageId: result.action?.id || null,
+    roblox: cardOptions.roblox,
+    rank: cardOptions.rank,
+    start: cardOptions.start,
+    end: cardOptions.end,
+    reason: cardOptions.reason,
+    endsAt: parseLoaEndDate(cardOptions.end),
+    status: 'pending',
+    createdAt: Date.now()
+  };
+  activeLoas.set(key, record);
+  saveLoas();
+  return record;
 }
 
 /**
@@ -7357,27 +7594,129 @@ async function handleLoaCommand(interaction) {
 
   if (!result.ok) {
     await interaction.editReply({
-      content: `❌ Could not post the LOA card — ${result.error?.message || 'unknown error'}.\n` +
-        `Make sure I can **View Channel** + **Send Messages** in <#${LOA_CHANNEL_ID}>, then try again.`
+      content: `Could not post the LOA request — ${result.error?.message || 'unknown error'}.\n` +
+        `Make sure I can **View Channel** + **Send Messages** in <#${LOA_CHANNEL_ID}> and <#${LOA_ACTION_CHANNEL_ID}>, then try again.`
     });
     return;
   }
 
-  activeLoas.set(result.message.id, {
-    userId: interaction.user.id,
-    userTag: interaction.user.tag,
-    guildId: interaction.guildId,
-    channelId: result.channelId,
-    roblox, rank, start, end, reason,
-    status: 'pending',
-    createdAt: Date.now()
-  });
-  saveLoas();
+  registerLoaRequest(result, { roblox, rank, start, end, reason, user: interaction.user }, interaction.guildId);
 
   await interaction.editReply({
-    content: `✅ Leave of Absence request submitted in <#${result.channelId}>.\n` +
-      `> Management will review it shortly — your roles and nickname stay untouched until it is **approved**.`
+    content: `Your Leave of Absence request has been logged in <#${LOA_CHANNEL_ID}> and sent to management for a decision.\n` +
+      `> Nothing changes until it is approved. You will be notified either way, and when your leave ends everything is restored automatically.`
   });
+}
+
+// ── /media — media drop card (Media role only) ────────────────────────────────
+/**
+ * Uses <:cameras:1554959653107138690> when the server actually has it, otherwise
+ * any emoji named "cameras", otherwise a neutral unicode camera so the card never
+ * shows a broken mention.
+ */
+function resolveCameraEmoji(guild) {
+  const preferredId = '1554959653107138690';
+  const exact = guild?.emojis?.cache?.get(preferredId);
+  if (exact) {
+    return exact.animated ? `<a:${exact.name}:${exact.id}>` : `<:${exact.name}:${exact.id}>`;
+  }
+  const byName = guild?.emojis?.cache?.find((e) => e.name?.toLowerCase() === 'cameras');
+  if (byName) {
+    return byName.animated ? `<a:${byName.name}:${byName.id}>` : `<:${byName.name}:${byName.id}>`;
+  }
+  return '📷';
+}
+
+function buildMediaCard({ bannerRef, credit, pingUserId, pingRoleId, posterId, emoji = MEDIA_CAMERA_EMOJI }) {
+  const card = new ContainerBuilder();
+
+  // Pings sit ABOVE the banner, exactly where they were asked for.
+  const pings = [];
+  if (pingRoleId) pings.push(`<@&${pingRoleId}>`);
+  if (pingUserId) pings.push(`<@${pingUserId}>`);
+  if (pings.length) {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(pings.join(' ')));
+    card.addSeparatorComponents(thinLine());
+  }
+
+  if (bannerRef) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerRef))
+    );
+  }
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`${emoji}  ## Media Drop\n*Fresh media just landed — take a look.*`)
+  );
+
+  if (credit) {
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `### Credits\n> **Created by:** ${credit}\n> **Posted by:** <@${posterId || pingUserId || 'unknown'}>`
+      )
+    );
+  }
+
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Media Desk')
+  );
+  return card;
+}
+
+async function handleMediaCommand(interaction) {
+  const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+  const allowed = Boolean(
+    member?.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+    member?.roles?.cache?.some((r) => r.id === MEDIA_ROLE_ID)
+  );
+  if (!allowed) {
+    await interaction.reply({
+      content: `You do not have permission to post media here.\n> Required role: <@&${MEDIA_ROLE_ID}>.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const attachment = interaction.options?.getAttachment?.('banner', true);
+  if (!attachment) {
+    await interaction.reply({ content: 'Please attach the media you want to post.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const fileName = `media_${Date.now().toString(36)}${attachment.name?.includes('.') ? attachment.name.slice(attachment.name.lastIndexOf('.')) : '.png'}`;
+  const credit = interaction.options?.getString?.('credit')?.trim() || null;
+  const pingUser = interaction.options?.getUser?.('ping_user') || null;
+  const pingRole = interaction.options?.getRole?.('ping_role') || null;
+
+  const card = buildMediaCard({
+    bannerRef: `attachment://${fileName}`,
+    credit,
+    pingUserId: pingUser?.id || null,
+    pingRoleId: pingRole?.id || null,
+    posterId: interaction.user.id,
+    emoji: resolveCameraEmoji(interaction.guild)
+  });
+
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const sent = await interaction.channel.send({
+      allowedMentions: {
+        users: pingUser ? [pingUser.id] : [],
+        roles: pingRole ? [pingRole.id] : [],
+        parse: []
+      },
+      components: [card.toJSON()],
+      files: [new AttachmentBuilder(attachment.url, { name: fileName })],
+      flags: MessageFlags.IsComponentsV2
+    });
+    await interaction.editReply({ content: `Media posted in <#${sent.channelId}>.` });
+  } catch (err) {
+    console.error('Media post failed:', err.message);
+    try {
+      await interaction.editReply({ content: `Could not post the media card — ${err.message}` });
+    } catch {}
+  }
 }
 
 async function handlePanelHubCommand(hubInteraction) {
@@ -8052,7 +8391,8 @@ function getSlashPayload() {
     infractionCommand.toJSON(),
     retirementCommand.toJSON(),
     exploitCommand.toJSON(),
-    loaCommand.toJSON()
+    loaCommand.toJSON(),
+    mediaCommand.toJSON()
   ];
 }
 
@@ -8188,6 +8528,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadPartnerships();
     loadPartnerBans();
     loadLoas();
+    resumeLoaTimers(readyClient || client);
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
       if (g) await backupGuildState(g);
@@ -10600,6 +10941,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else if (interaction.commandName === 'loa') {
         await handleLoaCommand(interaction);
         return;
+      } else if (interaction.commandName === 'media') {
+        await handleMediaCommand(interaction);
+        return;
       }
     }
 
@@ -11111,13 +11455,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    // ─────────────── LOA Approve / Deny / Conclude (LOA management only) ───────────────
-    if (interaction.isButton() && (interaction.customId === 'loa_approve' || interaction.customId === 'loa_deny' || interaction.customId === 'loa_conclude')) {
+// ─────────────── LOA Approve / Deny (LOA management only) ───────────────
+    if (interaction.isButton() && (interaction.customId === 'loa_approve' || interaction.customId === 'loa_deny')) {
       const action = interaction.customId.replace('loa_', '');
       const loaMember = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
       if (!isLoaApprover(loaMember)) {
         await interaction.reply({
-          content: `❌ Only **LOA management** can Approve, Deny or Conclude a Leave of Absence.\n` +
+          content: `Only **LOA management** can action a Leave of Absence request.\n` +
             `> Required role: <@&${LOA_APPROVER_ROLE_IDS[0]}> or <@&${LOA_APPROVER_ROLE_IDS[1]}>.`,
           flags: MessageFlags.Ephemeral
         });
@@ -11125,118 +11469,137 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       try { if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ flags: MessageFlags.Ephemeral }); } catch {}
 
-      // Recover the card JSON + the staff member who filed the LOA.
       let cardJson = [];
       try {
         cardJson = (interaction.message?.components || []).map((c) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
       } catch {}
       const authorMatch = JSON.stringify(cardJson).match(/<@!?(\d{15,20})>/);
       const loaAuthorId = authorMatch ? authorMatch[1] : null;
-      const mentionOpts = { users: loaAuthorId ? [loaAuthorId] : [], parse: [] };
-      const channel = interaction.channel;
-      const guild = interaction.guild;
-      const banner = loaBanner();
-      const files = banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [];
-      const record = activeLoas.get(interaction.message?.id)
-        || (loaAuthorId ? { userId: loaAuthorId, guildId: interaction.guildId } : null);
 
-      // ── Conclude LOA: restore every role + nickname, then post the return card ──
-      if (action === 'conclude') {
-        let restoredNote = '';
-        if (guild && record?.userId) {
-          const done = await concludeLoaForMember(guild, record);
-          restoredNote = done.ok
-            ? `\n> **Roles Restored:** ${done.restoredRoles} role(s) given back automatically.`
-            : `\n> ⚠️ ${done.reason}`;
+      const key = interaction.message?.id;
+      let record = activeLoas.get(key);
+      if (!record && key) {
+        // Card posted before this build (or a restarted bot) — rebuild a minimal record.
+        record = [...activeLoas.values()].find((r) => r.userId === loaAuthorId && r.status === 'pending')
+          || { key, userId: loaAuthorId, guildId: interaction.guildId, status: 'pending' };
+        record.key = record.key || key;
+        activeLoas.set(key, record);
+      }
+      if (!record?.userId) {
+        await interaction.editReply({ content: 'Could not work out who this request belongs to — ask the member to submit it again with `/loa`.' });
+        return;
+      }
+      if (record.status !== 'pending') {
+        await interaction.editReply({ content: `This request was already **${record.status}** — nothing left to do.` });
+        return;
+      }
+
+      const guild = interaction.guild;
+      const stamp = `<t:${Math.floor(Date.now() / 1000)}:D>`;
+
+      // Keeps the permanent LOA-channel log in sync with the decision.
+      const syncLogCard = async (statusLine) => {
+        if (!record.logMessageId || !record.logChannelId) return;
+        try {
+          const ch = await interaction.client.channels.fetch(record.logChannelId);
+          const msg = await ch.messages.fetch(record.logMessageId).catch(() => null);
+          if (!msg) return;
+          const json = (msg.components || []).map((c) => (typeof c.toJSON === 'function' ? c.toJSON() : c));
+          const updated = appendLoaDecision(json, statusLine);
+          if (updated) await msg.edit({ components: [updated], flags: MessageFlags.IsComponentsV2 });
+        } catch (err) {
+          console.warn(`Could not sync the LOA log card: ${err.message}`);
         }
-        const concludedCard = buildLoaCard({
-          status: 'concluded',
-          bannerUrl: banner.url,
-          ping: record?.userId ? `<@${record.userId}> your Leave of Absence has concluded.` : null
-        });
-        await channel?.send({
-          allowedMentions: mentionOpts,
-          components: [concludedCard.toJSON()],
-          files,
+      };
+
+      const banner = loaBanner();
+      const bannerFiles = banner.path ? [new AttachmentBuilder(banner.path, { name: banner.name })] : [];
+      const dmFrame = (title, body) => {
+        const dm = new ContainerBuilder();
+        if (banner.url) {
+          dm.addMediaGalleryComponents(
+            new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(banner.url))
+          );
+        }
+        dm.addTextDisplayComponents(new TextDisplayBuilder().setContent(title));
+        dm.addSeparatorComponents(thinLine());
+        dm.addTextDisplayComponents(new TextDisplayBuilder().setContent(body));
+        dm.addSeparatorComponents(thinLine());
+        dm.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Leave of Absence System')
+        );
+        return dm;
+      };
+// ── Deny: the member keeps everything ──
+      if (action === 'deny') {
+        const statusLine =
+          `## Leave of Absence Denied\n> Denied by <@${interaction.user.id}> on ${stamp}.\n` +
+          `> No roles or nickname changes were made — the member stays fully active.`;
+        await editLoaCard(client, interaction.message, appendLoaDecision(cardJson, statusLine));
+        await syncLogCard(statusLine);
+
+        record.status = 'denied';
+        record.decidedBy = interaction.user.id;
+        record.decidedAt = Date.now();
+        saveLoas();
+
+        await dmUser(client, record.userId, {
+          components: [dmFrame(
+            '## Your Leave of Absence Request Was Denied',
+            `> Your request was reviewed and not approved by <@${interaction.user.id}>.\n` +
+            `> Nothing was changed — you keep every role and your nickname.\n` +
+            `> If you believe this was a mistake, please speak with management directly.`
+          ).toJSON()],
+          files: bannerFiles,
           flags: MessageFlags.IsComponentsV2
         }).catch(() => null);
 
-        const updated = appendLoaDecision(
-          cardJson,
-          `## 🏁 LOA Concluded\n> Concluded by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.${restoredNote}`
-        );
-        await editLoaCard(client, interaction.message, updated);
-        if (record?.userId && interaction.message?.id) {
-          activeLoas.set(interaction.message.id, record);
-          record.status = 'concluded';
-          record.concludedBy = interaction.user.id;
-          record.concludedAt = Date.now();
-          saveLoas();
-        }
-        if (record?.userId) {
-          await dmUser(client, record.userId, {
-            content: `🏁 Your **Leave of Absence** has concluded.${restoredNote}\n> Your nickname has been restored and you are expected to resume full moderation activity. Submit a new /loa if you need an extension.`
-          }).catch(() => null);
-        }
-        await interaction.editReply({ content: '✅ LOA concluded — roles restored, card updated and the member was notified.' });
+        await interaction.editReply({ content: 'Request denied — the member was notified in DMs and nothing was changed.' });
         return;
       }
 
-      // ── Deny: nothing changes for the member ──
-      if (action === 'deny') {
-        const updated = appendLoaDecision(
-          cardJson,
-          `## ❌ LOA Denied\n> Denied by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.\n> No roles or nickname changes were made — the member stays fully active.`
-        );
-        await editLoaCard(client, interaction.message, updated);
-        if (record?.userId && interaction.message?.id) {
-          activeLoas.set(interaction.message.id, record);
-          record.status = 'denied';
-          record.decidedBy = interaction.user.id;
-          record.decidedAt = Date.now();
-          saveLoas();
-        }
-        if (record?.userId) {
-          await channel?.send({ allowedMentions: mentionOpts, content: `<@${record.userId}> — your Leave of Absence request was **denied** by <@${interaction.user.id}>.` }).catch(() => null);
-          await dmUser(client, record.userId, {
-            content: '❌ Your **Leave of Absence** request was **denied** by management.\n> Contact management if you believe this was a mistake.'
-          }).catch(() => null);
-        }
-        await interaction.editReply({ content: '✅ LOA denied — the member keeps their roles and nickname.' });
-        return;
-      }
+      // ── Approve: suspend their roles, arm the automatic end-of-leave ──
+      const applied = (guild && record.userId)
+        ? await applyLoaToMember(guild, record.userId)
+        : { ok: false, reason: 'Member not found.' };
 
-      // ── Approve: strip roles down to the keep-list + prefix the nickname with 𝑳𝑶𝑨┃ ──
-      let applied = { ok: true };
-      if (guild && record?.userId) {
-        applied = await applyLoaToMember(guild, record.userId);
-        if (record?.userId && interaction.message?.id) {
-          activeLoas.set(interaction.message.id, record);
-          record.removedRoleIds = applied.removedRoleIds || [];
-          record.originalNickname = applied.originalNickname ?? null;
-          record.status = 'approved';
-          record.approvedBy = interaction.user.id;
-          record.approvedAt = Date.now();
-          saveLoas();
-        }
-      }
-      const appliedNote = applied.ok
-        ? `\n> **Roles removed:** ${(applied.removedRoleIds || []).length} role(s) — kept <@&${LOA_KEEP_ROLE_IDS[1]}>\n` +
-          `> **Nickname:** ${applied.nicknameChanged ? `${LOA_NICK_PREFIX}name applied` : '⚠️ could not be changed (missing permission)'}`
-        : `\n> ⚠️ ${applied.reason}`;
-      const updated = appendLoaDecision(
-        cardJson,
-        `## ✅ LOA Approved\n> Approved by <@${interaction.user.id}> on <t:${Math.floor(Date.now() / 1000)}:D>.${appliedNote}\n` +
-        `> Use **Conclude LOA** when the leave ends to give everything back automatically.`
-      );
-      await editLoaCard(client, interaction.message, updated);
-      if (record?.userId) {
-        await channel?.send({ allowedMentions: mentionOpts, content: `<@${record.userId}> — your Leave of Absence was **approved** by <@${interaction.user.id}>.` }).catch(() => null);
-        await dmUser(client, record.userId, {
-          content: `✅ Your **Leave of Absence** request was **approved** by management.\n> Your roles were removed (except <@&${LOA_KEEP_ROLE_IDS[1]}>) and your nickname now starts with ${LOA_NICK_PREFIX}.\n> Everything is restored automatically when your LOA is concluded.`
-        }).catch(() => null);
-      }
-      await interaction.editReply({ content: `✅ LOA approved — roles removed and the ${LOA_NICK_PREFIX} nickname applied.` });
+      const problems = [...(applied.issues || [])];
+      if (applied.blockedRoles?.length) problems.push(`could not remove ${applied.blockedRoles.join(', ')}`);
+      if (!applied.nicknameChanged && applied.ok) problems.push('could not change the nickname');
+
+      const statusLine =
+        `## Leave of Absence Approved\n> Approved by <@${interaction.user.id}> on ${stamp}.\n` +
+        `> **Roles suspended:** ${(applied.removedRoleIds || []).length}\n` +
+        `> **Ends automatically:** ${record.endsAt ? `<t:${Math.floor(record.endsAt / 1000)}:F>` : (record.end || 'on the end date')}` +
+        (problems.length ? `\n> **Bot cannot do this — fix it:** ${problems.join(' · ')}` : '');
+      await editLoaCard(client, interaction.message, appendLoaDecision(cardJson, statusLine));
+      await syncLogCard(statusLine);
+
+      record.removedRoleIds = applied.removedRoleIds || [];
+      record.originalNickname = applied.originalNickname ?? null;
+      record.status = 'approved';
+      record.approvedBy = interaction.user.id;
+      record.approvedAt = Date.now();
+      saveLoas();
+      scheduleLoaConclude(client, record);
+
+      await dmUser(client, record.userId, {
+        components: [dmFrame(
+          '## Your Leave of Absence Has Been Approved',
+          `> Approved by <@${interaction.user.id}>.\n` +
+          `> **Your leave:** ${record.start} → ${record.end}\n` +
+          `> Your staff roles are suspended for the duration of your leave.\n` +
+          `> Everything is restored automatically when your leave ends — you will receive a DM to confirm it.`
+        ).toJSON()],
+        files: bannerFiles,
+        flags: MessageFlags.IsComponentsV2
+      }).catch(() => null);
+
+      await interaction.editReply({
+        content: problems.length
+          ? `Approved, but the bot could not finish everything:\n> ${problems.join('\n> ')}\n> The member has been notified in DMs.`
+          : `Approved — roles suspended and the leave ends automatically on **${record.end || 'the end date'}**. The member has been notified in DMs.`
+      });
       return;
     }
 
@@ -14129,24 +14492,37 @@ client.on(Events.MessageCreate, async (message) => {
           ping: `<@${message.author.id}> submitted a Leave of Absence request via -loa — management review required.`
         });
         if (result.ok) {
-          activeLoas.set(result.message.id, {
-            userId: message.author.id,
-            userTag: message.author.tag,
-            guildId: message.guildId,
-            channelId: result.channelId,
-            roblox, rank, start, end, reason,
-            status: 'pending',
-            createdAt: Date.now()
-          });
-          saveLoas();
+          registerLoaRequest(result, { roblox, rank, start, end, reason, user: message.author }, message.guildId);
         }
         await autoDeleteReply(
           message,
           result.ok
-            ? `✅ Leave of Absence request submitted in <#${result.channelId}>.\n> Management will review it shortly — nothing changes until it is approved.`
-            : `❌ Could not post the LOA card — ${result.error?.message || 'unknown error'}.`,
+            ? `Your Leave of Absence request has been logged in <#${LOA_CHANNEL_ID}> and sent to management for a decision.\n> Nothing changes until it is approved.`
+            : `Could not post the LOA request — ${result.error?.message || 'unknown error'}.`,
           30000
         );
+        return;
+      }
+
+      // ── -loaend command (management safety net — ends an LOA early) ──
+      if (lower === 'loaend' || lower.startsWith('loaend ')) {
+        const staff = message.member || (await message.guild.members.fetch(message.author.id).catch(() => null));
+        if (!isLoaApprover(staff)) {
+          await autoDeleteReply(message, `Only **LOA management** can end a Leave of Absence early.`, 20000);
+          return;
+        }
+        const targetMatch = message.content.match(/<?@!?(\d{15,20})>?/);
+        const targetId = targetMatch ? targetMatch[1] : null;
+        const record = targetId
+          ? [...activeLoas.values()].find((r) => r.userId === targetId && r.status === 'approved')
+          : [...activeLoas.values()].filter((r) => r.status === 'approved')
+            .sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0))[0];
+        if (!record) {
+          await autoDeleteReply(message, `No active (approved) Leave of Absence found${targetId ? ' for that member' : ''}.`, 20000);
+          return;
+        }
+        await autoConcludeLoa(message.client, record, { reason: 'ended early by management' });
+        await autoDeleteReply(message, `Leave of Absence ended for <@${record.userId}> — roles restored and they were notified in DMs.`, 20000);
         return;
       }
 
