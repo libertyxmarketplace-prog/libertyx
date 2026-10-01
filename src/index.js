@@ -6673,18 +6673,6 @@ function buildStaffApplicationPanelCard(bannerOverride) {
       'Select the position you want to apply for below. Your application will be sent to your DMs.\n'
     )
   );
-  card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '```ansi\n' +
-      '\u001b[1;31m⛔ AI-GENERATED APPLICATIONS ARE NOT ACCEPTED\u001b[0m\n' +
-      '\u001b[1;33mAny section of your application written, edited, or expanded with AI results in an ' +
-      'immediate and permanent blacklist — no warning, no appeal, no exceptions.\u001b[0m\n' +
-      '\u001b[2;37mEvery answer must be written by you, in your own words, describing your own ' +
-      'experience, availability, and personality. We review for authenticity.\u001b[0m\n' +
-      '```'
-    )
-  );
 
   card.addSeparatorComponents(thinLine());
   
@@ -6742,15 +6730,6 @@ async function refreshAllAppPanels(discordClient) {
 function buildApplicantDashboard(appData) {
   const card = new ContainerBuilder();
 
-  // The applications banner travels with the DM so it never looks bare.
-  if (fs.existsSync(APP_BANNER_PATH)) {
-    card.addMediaGalleryComponents(
-      new MediaGalleryBuilder().addItems(
-        new MediaGalleryItemBuilder().setURL('attachment://applications_banner.png')
-      )
-    );
-  }
-
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `# ${appData.appType} Application\n` +
@@ -6779,6 +6758,18 @@ function buildApplicantDashboard(appData) {
     new TextDisplayBuilder().setContent(
       `### How to apply\n` +
       `Work through the four sections below **in order**. Each one opens a short form in your DMs and turns green once it is finished — when all four are complete, **Submit Application** unlocks.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  // The AI policy lives here, in the applicant's own DM — not on the public panel.
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      '```ansi\n' +
+      '\u001b[1;31m⛔ AI-GENERATED APPLICATIONS ARE NOT ACCEPTED\u001b[0m\n' +
+      '\u001b[1;33mAny section of your application written, edited, or expanded with AI results in an immediate and permanent blacklist — no warning, no appeal, no exceptions.\u001b[0m\n' +
+      '\u001b[2;37mEvery answer must be written by you, in your own words, describing your own experience, availability, and personality. We review for authenticity.\u001b[0m\n' +
+      '```'
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -12965,9 +12956,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // Step 3: Send the fresh requested application card
         const dashboard = buildApplicantDashboard(newApp);
-        const dmFiles = fs.existsSync(APP_BANNER_PATH)
-          ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.png' })]
-          : [];
+        // No banner in the DM — the coloured AI policy is the only emphasis here.
+        const dmFiles = [];
         const dmMsg = await dmCh.send({
           allowedMentions: { users: [newApp.applicantId], parse: [] },
           components: [dashboard.toJSON()],
