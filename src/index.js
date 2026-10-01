@@ -6673,6 +6673,10 @@ function buildStaffApplicationPanelCard(bannerOverride) {
       'Select the position you want to apply for below. Your application will be sent to your DMs.\n'
     )
   );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(AI_POLICY_NOTICE)
+  );
 
   card.addSeparatorComponents(thinLine());
   
@@ -6727,6 +6731,14 @@ async function refreshAllAppPanels(discordClient) {
   }
 }
 
+// The single AI policy shown on the applications panel and in the applicant DM.
+const AI_POLICY_NOTICE =
+  '```ansi\n' +
+  '\u001b[1;31m⛔ AI-GENERATED APPLICATIONS ARE NOT ACCEPTED\u001b[0m\n' +
+  '\u001b[1;33mAny section of your application written, edited, or expanded with AI results in an immediate and permanent blacklist — no warning, no appeal, no exceptions.\u001b[0m\n' +
+  '\u001b[2;37mEvery answer must be written by you, in your own words, describing your own experience, availability, and personality. We review for authenticity.\u001b[0m\n' +
+  '```';
+
 function buildApplicantDashboard(appData) {
   const card = new ContainerBuilder();
 
@@ -6764,13 +6776,7 @@ function buildApplicantDashboard(appData) {
 
   // The AI policy lives here, in the applicant's own DM — not on the public panel.
   card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      '```ansi\n' +
-      '\u001b[1;31m⛔ AI-GENERATED APPLICATIONS ARE NOT ACCEPTED\u001b[0m\n' +
-      '\u001b[1;33mAny section of your application written, edited, or expanded with AI results in an immediate and permanent blacklist — no warning, no appeal, no exceptions.\u001b[0m\n' +
-      '\u001b[2;37mEvery answer must be written by you, in your own words, describing your own experience, availability, and personality. We review for authenticity.\u001b[0m\n' +
-      '```'
-    )
+    new TextDisplayBuilder().setContent(AI_POLICY_NOTICE)
   );
   card.addSeparatorComponents(thinLine());
 
@@ -6813,7 +6819,7 @@ function buildApplicantDashboard(appData) {
 
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent('```\nusing ai will be a  imidiete blacklist\n```')
+    new TextDisplayBuilder().setContent(AI_POLICY_NOTICE)
   );
 
   return card;
@@ -13430,8 +13436,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             '> **Status:** Expired or Already Processed\n' +
             '> \n' +
             '> This staff application has already been processed, archived, or is no longer pending review.\n' +
-            '> All official decision records are recorded in the designated application channels.\n\n' +
-            '```\nusing ai will be a  imidiete blacklist\n```'
+            '> All official decision records are recorded in the designated application channels.'
           )
         );
         await interaction.reply({
@@ -13449,8 +13454,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
             `> **Position:** **${appData.appType}**\n` +
             `> **Status:** Already **${(appData.status || 'Processed').toUpperCase()}** by **${appData.verdictBy?.tag || 'Staff Member'}**\n` +
-            (appData.verdictReason ? `> **Verdict Notes:** ${appData.verdictReason}\n\n` : '\n') +
-            '```\nusing ai will be a  imidiete blacklist\n```'
+            (appData.verdictReason ? `> **Verdict Notes:** ${appData.verdictReason}` : '')
           )
         );
         await interaction.reply({
@@ -13467,8 +13471,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             '## Staff Application Notice\n' +
             `> **Applicant:** <@${appData.applicantId}> (\`${appData.applicantTag}\`)\n` +
             `> **Position:** **${appData.appType}**\n` +
-            `> **Status:** 🔒 Already claimed and being reviewed by <@${appData.claimedReviewerId}>\n\n` +
-            '```\nusing ai will be a  imidiete blacklist\n```'
+            `> **Status:** 🔒 Already claimed and being reviewed by <@${appData.claimedReviewerId}>`
           )
         );
         await interaction.reply({
