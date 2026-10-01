@@ -1326,8 +1326,9 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildModeration
   ],
-  // Stay invisible in Discord - never shows as Online or Do Not Disturb.
-  presence: { status: 'invisible' }
+  // Idle = visible in the member list, but never a green "Online" dot.
+  // (invisible would hide it from the list entirely, 'online' shows Online)
+  presence: { status: 'idle' }
 });
 
 // ═══════════════════════ /suggestion - Community Suggestions Engine ═══════════════════════
