@@ -14421,81 +14421,119 @@ async function handleTicketUnaddMember(interaction, isSlash = true, targetUser =
 
 function buildCommandsGuidePage(pageIndex = 0) {
   const card = new ContainerBuilder();
-  const totalPages = 6;
+  const totalPages = 8;
   const page = Math.max(0, Math.min(totalPages - 1, pageIndex));
 
   if (page === 0) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Command Directory — Session Operations\n` +
-        `*Page 1 of ${totalPages} • Session management, voting, and real-time operations.*\n\n` +
-        `</panel:1549298204271448168> </session vote:1549298204271448167> </session shutdown:1549298204271448167>\n\n` +
-        `> • **Panel Hub:** Post session / ticket / verify / application / information panels\n` +
-        `> • **Session Vote:** Open an interactive session startup vote with goal & timer\n` +
-        `> • **Session Shutdown:** Safely end session, lock panel & notify voters`
+        `## Command Directory — Panel Hub & Content\n` +
+        `*Page 1 of ${totalPages} • Every panel and postable card lives here.*\n\n` +
+        `</panel:1549298204271448168> </shop:1549298204271448168> </media:1549298204271448168> </information:1549298204271448168>\n\n` +
+        `> • **Panel Hub:** Post **Session**, **Tickets**, **Verification**, **Applications**, **Information** (game rules) and **Shop** panels — one command for every panel.\n` +
+        `> • **Shop:** Post the membership shop panel (Donation / Membership+ / Paid Partnership).\n` +
+        `> • **Media:** Post a media drop with a banner, credit and an optional ping (Media Team only).\n` +
+        `> • **Information:** Server overview, community rules, FAQ and the full **Game Rules (R-1 → R-55)**.\n\n` +
+        `*The old /session panel, /ticket panel, /verify panel, /information panel and /staff application panel commands were removed — use /panel instead.*`
       )
     );
   } else if (page === 1) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Command Directory — Staff & Management\n` +
-        `*Page 2 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
-        `</staff promotion:1549298204271448169> </staff derank:1549298204271448169> </staff feedback:1549298204271448169> </panel:1549298204271448168>\n\n` +
-        `> • **Staff Promotion:** Issue promotion announcement & update user roles\n` +
-        `> • **Staff Derank:** Demote staff member & strip designated roles\n` +
-        `> • **Staff Feedback:** Submit a 1–5 star rating & review for a staff member\n` +
-        `> • **Panel Hub:** Post staff application / session / ticket panels via /panel`
+        `## Command Directory — Session Operations\n` +
+        `*Page 2 of ${totalPages} • Voting, hosting, and shutting down sessions.*\n\n` +
+        `</session vote:1549298204271448167> </session shutdown:1549298204271448167> </panel:1549298204271448168>\n\n` +
+        `> • **Session Vote:** Goal-based vote with a timer — members vote straight from the card.\n` +
+        `> • **Session Shutdown:** Ends the session, posts the closed card and DMs everyone who voted.\n` +
+        `> • **Panel Hub:** Post or refresh the live session panel with **/panel type:Session**.\n\n` +
+        `> When a vote hits its goal the **host is DM'd** a decision card (Start / Postpone).\n` +
+        `> Starting a session posts **only the session panel** — no text spam in the channel.`
       )
     );
   } else if (page === 2) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
+        `## Command Directory — Staff & Management\n` +
+        `*Page 3 of ${totalPages} • Staff administration, ranks, and applications.*\n\n` +
+        `</staff promotion:1549298204271448169> </staff derank:1549298204271448169> </staff feedback:1549298204271448169> </staff infraction:1549298204271448169> </retirement:1549298204271448169> </panel:1549298204271448168>\n\n` +
+        `> • **Staff Promotion:** Issue promotion announcement & update user roles\n` +
+        `> • **Staff Derank:** Demote staff member & strip designated roles\n` +
+        `> • **Staff Infraction:** Official staff infraction notice\n` +
+        `> • **Staff Feedback:** Submit a 1–5 star rating & review for a staff member\n` +
+        `> • **Retirement:** Post the official staff retirement announcement\n` +
+        `> • **Panel Hub:** Post the **Applications** panel with **/panel type:Applications**\n\n` +
+        `> Applications are **In-Game Staff only** — the application opens in the applicant's DMs.`
+      )
+    );
+  } else if (page === 3) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
         `## Command Directory — Moderation & Server Security\n` +
-        `*Page 3 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
+        `*Page 4 of ${totalPages} • Discord moderation, safety enforcement, and anti-nuke.*\n\n` +
         `</ban:1549298204271448173> </kick:1549298204724691004> </timeout:1549298204724691005> </unban:1549298204724691012> </purge:1549298204724691006>\n` +
         `</antinuke status:1549298204724691007> </antinuke snapshot:1549298204724691007> </antinuke restore:1549298204724691007>\n\n` +
         `> • **Moderation Actions:** Ban, kick, timeout, unban, and bulk-delete recent messages\n` +
         `> • **Anti-Nuke Defense:** Defense status, snapshot backups, and restore channels/roles`
       )
     );
-  } else if (page === 3) {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
-        `*Page 4 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
-        `</erlc scan:1549298204724691009> </erlc status:1549298204724691009> </erlc pm:1549298204724691009> </erlc message:1549298204724691009> </erlc hint:1549298204724691009>\n` +
-        `</erlc jail:1549298204724691009> </erlc unjail:1549298204724691009> </erlc kick:1549298204724691009> </erlc ban:1549298204724691009>\n` +
-        `</safezone strike:1549298204724691013> </safezone status:1549298204724691013> </safezone clear:1549298204724691013>\n\n` +
-        `> • **In-Game Commands:** Scan avatar outfits, send PMs, broadcasts (:m), and top hints (:h)\n` +
-        `> • **Player Punishments:** In-game jail, unjail, kick, and ban from private server\n` +
-        `> • **Safe Zone Enforcer:** Track shooting infractions, auto-escalations, and strike resets`
-      )
-    );
   } else if (page === 4) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Command Directory — Tickets, Roblox & Community\n` +
-        `*Page 5 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
+        `## Command Directory — ER:LC In-Game Moderation & Enforcer\n` +
+        `*Page 5 of ${totalPages} • Private server policing, command execution, and safe zones.*\n\n` +
+        `</erlc scan:1549298204724691009> </erlc status:1549298204724691009> </erlc pm:1549298204724691009> </erlc message:1549298204724691009> </erlc hint:1549298204724691009>\n` +
+        `</erlc jail:1549298204724691009> </erlc unjail:1549298204724691009> </erlc kick:1549298204724691009> </erlc ban:1549298204724691009>\n` +
+        `</safezone strike:1549298204724691013> </safezone status:1549298204724691013> </safezone clear:1549298204724691013> </exploit report:1549298204724691009>\n\n` +
+        `> • **In-Game Commands:** Scan avatar outfits, send PMs, broadcasts (:m), and top hints (:h)\n` +
+        `> • **Player Punishments:** In-game jail, unjail, kick, and ban from private server\n` +
+        `> • **Safe Zone Enforcer:** Track shooting infractions, auto-escalations, and strike resets\n` +
+        `> • **Exploit Reports:** File an exploiter report with evidence`
+      )
+    );
+  } else if (page === 5) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Tickets & Community\n` +
+        `*Page 6 of ${totalPages} • Assistance desk, member management, and prefix controls.*\n\n` +
         `</panel:1549298204271448168> </add:1549610085385240646> </unadd:1549610085385240647> </proof partnership:1549298204271448172> </suggest:1549298204271448171>\n\n` +
-        `> • **Panel Hub:** Post ticket / verification / session panels & manage ticket participants\n` +
-        `> • **Roblox & Proof:** Upload partnership proof\n` +
-        `> • **Community:** Submit interactive suggestions with voter cards\n\n` +
+        `> • **Panel Hub:** Post the **Tickets** panel with **/panel type:Tickets**\n` +
+        `> • **Ticket Members:** Add / remove people from a ticket with **/add** and **/unadd**\n` +
+        `> • **Partnership Proof:** Upload proof with **/proof partnership**\n` +
+        `> • **Suggestions:** Submit an interactive community suggestion\n\n` +
+        `> Every ticket has a **Claim**, **Close** and red **Report** button.\n` +
+        `> Reports are **sealed** until a staff member claims the ticket — the full details\n` +
+        `> are then released privately to whoever claimed it.\n\n` +
         `### Prefix Controls (-)\n` +
-        `> • **-busy** Set ticket desk to 🟡 Busy (panel turns yellow)\n` +
-        `> • **-open** / **-open all** Set desk to 🟢 Online (all categories open)\n` +
-        `> • **-close all** Set desk to 🔴 Closed (all categories locked)\n` +
-        `> • **-close <dept>** / **-open <dept>** Lock / unlock specific department\n` +
+        `> • **-busy** / **-open** / **-close all** Desk status (🟢 Online, 🟡 Busy, 🔴 Closed)\n` +
+        `> • **-open <dept>** / **-close <dept>** Lock or unlock one department\n` +
         `> • **-add @user** / **-unadd @user** Manage ticket channel members\n` +
-        `> • **-partnership <text>** Submit partnership application inside ticket\n` +
-        `> • **-confirm** Staff verification for paid partnership payments\n` +
-        `> • **-status** Display current operational availability of ticket desk`
+        `> • **-partnership <text>** Submit a partnership application inside a ticket\n` +
+        `> • **-confirm** Verify a paid partnership payment\n` +
+        `> • **-status** Show the current ticket desk availability`
+      )
+    );
+  } else if (page === 6) {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Command Directory — Leave of Absence\n` +
+        `*Page 7 of ${totalPages} • Submit, review, and restore staff leave.*\n\n` +
+        `</loa:1549298204271448168>\n\n` +
+        `> • **/loa:** Submit a Leave of Absence request (Roblox name, rank, dates, reason)\n` +
+        `> • **-loa** Submit the same request as a prefix message\n` +
+        `> • **-loaend @user** Management safety net — end a leave early\n\n` +
+        `> **How it works**\n` +
+        `> • The request is logged in the LOA channel and sent to management for a decision.\n` +
+        `> • Only **LOA Management** can Approve or Deny it.\n` +
+        `> • **Approve** suspends the member's staff roles and tags their nickname 𝑳𝑶𝑨┃\n` +
+        `> • The leave **ends automatically** on its end date: every role is restored,\n` +
+        `> the nickname is cleared, and the member gets a DM confirming it.`
       )
     );
   } else {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `## Command Directory — Emergency Controls & Appeals\n` +
-        `*Page 6 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
+        `*Page 8 of ${totalPages} • Emergency recovery, appeals, and system diagnostics.*\n\n` +
         `</appeal:1549597649848766495> </retrigger:1549298204271448166> </commands:1549298204271448164>\n\n` +
         `> • **Appeal:** Open official private server ban appeal\n` +
         `> • **Retrigger:** Emergency reboot & re-sync (re-registers commands, restarts timers, unblocks buttons)\n` +
