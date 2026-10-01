@@ -33,6 +33,18 @@ import {
 } from 'discord.js';
 import { fileURLToPath } from 'node:url';
 import { RULES_PAGES } from './rules.js';
+import {
+  AI_DIRECTIVE_ID,
+  AI_OWNER_ID,
+  aiAccessTier,
+  aiConfigured,
+  buildAiHelpText,
+  executeIntent,
+  logAiAction,
+  providerStatus,
+  providerSummary,
+  resolveIntent
+} from './ai.js';
 import http from 'node:http';
 import path from 'node:path';
 import { fork } from 'node:child_process';
@@ -8995,6 +9007,14 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadPartnerBans();
     loadLoas();
     resumeLoaTimers(readyClient || client);
+    loadAiTempBans();
+    scheduleAiTempBanSweep();
+    console.log(
+      `[AI] Engine ${aiConfigured() ? 'ready' : 'OFFLINE (no provider keys)'} — chain: ${providerSummary()}`
+    );
+    console.log(
+      `[AI] Access: owner <@${AI_OWNER_ID}>, directive <@${AI_DIRECTIVE_ID}>. Try \`-ai help\`.`
+    );
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
       if (g) await backupGuildState(g);
@@ -14453,7 +14473,7 @@ async function handleTicketUnaddMember(interaction, isSlash = true, targetUser =
 
 function buildCommandsGuidePage(pageIndex = 0) {
   const card = new ContainerBuilder();
-  const totalPages = 8;
+  const totalPages = 9;
   const page = Math.max(0, Math.min(totalPages - 1, pageIndex));
 
   if (page === 0) {
@@ -14561,7 +14581,7 @@ function buildCommandsGuidePage(pageIndex = 0) {
         `> the nickname is cleared, and the member gets a DM confirming it.`
       )
     );
-  } else {
+  } else if (page === 7) {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `## Command Directory — Emergency Controls & Appeals\n` +
@@ -14570,6 +14590,36 @@ function buildCommandsGuidePage(pageIndex = 0) {
         `> • **Appeal:** Open official private server ban appeal\n` +
         `> • **Retrigger:** Emergency reboot & re-sync (re-registers commands, restarts timers, unblocks buttons)\n` +
         `> • **Commands Directory:** Open this interactive multi-page command directory`
+      )
+    );
+  } else {
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## 🤖 Command Directory — AI Command Engine\n` +
+        `*Page 9 of ${totalPages} • Just say what you want in plain English.*\n\n` +
+        `> **Prefix only:** there is no \`/ai\` slash command. Type \`-ai <request>\` in any channel.\n\n` +
+        `### Directive Team — available to you\n` +
+        `> • **Sessions** — \`-ai start a session vote with 5 users for 2 hours\` · \`-ai close the session\`\n` +
+        `> • **Panels** — \`-ai post the session panel\` · \`-ai post the ticket panel\` · \`-ai post the verification panel\`\n` +
+        `> • **Ticket desk** — \`-ai make the ticket desk busy\` · \`-ai close the general ticket\` · \`-ai open internal affairs\` · \`-ai close all tickets\`\n` +
+        `> • **Applications** — \`-ai close staff applications\` · \`-ai open applications\`\n` +
+        `> • **Tickets** — \`-ai add @user to this ticket\` · \`-ai remove @user from this ticket\`\n` +
+        `> • **Suggestions** — \`-ai make a suggestion that we add more staff\` · \`-ai show the top suggestion\`\n` +
+        `> • **Info** — \`-ai how many players are online\` · \`-ai what is the desk status\`\n\n` +
+        `### Owner — additionally available to you\n` +
+        `> • **Moderation** — \`-ai ban @user for 7 days for spamming\` · \`-ai ban @user permanently\` · \`-ai unban @user\` · \`-ai kick @user for raiding\` · \`-ai timeout @user for 2 hours\` · \`-ai unmute @user\` · \`-ai purge 25\`\n` +
+        `> • **Server** — \`-ai say Session starts in 5 minutes\` · \`-ai lock this channel\` · \`-ai unlock this channel\`\n` +
+        `> • **In-game** — \`-ai jail RobloxName\` · \`-ai unjail RobloxName\` · \`-ai pm RobloxName to join staff\` · \`-ai announce we are full\` · \`-ai hint roadblock ahead\` · \`-ai kick RobloxName\` · \`-ai ban RobloxName\` · \`-ai unban RobloxName\`\n` +
+        `> • **System** — \`-ai retrigger the bot\` · \`-ai refresh everything\`\n\n` +
+        `### Notes\n` +
+        `> • Type \`-ai help\` at any time for your full list and live provider status.\n` +
+        `> • Three AI providers (FreeTheAI, OpenRouter, HuggingFace) are tried in order —\n` +
+        `> whichever answers first wins, so a rate limit never blocks you.\n` +
+        `> • Nothing is guessed: if the request is unclear the bot refuses instead of acting.\n` +
+        `> • Suggestions are posted with your exact words, never rewritten by the AI.\n` +
+        `> • Every action is written to Security-Logs with the request, user, provider and result.\n` +
+        `> • Access: <@${AI_OWNER_ID}> (owner) and <@${AI_DIRECTIVE_ID}> (Directive Team).\n\n` +
+        `-# Owner <@${AI_OWNER_ID}> · Directive Team <@${AI_DIRECTIVE_ID}>`
       )
     );
   }
@@ -14851,7 +14901,498 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
   }
 }
 
+// ═══════════════════════ AI Command Engine (`-ai <request>`) ═══════════════════
+// Natural-language staff control. Intent parsing and permission gating live in
+// src/ai.js; everything below is the runtime context it executes against.
+
+/** Cooldown per user so one person cannot spam the (rate-limited) gateway. */
+const aiCooldowns = new Map();
+const AI_COOLDOWN_MS = 3000;
+// Same Security-Logs channel sendSecurityLog() writes to.
+const AI_SECURITY_LOG_CHANNEL_ID = '1277365829247307857';
+
+/** Renders a millisecond duration as a short human label. */
+function formatDurationLabel(ms) {
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'}`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
+/** Builds a simple one-line moderation log card. */
+function aiModLogCard(title, lines) {
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(title));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(lines.join('\n')));
+  return card;
+}
+
+/**
+ * Opens a session vote from the AI path, mirroring the `/session vote` handler.
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function aiStartSessionVote({ message, needed, duration, roleId, hostName }) {
+  const durationMs = VOTE_DURATIONS[duration] ?? VOTE_DURATIONS['1h'];
+  let role = roleId ? message.guild.roles.cache.get(roleId) : null;
+  if (!role) role = message.guild.roles.cache.get(SERVER.pingRoleId) ?? null;
+  if (!role) role = message.guild.roles.cache.get(message.guild.id);
+
+  const vote = {
+    id: `v${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+    guildId: message.guildId,
+    channelId: message.channelId,
+    messageId: null,
+    hostId: message.author.id,
+    hostName,
+    needed,
+    roleId: role.id,
+    pingMention: formatRoleMention(role.id, message.guildId),
+    endTs: Date.now() + durationMs,
+    ready: false,
+    postponed: false,
+    started: false,
+    expired: false,
+    voters: {}
+  };
+
+  const voteFiles = fs.existsSync(VOTE_BANNER_PATH)
+    ? [new AttachmentBuilder(VOTE_BANNER_PATH, { name: 'vote_banner.png' })]
+    : [];
+
+  let sent;
+  try {
+    sent = await message.channel.send({
+      allowedMentions: { roles: [role.id] },
+      components: [buildVoteContainer(vote).toJSON()],
+      files: voteFiles,
+      flags: MessageFlags.IsComponentsV2
+    });
+  } catch (sendErr) {
+    const msg = String(sendErr?.message ?? sendErr);
+    if (!/allowed_mentions|Invalid Form Body|parse/i.test(msg)) {
+      return { ok: false, message: `❌ Could not post the vote card here (${msg}).` };
+    }
+    console.warn(`[ai] vote ping rejected (${msg}) - retrying without role ping.`);
+    try {
+      sent = await message.channel.send({
+        components: [buildVoteContainer(vote).toJSON()],
+        files: voteFiles,
+        allowedMentions: { parse: [] },
+        flags: MessageFlags.IsComponentsV2
+      });
+    } catch (err) {
+      return { ok: false, message: `❌ Could not post the vote card here (${err.message}).` };
+    }
+  }
+
+  vote.messageId = sent.id;
+  activeVotes.set(vote.id, vote);
+  saveVotes();
+  setVoteTimer(client, vote);
+
+  const durLabel = { '30m': '30 minutes', '1h': '1 hour', '2h': '2 hours', '5h': '5 hours' }[duration] ?? '1 hour';
+  return {
+    ok: true,
+    message: `🗳️ Session vote is live in <#${message.channelId}> — needs **${needed}** votes, ends <t:${Math.floor(vote.endTs / 1000)}:R> (${durLabel}). Ping role: ${formatRoleMention(role.id, message.guildId)}`
+  };
+}
+
 const repliedCommandMessageIds = new Set();
+
+// ── Timed bans issued by the AI engine ───────────────────────────────────────
+// Discord has no native timed ban, so `-ai ban <user> for 7 days` records the
+// expiry here and a sweeper lifts the ban when the window closes.
+const AI_TEMP_BANS_FILE = fileURLToPath(new URL('../ai_temp_bans.json', import.meta.url));
+const aiTempBans = new Map(); // userId -> { guildId, until, by }
+let aiTempBanSweepTimer = null;
+
+function loadAiTempBans() {
+  try {
+    if (!fs.existsSync(AI_TEMP_BANS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(AI_TEMP_BANS_FILE, 'utf8'));
+    const now = Date.now();
+    for (const [userId, rec] of Object.entries(raw)) {
+      if (rec?.until > now) aiTempBans.set(userId, rec);
+    }
+    console.log(`Restored ${aiTempBans.size} pending AI timed ban(s) from ai_temp_bans.json.`);
+  } catch (err) {
+    console.error('Could not read ai_temp_bans.json:', err.message);
+  }
+}
+
+function saveAiTempBans() {
+  try {
+    const flat = {};
+    for (const [userId, rec] of aiTempBans) flat[userId] = rec;
+    fs.writeFileSync(AI_TEMP_BANS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Could not save ai_temp_bans.json:', err.message);
+  }
+}
+
+/** Lifts every timed ban whose window has passed. */
+async function sweepAiTempBans() {
+  const now = Date.now();
+  let lifted = 0;
+  for (const [userId, rec] of [...aiTempBans]) {
+    if (rec.until > now) continue;
+    aiTempBans.delete(userId);
+    try {
+      const guild = await client.guilds.fetch(rec.guildId).catch(() => null);
+      if (guild) {
+        await guild.members.unban(userId, 'Timed ban expired.').catch(() => null);
+        const card = aiModLogCard('## ✅ Timed Ban Expired', [
+          `> **User:** <@${userId}> (\`${userId}\`)`,
+          `> **Issued by:** <@${rec.by}>`,
+          `> **Status:** The ban has been lifted automatically.`
+        ]);
+        await sendSecurityLog(guild, card).catch(() => null);
+      }
+      lifted++;
+    } catch (err) {
+      console.warn(`[ai] temp ban sweep failed for ${userId}: ${err.message}`);
+    }
+  }
+  if (lifted) {
+    saveAiTempBans();
+    console.log(`[ai] lifted ${lifted} expired timed ban(s).`);
+  }
+}
+
+/** (Re)arms the sweep timer to run just before the next expiry. */
+function scheduleAiTempBanSweep() {
+  if (aiTempBanSweepTimer) clearTimeout(aiTempBanSweepTimer);
+  const now = Date.now();
+  const pending = [...aiTempBans.values()].map((r) => r.until).filter((t) => t > now);
+  if (!pending.length) return;
+  const next = Math.min(...pending);
+  const delay = Math.max(1000, next - now + 5000);
+  aiTempBanSweepTimer = setTimeout(async () => {
+    await sweepAiTempBans();
+    scheduleAiTempBanSweep();
+  }, delay);
+  aiTempBanSweepTimer.unref?.();
+}
+
+/** Locks or unlocks a channel for @everyone, leaving staff overwrites intact. */
+async function aiSetChannelLock(channel, locked, reason) {
+  if (!channel?.isTextBased?.()) return;
+  await channel.permissionOverwrites.edit(channel.guild.id, {
+    SendMessages: locked ? false : true,
+    SendMessagesInThreads: locked ? false : true,
+    AddReactions: locked ? false : true,
+    reason
+  });
+}
+
+/** Runs an in-game ER:LC command and mirrors the existing staff log cards. */
+async function aiErclAction({ verb, player, text, message }) {
+  const clean = (value) => sanitizeRobloxMessage(String(value ?? '')).slice(0, 400);
+  let command = null;
+  let title = '';
+  let emoji = '';
+
+  if (verb === 'pm') {
+    command = `:pm ${player} ${clean(text)}`;
+    title = '## 📨 In-Game Private Message Sent';
+    emoji = '📨';
+  } else if (verb === 'message') {
+    command = `:m ${clean(text)}`;
+    title = '## 📢 In-Game Broadcast Sent';
+    emoji = '📢';
+  } else if (verb === 'hint') {
+    command = `:h ${clean(text)}`;
+    title = '## 💡 In-Game Top Hint Sent';
+    emoji = '💡';
+  } else if (verb === 'jail') {
+    command = `:jail ${player}`;
+    title = '## 🔒 Player Jailed In-Game';
+    emoji = '🔒';
+  } else if (verb === 'unjail') {
+    command = `:unjail ${player}`;
+    title = '## 🔓 Player Unjailed In-Game';
+    emoji = '🔓';
+  } else if (verb === 'kick') {
+    command = `:kick ${player} ${clean(text) || 'Staff moderation'}`;
+    title = '## 👢 Player Kicked In-Game';
+    emoji = '👢';
+  } else if (verb === 'ban') {
+    command = `:ban ${player} ${clean(text) || 'Staff moderation'}`;
+    title = '## 🚫 Player Banned In-Game';
+    emoji = '🚫';
+  } else if (verb === 'unban') {
+    clearAllPlayerPenalties(player);
+    command = `:unban ${player}`;
+    title = '## 🤝 Player Unbanned In-Game';
+    emoji = '🤝';
+  } else {
+    return { ok: false, message: `❌ Unknown in-game action "${verb}".` };
+  }
+
+  const res = await sendErlcCommand(command);
+  if (!res.ok) return { ok: false, message: `❌ In-game command failed: ${res.error}` };
+
+  const lines = [
+    `> **Moderator:** <@${message.author.id}> (${message.author.tag})`,
+    `> **Command:** \`${verb}${player ? ` → ${player}` : ''}\``
+  ];
+  if (text && ['pm', 'message', 'hint', 'kick', 'ban'].includes(verb)) {
+    lines.push(`> **Details:** ${clean(text)}`);
+  }
+  lines.push(`> **Timestamp:** <t:${Math.floor(Date.now() / 1000)}:f>`);
+
+  const card = aiModLogCard(title, lines);
+  await sendGameLog(message.guild, card).catch(() => null);
+  await sendSecurityLog(message.guild, card).catch(() => null);
+  return { ok: true, message: `${emoji} In-game **${verb}** executed${player ? ` on \`${player}\`` : ''}.` };
+}
+
+/** Posts a community suggestion from the AI path, reusing the normal card. */
+async function aiCreateSuggestion({ text, authorId, authorAvatar }) {
+  const targetChannel = await client.channels.fetch(SUGGESTION_CHANNEL_ID).catch(() => null);
+  if (!targetChannel?.isTextBased?.()) {
+    return { ok: false, message: '❌ The suggestion channel is unavailable right now.' };
+  }
+  const nextId = activeSuggestions.size > 0
+    ? Math.max(...[...activeSuggestions.values()].map((s) => Number(s.id) || 0)) + 1
+    : 1;
+
+  const sug = {
+    id: String(nextId),
+    guildId: client.guilds.cache.first()?.id ?? null,
+    channelId: targetChannel.id,
+    messageId: null,
+    authorId,
+    authorAvatar,
+    text,
+    upvoters: [],
+    downvoters: [],
+    createdAt: Date.now()
+  };
+
+  const posted = await targetChannel.send({
+    components: [buildSuggestionContainer(sug, client).toJSON()],
+    flags: MessageFlags.IsComponentsV2
+  });
+  sug.messageId = posted.id;
+  activeSuggestions.set(sug.id, sug);
+  saveSuggestions();
+
+  await posted.startThread({
+    name: `Suggestion #${sug.id} - ${sug.text.slice(0, 30).replace(/[\r\n]+/g, ' ')}`,
+    autoArchiveDuration: 1440
+  }).catch(() => null);
+
+  return { ok: true, message: `💡 Suggestion **#${sug.id}** posted in <#${targetChannel.id}> with a discussion thread.` };
+}
+
+/** Shows the highest-rated community suggestion. */
+function aiTopSuggestion() {
+  if (activeSuggestions.size === 0) {
+    return { ok: false, message: 'No community suggestions have been submitted yet.' };
+  }
+  const sorted = [...activeSuggestions.values()].sort((a, b) => {
+    const netA = a.upvoters.length - a.downvoters.length;
+    const netB = b.upvoters.length - b.downvoters.length;
+    if (netB !== netA) return netB - netA;
+    return b.upvoters.length - a.upvoters.length;
+  });
+  const top = sorted[0];
+  return {
+    ok: true,
+    message:
+      `## 🏆 Top Community Suggestion (#${top.id})\n` +
+      `> **Submitted by:** <@${top.authorId}>\n` +
+      `> **Votes:** **${top.upvoters.length}** Upvotes • **${top.downvoters.length}** Downvotes\n\n` +
+      `${top.text}\n` +
+      (top.messageId && top.channelId && top.guildId
+        ? `> [View the original suggestion](https://discord.com/channels/${top.guildId}/${top.channelId}/${top.messageId})`
+        : '')
+  };
+}
+
+/**
+ * Handles the `-ai <request>` prefix command.
+ *
+ * Access: owner (every action) and the Directive Team (non-destructive set).
+ * Everyone else is refused so the command cannot be probed.
+ */
+async function handleAiPrefixCommand(message, requestText) {
+  const tier = aiAccessTier(message.author.id);
+
+  if (tier === 'none') {
+    await autoDeleteReply(
+      message,
+      '❌ The AI command engine is limited to the bot owner and the Directive Team.',
+      20000
+    );
+    return;
+  }
+
+  // `-ai` with no request, or an explicit help word, always answers instantly.
+  const trimmed = String(requestText || '').trim();
+  if (!trimmed || /^(help|what can you do|commands|list|guide|options)\b/i.test(trimmed)) {
+    await autoDeleteReply(message, buildAiHelpText(tier), 60000);
+    return;
+  }
+
+  // Rate limit per user so one person cannot burn the free gateway quota.
+  const last = aiCooldowns.get(message.author.id) ?? 0;
+  const wait = AI_COOLDOWN_MS - (Date.now() - last);
+  if (wait > 0) {
+    await autoDeleteReply(message, `⏳ Slow down — try again in ${Math.ceil(wait / 1000)}s.`, 10000);
+    return;
+  }
+  aiCooldowns.set(message.author.id, Date.now());
+
+  // Acknowledge before the (slow) gateway call so the channel never looks dead.
+  const thinking = await message.reply({ content: '🧠 **Working on it…**' }).catch(() => null);
+
+  let intent;
+  try {
+    intent = await resolveIntent(trimmed, { tier });
+  } catch (err) {
+    console.error(`[ai] resolve failed: ${err.message}`);
+    await thinking?.edit({ content: `❌ I could not process that request (${err.message}).` }).catch(() => null);
+    return;
+  }
+
+  const ctx = {
+    client,
+    message,
+    securityLogChannelId: AI_SECURITY_LOG_CHANNEL_ID,
+    // Existing bot helpers reused by the executor.
+    executeShutdown,
+    postPanelByType,
+    fetchServerStats,
+    serverStatus,
+    playersText,
+    queueText,
+    sessionCode,
+    joinUrl,
+    handleCommandsGuideCommand,
+    handleRetriggerCommand,
+    getActiveTicket,
+    // Datastores the AI is allowed to flip.
+    ticketDeskState,
+    saveTicketDeskState,
+    refreshAllTicketPanels,
+    appGateState,
+    saveAppGateState,
+    refreshAllAppPanels,
+    // AI-specific implementations.
+    startSessionVote: aiStartSessionVote,
+    banUser: aiBanUser,
+    kickUser: aiKickUser,
+    timeoutUser: aiTimeoutUser,
+    setChannelLock: aiSetChannelLock,
+    erlcAction: aiErclAction,
+    createSuggestion: aiCreateSuggestion,
+    topSuggestion: aiTopSuggestion,
+    resolvePingRole: (roleId) => (roleId ? String(roleId) : null),
+    resolveUserId: (value) => (value ? String(value).match(/\d{17,20}/)?.[0] ?? null : null),
+    resolveMember: (userId, guild) =>
+      userId ? guild.members.fetch(userId).catch(() => null) : Promise.resolve(null)
+  };
+
+  const enriched = { ...intent, tier };
+  let result;
+  try {
+    result = await executeIntent(enriched, ctx);
+  } catch (err) {
+    console.error('[ai] execute failed:', err);
+    result = { ok: false, message: `❌ That failed: ${err.message}`.slice(0, 400) };
+  }
+
+  const notice = intent.gatewayNotice ? `${intent.gatewayNotice}\n\n` : '';
+  await thinking?.edit({ content: `${notice}${result.message}`.slice(0, 1900) }).catch(() => null);
+
+  // Only audit real actions — refused or unmapped requests are noise.
+  if (intent.action !== 'unsupported') await logAiAction(ctx, enriched, result);
+
+  // Clean up the command message and the reply after a short window.
+  setTimeout(async () => {
+    await message.delete().catch(() => null);
+    await thinking?.delete().catch(() => null);
+  }, result.ok ? 45000 : 25000);
+}
+
+/** Bans a user, optionally for a fixed number of days (null = permanent). */
+async function aiBanUser({ guild, userId, reason, deleteDays, durationDays, by }) {
+  if (durationDays !== null && durationDays !== undefined) {
+    // Discord has no native timed bans, so we record the expiry and sweep it.
+    const untilMs = Date.now() + durationDays * 86_400_000;
+    await guild.bans.create(userId, {
+      reason: `${reason} (${durationDays}d ban issued by ${by.tag})`,
+      deleteMessageSeconds: deleteDays * 86_400
+    });
+    aiTempBans.set(userId, { guildId: guild.id, until: untilMs, by: by.id });
+    saveAiTempBans();
+    scheduleAiTempBanSweep();
+    await sendSecurityLog(guild, aiModLogCard('## 🔨 Member Banned (Temporary)', [
+      `> **User:** <@${userId}> (\`${userId}\`)`,
+      `> **Moderator:** <@${by.id}>`,
+      `> **Duration:** ${durationDays} day${durationDays === 1 ? '' : 's'} — lifts <t:${Math.floor(untilMs / 1000)}:f>`,
+      `> **Reason:** ${reason}`
+    ])).catch(() => null);
+    return { ok: true, message: `🔨 Banned <@${userId}> for **${durationDays} day${durationDays === 1 ? '' : 's'}** — lifts <t:${Math.floor(untilMs / 1000)}:f>.` };
+  }
+
+  await guild.bans.create(userId, {
+    reason: `${reason} (issued by ${by.tag})`,
+    deleteMessageSeconds: deleteDays * 86_400
+  });
+  aiTempBans.delete(userId);
+  saveAiTempBans();
+  await sendSecurityLog(guild, aiModLogCard('## 🔨 Member Banned', [
+    `> **User:** <@${userId}> (\`${userId}\`)`,
+    `> **Moderator:** <@${by.id}>`,
+    `> **Duration:** Permanent`,
+    `> **Reason:** ${reason}`
+  ])).catch(() => null);
+  return { ok: true, message: `🔨 Permanently banned <@${userId}>.` };
+}
+
+/** Kicks a member after checking role hierarchy. */
+async function aiKickUser({ guild, userId, reason, by }) {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return { ok: false, message: '❌ That member is not in the server.' };
+  if (!member.kickable) return { ok: false, message: '❌ I cannot kick that member — their role is higher than mine.' };
+  const executor = await guild.members.fetch(by.id).catch(() => null);
+  if (executor && executor.roles.highest.position <= member.roles.highest.position && guild.ownerId !== by.id) {
+    return { ok: false, message: '❌ You cannot kick that member — their role is higher than or equal to yours.' };
+  }
+  await member.kick(`${reason} (issued by ${by.tag})`);
+  await sendSecurityLog(guild, aiModLogCard('## 👢 Member Kicked', [
+    `> **User:** <@${userId}> (\`${userId}\`)`,
+    `> **Moderator:** <@${by.id}>`,
+    `> **Reason:** ${reason}`
+  ])).catch(() => null);
+  return { ok: true, message: `👢 Kicked <@${userId}>.` };
+}
+
+/** Times a member out after checking role hierarchy. */
+async function aiTimeoutUser({ guild, userId, minutes, reason, by }) {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return { ok: false, message: '❌ That member is not in the server.' };
+  if (!member.moderatable) return { ok: false, message: '❌ I cannot timeout that member — their role is higher than mine.' };
+  const executor = await guild.members.fetch(by.id).catch(() => null);
+  if (executor && executor.roles.highest.position <= member.roles.highest.position && guild.ownerId !== by.id) {
+    return { ok: false, message: '❌ You cannot timeout that member — their role is higher than or equal to yours.' };
+  }
+  await member.timeout(minutes * 60_000, `${reason} (issued by ${by.tag})`);
+  await sendSecurityLog(guild, aiModLogCard('## 🔇 Member Timed Out', [
+    `> **User:** <@${userId}> (\`${userId}\`)`,
+    `> **Moderator:** <@${by.id}>`,
+    `> **Duration:** ${formatDurationLabel(minutes * 60_000)}`,
+    `> **Reason:** ${reason}`
+  ])).catch(() => null);
+  return { ok: true, message: `🔇 Timed out <@${userId}> for **${formatDurationLabel(minutes * 60_000)}**.` };
+}
+
 async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   if (!userMessage?.id) return;
   if (repliedCommandMessageIds.has(userMessage.id)) return;
@@ -15309,6 +15850,14 @@ client.on(Events.MessageCreate, async (message) => {
           await handleTicketUnaddMember(message, false, targetUser);
         }
       }
+      return;
+    }
+
+    // ── 2. -ai <plain english request> — AI Command Engine ──
+    // Runs BEFORE the ticket-desk staff gate so the engine's own access rules
+    // (owner + Directive Team) are the only thing that decides who may use it.
+    if (lower === 'ai' || lower.startsWith('ai ')) {
+      await handleAiPrefixCommand(message, trimmed.slice(2).trim());
       return;
     }
 
