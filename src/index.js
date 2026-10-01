@@ -1325,7 +1325,9 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildModeration
-  ]
+  ],
+  // Stay invisible in Discord - never shows as Online or Do Not Disturb.
+  presence: { status: 'invisible' }
 });
 
 // ═══════════════════════ /suggestion - Community Suggestions Engine ═══════════════════════
@@ -6673,10 +6675,13 @@ function buildStaffApplicationPanelCard(bannerOverride) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `### Before you apply\n` +
-      `> **No AI assistance of any kind — this applies to every section.**\n` +
-      `> Anything written with AI, in whole or in part, is grounds for an **immediate blacklist** from Alabama State Roleplay.\n` +
-      `> Every answer must be your own words, your own experiences, and your own availability.`
+      '```ansi\n' +
+      '\u001b[1;31m⛔ AI-GENERATED APPLICATIONS ARE NOT ACCEPTED\u001b[0m\n' +
+      '\u001b[1;33mAny section of your application written, edited, or expanded with AI results in an ' +
+      'immediate and permanent blacklist — no warning, no appeal, no exceptions.\u001b[0m\n' +
+      '\u001b[2;37mEvery answer must be written by you, in your own words, describing your own ' +
+      'experience, availability, and personality. We review for authenticity.\u001b[0m\n' +
+      '```'
     )
   );
 
@@ -6735,12 +6740,10 @@ async function refreshAllAppPanels(discordClient) {
 
 function buildApplicantDashboard(appData) {
   const card = new ContainerBuilder();
-  const done = ['step1Done', 'step2Done', 'step3Done', 'step4Done'].filter((k) => appData[k]).length;
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## ${appData.appType} Application\n` +
-      `> **Applicant:** <@${appData.applicantId}> (${appData.applicantTag})  •  ` +
-      `**Progress:** ${done} of 4 sections complete`
+      `> **Applicant:** <@${appData.applicantId}> (${appData.applicantTag})`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -6764,34 +6767,33 @@ function buildApplicantDashboard(appData) {
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> Work through the sections below in order — each one opens a short form in your DMs.\n` +
-      `> Finished sections turn green and unlock the next. When all four are done, **Submit Application** appears.`
+      `> Please complete each of the **four numbered steps** below in order.\n` +
+      `> Buttons will turn green as you finish each section. Once all four steps are completed, click **Submit Application**.`
     )
   );
   card.addSeparatorComponents(thinLine());
 
-  // Primary (not grey) so the card never looks dormant while it is being filled in.
   const btn1 = new ButtonBuilder()
     .setCustomId(`app_btn_step1_${appData.id}`)
-    .setLabel(appData.step1Done ? '1. Rules & Requirements ✓' : '1. Rules & Requirements')
-    .setStyle(appData.step1Done ? ButtonStyle.Success : ButtonStyle.Primary);
+    .setLabel('1. Rules & Requirements')
+    .setStyle(appData.step1Done ? ButtonStyle.Success : ButtonStyle.Secondary);
 
   const btn2 = new ButtonBuilder()
     .setCustomId(`app_btn_step2_${appData.id}`)
-    .setLabel(appData.step2Done ? '2. General Information ✓' : '2. General Information')
-    .setStyle(appData.step2Done ? ButtonStyle.Success : ButtonStyle.Primary)
+    .setLabel('2. General Information')
+    .setStyle(appData.step2Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step1Done);
 
   const btn3 = new ButtonBuilder()
     .setCustomId(`app_btn_step3_${appData.id}`)
-    .setLabel(appData.step3Done ? '3. Core Knowledge ✓' : '3. Core Knowledge')
-    .setStyle(appData.step3Done ? ButtonStyle.Success : ButtonStyle.Primary)
+    .setLabel('3. Core Knowledge')
+    .setStyle(appData.step3Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step2Done);
 
   const btn4 = new ButtonBuilder()
     .setCustomId(`app_btn_step4_${appData.id}`)
-    .setLabel(appData.step4Done ? '4. Realistic Scenarios ✓' : '4. Realistic Scenarios')
-    .setStyle(appData.step4Done ? ButtonStyle.Success : ButtonStyle.Primary)
+    .setLabel('4. Realistic Scenarios')
+    .setStyle(appData.step4Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step3Done);
 
   const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3, btn4);
