@@ -3,6 +3,7 @@ import axios from 'axios';
 import fs from 'node:fs';
 import {
   ActionRowBuilder,
+  ActivityType,
   AttachmentBuilder,
   AuditLogEvent,
   ButtonBuilder,
@@ -8917,6 +8918,34 @@ async function maintainLeaderLock(discordClient) {
   }
 }
 
+/**
+ * Bot status: "Watching" a live count of members and ER:LC players in game.
+ * Stays on the idle (yellow) presence so it never reads as plain "Online".
+ */
+async function updateBotPresence(botClient) {
+  try {
+    const guild = botClient.guilds.cache.get(config.guildId) || botClient.guilds.cache.first();
+    const members = guild?.memberCount ?? 0;
+    let players = null;
+    try {
+      const stats = await fetchServerStats();
+      if (Number.isFinite(stats?.players)) players = stats.players;
+    } catch { /* API hiccup - still show the member count */ }
+
+    const parts = [];
+    if (players !== null) parts.push(`${players} playing`);
+    if (members) parts.push(`${members.toLocaleString('en-US')} members`);
+    const text = parts.length ? parts.join(' · ') : 'Alabama State Roleplay';
+
+    botClient.user?.setPresence({
+      activities: [{ name: text, type: ActivityType.Watching }],
+      status: 'idle'
+    });
+  } catch (err) {
+    console.warn(`Could not update bot presence: ${err.message}`);
+  }
+}
+
 client.once(Events.ClientReady, async (readyClient) => {
   // Register the /session commands + restore persisted votes.
   // NOTE: if you run the bot twice (2 terminals, dry.mjs still open, pm2 +
@@ -9048,6 +9077,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   startErlcEnforcerLoop(readyClient);
   maintainLeaderLock(readyClient);
   setInterval(() => maintainLeaderLock(readyClient), 8000);
+// Keep the "Watching ..." status fresh without spamming the ER:LC API.
+void updateBotPresence(readyClient);
+setInterval(() => void updateBotPresence(readyClient), 5 * 60_000);
 });
 
 // ═══════════════════════ Welcome Message ═══════════════════════
