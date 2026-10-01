@@ -6817,11 +6817,6 @@ function buildApplicantDashboard(appData) {
     card.addActionRowComponents(submitRow);
   }
 
-  card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(AI_POLICY_NOTICE)
-  );
-
   return card;
 }
 
