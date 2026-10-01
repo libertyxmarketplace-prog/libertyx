@@ -6741,35 +6741,44 @@ async function refreshAllAppPanels(discordClient) {
 
 function buildApplicantDashboard(appData) {
   const card = new ContainerBuilder();
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `## ${appData.appType} Application\n` +
-      `> **Applicant:** <@${appData.applicantId}> (${appData.applicantTag})`
-    )
-  );
-  card.addSeparatorComponents(thinLine());
 
-  if (appData.appType === 'In-Game Staff') {
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(
-        `### IN-GAME REQUIREMENTS\n` +
-        `> • 14+ years of age\n` +
-        `> • Must maintain an active in-game patrol presence\n` +
-        `> • Must have a working microphone & clip recording software\n` +
-        `> • Must be respectful, mature, and maintain command composure\n` +
-        `> • Must understand and enforce server rules and Safe Zones\n` +
-        `> • Must be willing to attend required staff trainings and meetings\n` +
-        `> • Must enforce rules objectively without favoritism or bias\n` +
-        `> • Prior moderation / staff experience is preferred, but not required`
+  // The applications banner travels with the DM so it never looks bare.
+  if (fs.existsSync(APP_BANNER_PATH)) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL('attachment://applications_banner.png')
       )
     );
   }
 
-  card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `> Please complete each of the **four numbered steps** below in order.\n` +
-      `> Buttons will turn green as you finish each section. Once all four steps are completed, click **Submit Application**.`
+      `# ${appData.appType} Application\n` +
+      `Thanks for applying to **Alabama State Roleplay**, <@${appData.applicantId}>.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Requirements\n` +
+      `Everyone applying must meet all of the following:\n` +
+      `• **Age** — 14 or older\n` +
+      `• **Patrol presence** — actively in-game on the ER:LC server\n` +
+      `• **Equipment** — a working microphone and clip recording software\n` +
+      `• **Conduct** — respectful, mature, and composed under pressure\n` +
+      `• **Knowledge** — server rules and Safe Zones\n` +
+      `• **Commitment** — able to attend staff trainings and meetings\n` +
+      `• **Fairness** — objective enforcement, never favouritism\n` +
+      `*Previous moderation or staff experience is helpful, but not required.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### How to apply\n` +
+      `Work through the four sections below **in order**. Each one opens a short form in your DMs and turns green once it is finished — when all four are complete, **Submit Application** unlocks.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -6797,8 +6806,8 @@ function buildApplicantDashboard(appData) {
     .setStyle(appData.step4Done ? ButtonStyle.Success : ButtonStyle.Secondary)
     .setDisabled(!appData.step3Done);
 
-  const stepRow = new ActionRowBuilder().addComponents(btn1, btn2, btn3, btn4);
-  card.addActionRowComponents(stepRow);
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(btn1, btn2));
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(btn3, btn4));
 
   if (appData.step1Done && appData.step2Done && appData.step3Done && appData.step4Done && appData.status !== 'pending_review') {
     card.addSeparatorComponents(thinLine());
@@ -12956,8 +12965,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         // Step 3: Send the fresh requested application card
         const dashboard = buildApplicantDashboard(newApp);
+        const dmFiles = fs.existsSync(APP_BANNER_PATH)
+          ? [new AttachmentBuilder(APP_BANNER_PATH, { name: 'applications_banner.png' })]
+          : [];
         const dmMsg = await dmCh.send({
+          allowedMentions: { users: [newApp.applicantId], parse: [] },
           components: [dashboard.toJSON()],
+          files: dmFiles,
           flags: MessageFlags.IsComponentsV2
         });
         newApp.dmMessageId = dmMsg.id;
