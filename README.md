@@ -69,9 +69,27 @@ Type what you want in plain English and the bot does it:
 | Tier | User ID / Role | Can do |
 |------|----------------|--------|
 | Owner | `1341965114101731418` | Everything, including bans, kicks, timeouts, purges, announcements, channel locks and retrigger |
-| Directive Team | `1341931745351700534` | Sessions, panels, ticket desk, suggestions, ticket members, server stats |
+| Directive Team | `1341931745351700534` | Sessions, panels, ticket desk, suggestions, ticket members, server stats, staff records, meetings, in-game ER:LC |
 | Staff Team | role `1341965114101731418` | Same set as Directive Team — anyone **wearing the Staff Team role** may run `-ai` |
 | Everyone else | — | Refused |
+
+**Meetings.** `-ai schedule a meeting in 2 hours to discuss staffing` DMs every
+attendee an RSVP card (Can attend / Cannot attend / Maybe), posts an announcement
+with the same buttons, and schedules reminder DMs **7 days prior** and **the
+morning of**. `-ai postpone the meeting by 1 hour` shifts the time and **edits
+every existing card in place**, so nobody is pinged a second time.
+`-ai cancel the meeting` tells everyone who replied. State lives in
+`meetings.json` and reminders are re-armed on boot. Times are read in the
+`MEETING_TZ_OFFSET` offset (default `-6`, US Central).
+
+**Staff records.** `/staff infraction` is logged to `infractions.json`;
+`-ai list infractions` shows the log and `-ai revoke @user infraction` clears one
+and posts a revocation notice. `-ai revoke @user promotion` posts an official
+demotion/revocation card. `-ai dm @user ...` sends a private DM.
+
+In-game ER:LC control (`-ai jail RobloxName`, `in game ban X for Y`,
+`announce ...`, `hint ...`, `pm X ...`) and `-ai unban @user` are available to
+staff rather than owner-only.
 
 **Providers.** Three independent providers are tried in order; the first one to
 answer wins, so you only need one working key:
@@ -93,7 +111,7 @@ Model ids can be pinned per provider with `AI_MODEL`, `OPENROUTER_MODEL` and
 
 **How it works** — the request goes to the highest available provider
 (OpenAI Chat Completions format), which returns one JSON object selecting from a
-closed list of 35 actions. The action list is filtered to the caller's tier
+closed list of 43 actions. The action list is filtered to the caller's tier
 before the prompt is sent, so the directive team is never even offered the
 owner's actions. The result is validated locally again, then executed. An
 unknown action is refused rather than guessed at. Every action is written to

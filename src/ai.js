@@ -165,7 +165,7 @@ export const ACTION_SCHEMA = [
   { action: 'commands_guide', risk: 'directive', args: {}, desc: 'Show the interactive command directory.' },
   { action: 'ai_help', risk: 'directive', args: {}, desc: 'Explain how to use the AI engine and list every supported request.' },
   { action: 'ban', risk: 'owner', args: { user_id: 'snowflake', reason: 'string', delete_days: 'int 0-7', duration_days: 'int|null' }, desc: 'Ban a Discord user from the server.' },
-  { action: 'unban', risk: 'owner', args: { user_id: 'snowflake', reason: 'string' }, desc: 'Lift a Discord ban.' },
+  { action: 'unban', risk: 'directive', args: { user_id: 'snowflake', reason: 'string' }, desc: 'Revoke/lift a Discord ban so the user may rejoin.' },
   { action: 'kick', risk: 'owner', args: { user_id: 'snowflake', reason: 'string' }, desc: 'Kick a member from the server.' },
   { action: 'timeout', risk: 'owner', args: { user_id: 'snowflake', minutes: 'int 1-40320', reason: 'string' }, desc: 'Timeout (mute) a member for a number of minutes.' },
   { action: 'untimeout', risk: 'owner', args: { user_id: 'snowflake', reason: 'string' }, desc: 'Clear an active timeout.' },
@@ -175,9 +175,9 @@ export const ACTION_SCHEMA = [
   { action: 'retrigger', risk: 'owner', args: {}, desc: 'Emergency re-sync: re-register commands, reload every datastore, restart loops.' },
   {
     action: 'erlc_action',
-    risk: 'owner',
-    args: { verb: "'pm'|'message'|'hint'|'jail'|'unjail'|'kick'|'ban'|'unban'", player: 'roblox username', text: 'string or null' },
-    desc: 'Execute an in-game ER:LC command against a player.'
+    risk: 'directive',
+    args: { verb: "'pm'|'message'|'hint'|'jail'|'unjail'|'kick'|'ban'|'unban'", player: 'roblox username', text: 'reason or message' },
+    desc: 'Run an in-game ER:LC command. message/hint broadcast to the whole server; pm DMs one player; jail/unjail/kick/ban/unban act on one player. Put the staff reason in text for kick/ban.'
   },
   // ── Ticket lifecycle (staff) ────────────────────────────────────────────────
   {
@@ -201,6 +201,64 @@ export const ACTION_SCHEMA = [
     risk: 'directive',
     args: {},
     desc: 'Live AI provider status (ready / rate-limited / retry timers). ONLY use when the user EXPLICITLY asks about providers, tokens, credits or the gateway — never proactively.'
+  },
+  // ── Staff records: infractions & promotions ─────────────────────────────────
+  {
+    action: 'infraction_list',
+    risk: 'directive',
+    args: { user_id: 'snowflake or null', limit: 'int 1-25' },
+    desc: 'List recent official staff infractions from the log. Give a user_id to filter to one member.'
+  },
+  {
+    action: 'infraction_revoke',
+    risk: 'directive',
+    args: { user_id: 'snowflake or null', id: 'string or null', reason: 'string' },
+    desc: 'Revoke an outstanding staff infraction and post a revocation notice. Without an id, revokes the most recent infraction for that member (or the newest overall).'
+  },
+  {
+    action: 'promotion_revoke',
+    risk: 'directive',
+    args: { user_id: 'snowflake', reason: 'string', notes: 'string or null' },
+    desc: 'Revoke a promotion: post an official demotion/revocation notice for a member in the staff channel.'
+  },
+  // ── Direct messages ─────────────────────────────────────────────────────────
+  {
+    action: 'dm_user',
+    risk: 'directive',
+    args: { user_id: 'snowflake', text: 'string' },
+    desc: 'Send a private direct message to a member on behalf of staff.'
+  },
+  // ── Meetings ────────────────────────────────────────────────────────────────
+  {
+    action: 'meeting_schedule',
+    risk: 'directive',
+    args: {
+      title: 'string',
+      start: 'ISO datetime, or relative like "in 2 hours" / "tomorrow at 7pm"',
+      location: 'voice channel id, invite/link, or null',
+      attendees: "list of @users/user ids, or 'staff' (the staff role), or 'everyone'",
+      agenda: 'string or null',
+      reminders: 'boolean — default true (7 days prior + the morning of)'
+    },
+    desc: 'Plan a meeting: DM every attendee an RSVP card with Can attend / Cannot attend buttons, post an announcement, and schedule reminder DMs (7 days prior and the morning of).'
+  },
+  {
+    action: 'meeting_postpone',
+    risk: 'directive',
+    args: { by: 'duration like "2 hours" or "3 days"', reason: 'string or null' },
+    desc: 'Postpone the next scheduled meeting by a duration. Shifts the time, edits every DM card in place (so nobody is pinged twice) and reschedules reminders.'
+  },
+  {
+    action: 'meeting_cancel',
+    risk: 'directive',
+    args: { reason: 'string or null' },
+    desc: 'Cancel the next scheduled meeting and tell everyone who replied that it is off.'
+  },
+  {
+    action: 'meeting_list',
+    risk: 'directive',
+    args: {},
+    desc: 'List every scheduled meeting with its time, location and RSVP counts.'
   },
   // ── Owner-only additions ────────────────────────────────────────────────────
   { action: 'nick', risk: 'owner', args: { user_id: 'snowflake', nickname: 'string (empty to clear)' }, desc: "Set or clear a member's server nickname." },
@@ -524,7 +582,13 @@ export function buildSystemPrompt(tier = 'owner') {
         '- "open all", "reopen tickets", "set the desk online" -> desk_status with status "online"',
         '- "ban/jail <name>" where <name> is NOT a Discord id (no 17-20 digit number, no <@...>) -> erlc_action, in-game',
         '- "kick/ban/timeout <Discord id or <@...>>" -> the matching Discord action',
-        '- Duration words like "7 days", "2 hours", "permanently" go in duration_days / minutes / null.'
+        '- Duration words like "7 days", "2 hours", "permanently" go in duration_days / minutes / null.',
+        '- "send a message in game", "announce in game", "in-game ban/kick/jail <player> for <reason>" -> erlc_action (player is a Roblox username, text holds the reason)',
+        '- "list infractions", "show <user> infractions" -> infraction_list; "revoke/remove <user> infraction" -> infraction_revoke',
+        '- "revoke/demote <user> promotion" -> promotion_revoke',
+        '- "dm/message <user> <text>" -> dm_user (private DM)',
+        '- "schedule/plan/set up a meeting" -> meeting_schedule; "postpone the meeting" -> meeting_postpone; "cancel the meeting" -> meeting_cancel; "list meetings" -> meeting_list',
+        '- Convert meeting times ("tomorrow 7pm", "next Friday 8pm") into an ISO datetime string YYYY-MM-DDTHH:MM.'
       ].join('\n')
     : [
         'You may use EVERY action listed below. All of them are permitted for this caller.',
@@ -536,7 +600,12 @@ export function buildSystemPrompt(tier = 'owner') {
         '- "close all tickets", "close the desk", "shut the desk" -> desk_status with status "closed"',
         '- "make the desk busy" -> desk_status with status "busy"',
         '- "open all", "reopen tickets", "set the desk online" -> desk_status with status "online"',
-        '- provider/token/credit questions -> provider_status, but ONLY when explicitly asked'
+        '- provider/token/credit questions -> provider_status, but ONLY when explicitly asked',
+        '- "ban/kick/jail <RobloxName> in game for <reason>" -> erlc_action (Roblox username, reason in text)',
+        '- "list infractions" -> infraction_list; "revoke <user> infraction" -> infraction_revoke; "revoke <user> promotion" -> promotion_revoke',
+        '- "dm <user> <text>" -> dm_user',
+        '- "schedule/plan a meeting" -> meeting_schedule; "postpone the meeting" -> meeting_postpone; "cancel the meeting" -> meeting_cancel; "list meetings" -> meeting_list',
+        '- Convert meeting times ("tomorrow 7pm") into an ISO datetime string YYYY-MM-DDTHH:MM.'
       ].join('\n');
 
   return `${SYSTEM_PROMPT.replace('__SCHEMA__', schema)}\n\n${scope}`;
@@ -661,6 +730,23 @@ function durationFromText(t) {
   return numeric?.[0] ?? null;
 }
 
+/** Pulls a meeting title out of "schedule a meeting to discuss X". */
+export function extractMeetingTitle(raw) {
+  const text = String(raw)
+    .replace(/<@!?\d{17,20}>|<#\d{17,20}>|<@&\d{17,20}>|\b\d{17,20}\b/g, ' ')
+    .replace(/^.*?\b(meeting|briefing|training)\b\s*/i, '')
+    .replace(
+      /\b(schedule|plan|set up|organize|organise|arrange|book|create|a|an|the|at|on|for|about|to|please|in|tomorrow|today|tonight|next|this|morning|evening|afternoon)\b/ig,
+      ' '
+    )
+    .replace(/\d+\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?)\b/ig, ' ')
+    .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/ig, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s:,\-]+|[\s:,\-]+$/g, '')
+    .trim();
+  return text ? text.slice(0, 120) : 'Staff Meeting';
+}
+
 /** Strips the command tokens out of a request to leave the human reason. */
 function reasonFromText(raw, tokens) {
   let text = raw;
@@ -724,6 +810,89 @@ export function parseLocally(request) {
   if (!raw) return { action: 'ai_help', args: {}, reply: 'Here is everything the AI engine can do.' };
   const t = tidy(raw);
   const ticketUser = extractUserId(raw);
+
+  // ── Meetings ────────────────────────────────────────────────────────────────
+  // Checked FIRST: "list meetings" / "postpone the meeting" would otherwise be
+  // swallowed by the help rule or the session rules below.
+  if (/\b(postpone|push back|reschedule|delay|move)\b/.test(t) && /\bmeeting|briefing|muster\b/.test(t)) {
+    const by = durationFromText(t);
+    return {
+      action: 'meeting_postpone',
+      args: { by: by || '1 hour', reason: reasonFromText(raw, ['postpone', 'push', 'back', 'reschedule', 'delay', 'move', 'the', 'meeting']) },
+      reply: 'Postponing the next meeting.'
+    };
+  }
+  if (/\b(cancel|call off|scrap|call off)\b/.test(t) && /\bmeeting|briefing\b/.test(t)) {
+    return {
+      action: 'meeting_cancel',
+      args: { reason: reasonFromText(raw, ['cancel', 'call', 'off', 'scrap', 'the', 'meeting']) },
+      reply: 'Cancelling the next meeting.'
+    };
+  }
+  if (/\b(list|show|what|upcoming|view)\b/.test(t) && /\bmeetings?\b/.test(t)) {
+    return { action: 'meeting_list', args: {}, reply: 'Listing scheduled meetings.' };
+  }
+  if (/\b(schedule|plan|set ?up|organi[sz]e|arrange|book|hold|run)\b/.test(t) && /\bmeeting|briefing|muster\b/.test(t)) {
+    const attendees = [...raw.matchAll(/<@!?(\d{17,20})>/g)].map((m) => m[1]);
+    if (!attendees.length && /\bstaff\b/.test(t)) attendees.push('staff');
+    const start = durationFromText(t) || (/tomorrow/.test(t) ? 'tomorrow' : /tonight/.test(t) ? 'tonight' : null);
+    return {
+      action: 'meeting_schedule',
+      args: {
+        title: extractMeetingTitle(raw),
+        start: start || 'in 1 hour',
+        location: extractChannelId(raw),
+        attendees: attendees.length ? attendees : ['staff'],
+        agenda: null,
+        reminders: true
+      },
+      reply: 'Scheduling the meeting and notifying everyone.'
+    };
+  }
+
+  // ── Staff records: infractions ──────────────────────────────────────────────
+  if (/\binfractions?\b/.test(t)) {
+    if (/\b(revoke|remove|delete|clear|cancel|appeal|overturn|drop|expunge)\b/.test(t)) {
+      return {
+        action: 'infraction_revoke',
+        args: {
+          user_id: ticketUser,
+          id: null,
+          reason: reasonFromText(raw, ['revoke', 'remove', 'delete', 'clear', 'cancel', 'appeal', 'overturn', 'drop', 'expunge', 'infraction', 'infractions', ticketUser])
+        },
+        reply: 'Revoking that infraction.'
+      };
+    }
+    return { action: 'infraction_list', args: { user_id: ticketUser, limit: 10 }, reply: 'Listing staff infractions.' };
+  }
+
+  // ── Staff records: promotions ───────────────────────────────────────────────
+  if (
+    /\b(promotion|promote|rank ?up|demotion|demote)\b/.test(t) &&
+    /\b(revoke|remove|undo|reverse|cancel|take back|demote|strip)\b/.test(t) &&
+    ticketUser
+  ) {
+    return {
+      action: 'promotion_revoke',
+      args: {
+        user_id: ticketUser,
+        reason: reasonFromText(raw, ['revoke', 'remove', 'undo', 'reverse', 'cancel', 'take', 'back', 'demote', 'strip', 'promotion', 'promote', 'the', ticketUser]),
+        notes: null
+      },
+      reply: `Revoking the promotion for <@${ticketUser}>.`
+    };
+  }
+
+  // ── Direct message ──────────────────────────────────────────────────────────
+  if (/^(?:please\s+)?(dm|message|pm)\b/.test(t) && ticketUser && !/erlc|in ?game|roblox/.test(t)) {
+    const text = raw
+      .replace(/^.*?\b(dm|message|pm)\b\s*/i, '')
+      .replace(/<@!?\d{17,20}>/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^[\s:,\-]+|[\s:,\-]+$/g, '')
+      .trim();
+    if (text) return { action: 'dm_user', args: { user_id: ticketUser, text }, reply: `DMing <@${ticketUser}>.` };
+  }
 
   // ── Help / directory ────────────────────────────────────────────────────────
   if (/^(help|what can you do|commands|list|guide|options)\b/.test(t)) {
@@ -1078,29 +1247,22 @@ export async function resolveIntent(request, { tier = 'owner' } = {}) {
 
   const local = localFallback();
 
-  // Explain WHY we fell back. Silent degradation is confusing — the user needs
-  // to know whether the AI is genuinely offline or just busy elsewhere.
+  // Only surface a notice when EVERY provider is genuinely down. A partial
+  // outage — or one unusable answer — is not worth alarming anyone about, since
+  // the local parser already handled the request silently.
   const down = AI_PROVIDERS.filter((p) => (breakers.get(p.name)?.until ?? 0) > Date.now());
-  if (down.length === AI_PROVIDERS.length && down.length > 0) {
+  if (AI_PROVIDERS.length > 0 && down.length === AI_PROVIDERS.length) {
     const daily = down.find((p) => breakers.get(p.name)?.reason === 'daily-limit');
     const checkin = down.find((p) => breakers.get(p.name)?.reason === 'needs-checkin');
     if (daily) {
       local.gatewayNotice =
-        `⏳ Every AI provider is unavailable (${daily.name}'s free daily limit is used up, resets ` +
-        `<t:${Math.floor(breakers.get(daily.name).until / 1000)}:R>). I used my built-in parser instead.`;
+        `⏳ All AI providers are busy (${daily.name}'s free daily limit is used up, resets ` +
+        `<t:${Math.floor(breakers.get(daily.name).until / 1000)}:R>) — I used my built-in parser.`;
     } else if (checkin) {
       local.gatewayNotice =
-        `🔑 Every AI provider is unavailable (${checkin.name} needs its daily web check-in at ` +
-        `https://freetheai.org/checkin). I used my built-in parser instead.`;
-    } else {
-      local.gatewayNotice = '⚠️ Every AI provider is unavailable right now — I used my built-in parser instead.';
+        `🔑 All AI providers are busy right now — I used my built-in parser. ` +
+        `(${checkin.name} needs its daily check-in at https://freetheai.org/checkin.)`;
     }
-  } else if (down.length > 0) {
-    // Some providers are down but we still got an answer from another one; only
-    // reach this branch when the chain failed for a non-breaker reason.
-    local.gatewayNotice = '⚠️ Some AI providers are unavailable — I used my built-in parser instead.';
-  } else if (lastError) {
-    local.gatewayNotice = '⚠️ The AI providers did not return a usable answer — I used my built-in parser instead.';
   }
   return local;
 }
@@ -1172,6 +1334,38 @@ export function aiHelpSections(tier) {
         'bot stats',
         'show the command directory'
       ]
+    },
+    {
+      title: 'Staff records',
+      items: ['list infractions', 'list @user infractions', 'revoke @user infraction', 'revoke @user promotion']
+    },
+    {
+      title: 'Messages',
+      items: [
+        'dm @user you are invited to the meeting',
+        'send a message in game we are full',
+        'in game ban RobloxName for exploiting'
+      ]
+    },
+    {
+      title: 'Meetings',
+      items: [
+        'schedule a meeting in 2 hours to discuss staffing',
+        'schedule a staff meeting tomorrow at 7pm',
+        'postpone the meeting by 1 hour',
+        'cancel the meeting',
+        'list meetings'
+      ]
+    },
+    {
+      title: 'In-game',
+      items: [
+        'jail RobloxName',
+        'unjail RobloxName',
+        'announce we are full',
+        'hint roadblock ahead',
+        'pm RobloxName to join staff'
+      ]
     }
   ];
 
@@ -1196,20 +1390,10 @@ export function aiHelpSections(tier) {
         'give @user the Moderator role'
       ]
     },
-    {
-      title: 'In-game',
-      items: [
-        'jail RobloxName',
-        'unjail RobloxName',
-        'announce we are full',
-        'hint roadblock ahead',
-        'pm RobloxName to join staff'
-      ]
-    },
     { title: 'System', items: ['retrigger the bot'] }
   ];
 
-  const examples = ['close this ticket', 'start a session vote with 5 users for 2 hours', 'make the ticket desk busy'];
+  const examples = ['close this ticket', 'start a session vote with 5 users for 2 hours', 'schedule a meeting in 2 hours to discuss staffing'];
   const examplesOwner = [...examples, 'ban @user for 3 days for advertising'];
   const note = 'Type -ai providers when you want live provider status — it is never shown otherwise.';
 
@@ -1439,33 +1623,23 @@ export async function executeIntent(intent, ctx) {
 
       // The resolver matched a real action but this tier may not run it.
       case 'restricted': {
-        const blocked = intent.restrictedAction
-          ? `\`${intent.restrictedAction}\``
-          : 'that action';
+        const blocked = intent.restrictedAction ? String(intent.restrictedAction).replace(/_/g, ' ') : 'that action';
         return {
           ok: false,
           message:
-            `❌ ${blocked} is restricted to the bot owner.\n` +
-            `> Ask the bot owner to run it, or type \`-ai help\` to see what you can run.`
+            `❌ ${blocked} is owner-only. Ask the bot owner to run it.\n` +
+            `> Type -ai help to see everything available to you.`
         };
       }
 
       // Nothing matched — either the request is nonsense, or (for the directive
       // tier) it needed an action they are not allowed to use.
       case 'unsupported': {
-        if (intent.tier === 'owner') {
-          return {
-            ok: false,
-            message:
-              `❌ I could not work out what to do with that.\n` +
-              `> Try \`-ai help\` to see everything I can run.`
-          };
-        }
         return {
           ok: false,
           message:
-            `❌ I could not do that — it needs a permission you do not have.\n` +
-            `> Ask the bot owner to run it, or type \`-ai help\` to see what you can run.`
+            `❌ I could not work out what to run for that.\n` +
+            `> Type -ai help to see everything available to you.`
         };
       }
 
@@ -1771,6 +1945,81 @@ export async function executeIntent(intent, ctx) {
           ok: true,
           message: `## 🧠 AI Providers\n${rows.length ? rows.join('\n') : '> No provider keys are configured — the built-in parser handles everything.'}`
         };
+      }
+
+      // ── Staff records ───────────────────────────────────────────────────────
+      case 'infraction_list': {
+        const userId = ctx.resolveUserId(args.user_id ?? null);
+        const limit = clampNumber(args.limit, 1, 25, 10);
+        return await ctx.listInfractions({ userId, limit, guild: message.guild });
+      }
+
+      case 'infraction_revoke': {
+        const userId = ctx.resolveUserId(args.user_id ?? null);
+        return await ctx.revokeInfraction({
+          guild: message.guild,
+          userId,
+          id: args.id ? String(args.id) : null,
+          reason: String(args.reason || 'Revoked by staff').slice(0, 400),
+          by: message.author
+        });
+      }
+
+      case 'promotion_revoke': {
+        const userId = ctx.resolveUserId(args.user_id, message);
+        if (!userId) return { ok: false, message: '❌ I need a member — mention them or give me their user id.' };
+        return await ctx.revokePromotion({
+          guild: message.guild,
+          userId,
+          reason: String(args.reason || 'Promotion revoked').slice(0, 400),
+          notes: args.notes ? String(args.notes).slice(0, 400) : null,
+          by: message.author
+        });
+      }
+
+      // ── Direct messages ─────────────────────────────────────────────────────
+      case 'dm_user': {
+        const userId = ctx.resolveUserId(args.user_id, message);
+        const text = String(args.text ?? '').trim().slice(0, 1800);
+        if (!userId) return { ok: false, message: '❌ I need a member to DM.' };
+        if (!text) return { ok: false, message: '❌ Tell me what the message should say.' };
+        return await ctx.dmMember({ userId, text, by: message.author });
+      }
+
+      // ── Meetings ────────────────────────────────────────────────────────────
+      case 'meeting_schedule': {
+        return await ctx.scheduleMeeting({
+          guild: message.guild,
+          channel: message.channel,
+          title: String(args.title || 'Staff Meeting').slice(0, 120),
+          start: args.start ?? null,
+          location: args.location ?? null,
+          attendees: args.attendees ?? ['staff'],
+          agenda: args.agenda ? String(args.agenda).slice(0, 800) : null,
+          reminders: args.reminders !== false && args.reminders !== 'false',
+          by: message.author
+        });
+      }
+
+      case 'meeting_postpone': {
+        return await ctx.postponeMeeting({
+          guild: message.guild,
+          by: String(args.by || '1 hour'),
+          reason: args.reason ? String(args.reason).slice(0, 300) : null,
+          user: message.author
+        });
+      }
+
+      case 'meeting_cancel': {
+        return await ctx.cancelMeeting({
+          guild: message.guild,
+          reason: args.reason ? String(args.reason).slice(0, 300) : null,
+          user: message.author
+        });
+      }
+
+      case 'meeting_list': {
+        return await ctx.listMeetings({ guild: message.guild });
       }
 
       // ── Owner extras ────────────────────────────────────────────────────────

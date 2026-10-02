@@ -34,6 +34,14 @@ import {
 import { fileURLToPath } from 'node:url';
 import { RULES_PAGES } from './rules.js';
 import {
+  cancelMeeting as meetingCancel,
+  handleMeetingButton,
+  initMeetingService,
+  listMeetings as meetingList,
+  postponeMeeting as meetingPostpone,
+  scheduleMeeting as meetingSchedule
+} from './meetings.js';
+import {
   AI_DIRECTIVE_ID,
   AI_OWNER_ID,
   AI_STAFF_ROLE_ID,
@@ -2094,6 +2102,18 @@ async function handleInfractionCommand(interaction) {
       components: [container.toJSON()],
       files,
       flags: MessageFlags.IsComponentsV2
+    });
+
+    // Record the infraction so `-ai list infractions` / revoke can find it.
+    recordInfraction({
+      guildId: interaction.guildId,
+      targetId: targetUser.id,
+      targetTag: targetUser.tag,
+      type: infractionType,
+      reason,
+      notes,
+      moderatorId: interaction.user.id,
+      moderatorTag: interaction.user.tag
     });
 
     // Send DM copy to member
@@ -9011,6 +9031,14 @@ client.once(Events.ClientReady, async (readyClient) => {
     resumeLoaTimers(readyClient || client);
     loadAiTempBans();
     scheduleAiTempBanSweep();
+    loadInfractions();
+    // Meetings: restore state + re-arm the 7-day / morning-of / start reminders.
+    const meetingCount = initMeetingService({
+      client: readyClient || client,
+      storeFile: MEETINGS_FILE,
+      tzOffset: process.env.MEETING_TZ_OFFSET
+    });
+    console.log(`[meetings] ${meetingCount} scheduled meeting(s) restored and reminders armed.`);
     console.log(
       `[AI] Engine ${aiConfigured() ? 'ready' : 'OFFLINE (no provider keys)'} — chain: ${providerSummary()}`
     );
@@ -10127,6 +10155,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     processedInteractionIds.delete(oldest);
   }
   try {
+    // ─────────────── Meeting RSVP buttons (work in DMs and in-channel) ───────────────
+    if (interaction.isButton() && interaction.customId.startsWith('meet_')) {
+      const handled = await handleMeetingButton(interaction).catch((err) => {
+        console.error('[meetings] button failed:', err.message);
+        return false;
+      });
+      if (handled) return;
+    }
+
     // ─────────────── postpone: custom duration modal ───────────────
     if (interaction.isModalSubmit() && interaction.customId.startsWith('vote_delay_custom_')) {
       await handlePostponeModal(client, interaction);
@@ -14628,6 +14665,24 @@ function buildCommandsGuidePage(pageIndex = 0) {
         `> -ai make a suggestion that we add more staff\n` +
         `> -ai show the top suggestion\n` +
         `> -ai poll Friday or Saturday: session; no session\n\n` +
+        `**Staff records**\n` +
+        `> -ai list infractions\n` +
+        `> -ai list @user infractions\n` +
+        `> -ai revoke @user infraction\n` +
+        `> -ai revoke @user promotion\n\n` +
+        `**Meetings**\n` +
+        `> -ai schedule a meeting in 2 hours to discuss staffing\n` +
+        `> -ai schedule a staff meeting tomorrow at 7pm\n` +
+        `> -ai postpone the meeting by 1 hour\n` +
+        `> -ai cancel the meeting\n` +
+        `> -ai list meetings\n` +
+        `> Attendees get a DM RSVP card (Can attend / Cannot attend / Maybe),\n` +
+        `> reminders go out 7 days before and the morning of, and postponing\n` +
+        `> edits the existing card instead of pinging anyone twice.\n\n` +
+        `**Messages**\n` +
+        `> -ai dm @user you are invited to the meeting\n` +
+        `> -ai send a message in game we are full\n` +
+        `> -ai in game ban RobloxName for exploiting\n\n` +
         `**Info**\n` +
         `> -ai how many players are online\n` +
         `> -ai whois @user\n` +
@@ -14659,6 +14714,7 @@ function buildCommandsGuidePage(pageIndex = 0) {
         `> Provider and token status is never shown unless you ask: -ai providers.\n` +
         `> Nothing is guessed — unclear requests are refused instead of acted on.\n` +
         `> Suggestions are posted with your exact words, never rewritten.\n` +
+        `> In-game actions (jail, kick, ban, announce, hint, pm) are open to staff.\n` +
         `> Every action is written to Security-Logs with the request and result.\n` +
         `> Access: Staff Team role and above, Directive Team, bot owner.`
       )
@@ -15293,6 +15349,175 @@ function aiTopSuggestion() {
   };
 }
 
+// ═══════════════════════ Staff infraction records ═══════════════════════
+// Infractions are posted as cards; this store keeps the paper trail so the AI
+// can list and revoke them later. It is not a source of truth for Discord.
+
+const INFRACTIONS_FILE = fileURLToPath(new URL('../infractions.json', import.meta.url));
+const activeInfractions = new Map(); // id -> record
+
+function loadInfractions() {
+  try {
+    if (!fs.existsSync(INFRACTIONS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(INFRACTIONS_FILE, 'utf8'));
+    for (const [id, rec] of Object.entries(raw)) activeInfractions.set(id, rec);
+    console.log(`Restored ${activeInfractions.size} staff infraction record(s).`);
+  } catch (err) {
+    console.error('Could not read infractions.json:', err.message);
+  }
+}
+
+function saveInfractions() {
+  try {
+    const flat = {};
+    for (const [id, rec] of activeInfractions) flat[id] = rec;
+    fs.writeFileSync(INFRACTIONS_FILE, JSON.stringify(flat, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Could not save infractions.json:', err.message);
+  }
+}
+
+/** Records an infraction so it can be listed / revoked later. */
+function recordInfraction({ guildId, targetId, targetTag, type, reason, notes, moderatorId, moderatorTag }) {
+  const id = `inf${Date.now().toString(36)}${Math.floor(Math.random() * 1e5).toString(36)}`;
+  const rec = {
+    id,
+    guildId,
+    targetId,
+    targetTag: targetTag || null,
+    type: type || 'Infraction',
+    reason: reason || 'No reason provided',
+    notes: notes || null,
+    moderatorId,
+    moderatorTag: moderatorTag || null,
+    createdAt: Date.now(),
+    revoked: false,
+    revokedAt: null,
+    revokedBy: null,
+    revokeReason: null
+  };
+  activeInfractions.set(id, rec);
+  if (activeInfractions.size > 2000) {
+    const oldest = [...activeInfractions.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (oldest) activeInfractions.delete(oldest.id);
+  }
+  saveInfractions();
+  return rec;
+}
+
+/** `-ai list infractions` — the staff infraction log. */
+async function aiListInfractions({ userId, limit = 10, guild }) {
+  let rows = [...activeInfractions.values()].filter((r) => !r.guildId || r.guildId === guild?.id);
+  if (userId) rows = rows.filter((r) => r.targetId === userId);
+  rows.sort((a, b) => b.createdAt - a.createdAt);
+  const shown = rows.slice(0, limit);
+  if (!shown.length) {
+    return {
+      ok: true,
+      message: userId
+        ? `✅ <@${userId}> has no recorded staff infractions.`
+        : '✅ There are no recorded staff infractions.'
+    };
+  }
+  const activeCount = rows.filter((r) => !r.revoked).length;
+  const lines = shown.map((r, i) => {
+    const mark = r.revoked ? '🔁' : '⚠️';
+    const tail = r.revoked
+      ? `\n> Revoked <t:${Math.floor(r.revokedAt / 1000)}:R> by <@${r.revokedBy}> — ${r.revokeReason || 'no reason given'}`
+      : '';
+    return `${i + 1}. ${mark} **${r.type}** — <@${r.targetId}>\n> ${r.reason}\n> Issued <t:${Math.floor(r.createdAt / 1000)}:R> by <@${r.moderatorId}>${tail}`;
+  });
+  return {
+    ok: true,
+    message:
+      `## Staff Infractions${userId ? ` — <@${userId}>` : ''}\n` +
+      `> **Active:** ${activeCount} · **Showing:** ${shown.length}${rows.length > shown.length ? ` of ${rows.length}` : ''}\n\n` +
+      lines.join('\n\n')
+  };
+}
+
+/** `-ai revoke <user> infraction` — marks the infraction revoked + posts a notice. */
+async function aiRevokeInfraction({ guild, userId, id, reason, by }) {
+  let rec = null;
+  if (id) {
+    rec = activeInfractions.get(String(id)) ?? [...activeInfractions.values()].find((r) => r.id === String(id)) ?? null;
+  } else {
+    let pool = [...activeInfractions.values()].filter((r) => !r.revoked && (!r.guildId || r.guildId === guild?.id));
+    if (userId) pool = pool.filter((r) => r.targetId === userId);
+    pool.sort((a, b) => b.createdAt - a.createdAt);
+    rec = pool[0] ?? null;
+  }
+  if (!rec) return { ok: false, message: '❌ I could not find an active infraction to revoke.' };
+  if (userId && rec.targetId !== userId) {
+    return { ok: false, message: '❌ That infraction belongs to a different member.' };
+  }
+  if (rec.revoked) {
+    return { ok: false, message: `ℹ️ That infraction was already revoked <t:${Math.floor(rec.revokedAt / 1000)}:R>.` };
+  }
+
+  rec.revoked = true;
+  rec.revokedAt = Date.now();
+  rec.revokedBy = by.id;
+  rec.revokeReason = reason;
+  saveInfractions();
+
+  const channel = await guild.channels.fetch(STAFF_CONFIG.derankChannelId).catch(() => null);
+  if (channel?.isTextBased?.()) {
+    const card = aiModLogCard('## ✅ Staff Infraction Revoked', [
+      `> **Member:** <@${rec.targetId}>`,
+      `> **Infraction:** ${rec.type}`,
+      `> **Original reason:** ${rec.reason}`,
+      `> **Revoked by:** <@${by.id}> (${by.tag})`,
+      `> **Revocation reason:** ${reason}`
+    ]);
+    await channel.send({ components: [card.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+  }
+  return { ok: true, message: `✅ Revoked the **${rec.type}** infraction for <@${rec.targetId}>.` };
+}
+
+/** `-ai revoke <user> promotion` — posts an official revocation/demotion notice. */
+async function aiRevokePromotion({ guild, userId, reason, notes, by }) {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  const targetUser = member?.user ?? (await client.users.fetch(userId).catch(() => null));
+  if (!targetUser) return { ok: false, message: '❌ I could not find that member.' };
+
+  const channel = await guild.channels.fetch(STAFF_CONFIG.derankChannelId).catch(() => null);
+  if (!channel?.isTextBased?.()) {
+    return { ok: false, message: `❌ The staff channel (<#${STAFF_CONFIG.derankChannelId}>) is unavailable.` };
+  }
+
+  const container = buildDerankContainer({
+    targetUser,
+    targetMember: member,
+    removeRole: null,
+    newRank: 'Previous Rank Restored',
+    reason,
+    notes,
+    moderator: by
+  });
+  await channel.send({ components: [container.toJSON()], flags: MessageFlags.IsComponentsV2 });
+  await dmUser(client, targetUser.id, { components: [container.toJSON()], flags: MessageFlags.IsComponentsV2 }).catch(() => null);
+  return {
+    ok: true,
+    message: `✅ Promotion revoked for <@${targetUser.id}> — the notice is posted in <#${channel.id}>.`
+  };
+}
+
+/** `-ai dm @user ...` — private DM on behalf of staff. */
+async function aiDmMember({ userId, text, by }) {
+  const sent = await dmUser(client, userId, {
+    content: `📩 **Message from Alabama State Roleplay staff**\n\n${text}\n\n-# Sent by ${by.tag}`
+  });
+  if (!sent) {
+    return { ok: false, message: '❌ I could not DM that member — their privacy settings may block bot DMs.' };
+  }
+  return { ok: true, message: `📩 DM delivered to <@${userId}>.` };
+}
+
+// Meetings live in ./meetings.js — the AI context below wires scheduleMeeting,
+// postponeMeeting, cancelMeeting and listMeetings into the executor.
+const MEETINGS_FILE = fileURLToPath(new URL('../meetings.json', import.meta.url));
+
 /**
  * Components V2 help card for `-ai help`, scoped to the caller's tier.
  *
@@ -15452,6 +15677,16 @@ async function handleAiPrefixCommand(message, requestText) {
     setChannelLock: aiSetChannelLock,
     erlcAction: aiErclAction,
     createSuggestion: aiCreateSuggestion,
+    // Staff records + DMs.
+    listInfractions: aiListInfractions,
+    revokeInfraction: aiRevokeInfraction,
+    revokePromotion: aiRevokePromotion,
+    dmMember: aiDmMember,
+    // Meetings (./meetings.js).
+    scheduleMeeting: meetingSchedule,
+    postponeMeeting: meetingPostpone,
+    cancelMeeting: meetingCancel,
+    listMeetings: meetingList,
     topSuggestion: aiTopSuggestion,
     resolvePingRole: (roleId) => (roleId ? String(roleId) : null),
     resolveUserId: (value) => (value ? String(value).match(/\d{17,20}/)?.[0] ?? null : null),
