@@ -15571,10 +15571,66 @@ function buildAiHelpCard(tier) {
  *
  * @returns {Promise<boolean>} true when the card went to DMs.
  */
+/**
+ * Replies to a command exactly once, even when two bot instances receive the
+ * same message event (the usual cause of duplicate replies).
+ *
+ * Cross-instance dedup works by looking for an existing bot reply that already
+ * references the command message; a twin that slips out in the same window is
+ * then deleted — the same approach autoDeleteReply uses for plain replies.
+ *
+ * @returns {Promise<object|null>} the sent message, or null when another
+ *   instance already answered (the caller should stop).
+ */
+async function dedupReply(commandMessage, payload) {
+  // Stagger both instances so they do not fetch/send in lockstep.
+  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 220) + 80));
+
+  const before = await commandMessage.channel?.messages?.fetch({ limit: 10 }).catch(() => null);
+  if (before) {
+    const answered = before.find(
+      (m) => m.author?.id === client.user?.id && m.reference?.messageId === commandMessage.id
+    );
+    if (answered) return null; // another instance already handled this command
+  }
+
+  let sent = null;
+  try {
+    sent = await commandMessage.reply(payload);
+  } catch (err) {
+    console.warn('dedupReply failed:', err.message);
+    return null;
+  }
+
+  // Clean up any twin produced by the other instance in the same window.
+  try {
+    await new Promise((r) => setTimeout(r, 450));
+    const after = await commandMessage.channel?.messages?.fetch({ limit: 8 }).catch(() => null);
+    if (after) {
+      const twins = after.filter(
+        (m) => m.author?.id === client.user?.id && m.id !== sent.id && m.reference?.messageId === commandMessage.id
+      );
+      for (const twin of twins.values()) await twin.delete().catch(() => null);
+    }
+  } catch { /* best effort */ }
+
+  return sent;
+}
+
 async function sendAiHelp(message, tier) {
   const payload = { components: [buildAiHelpCard(tier).toJSON()], flags: MessageFlags.IsComponentsV2 };
   const dm = await message.author.send(payload).catch(() => null);
   if (dm) {
+    // Remove a twin DM sent a moment ago by another instance.
+    try {
+      const recent = await dm.channel.messages.fetch({ limit: 6 }).catch(() => null);
+      if (recent) {
+        const twins = recent.filter(
+          (m) => m.author?.id === client.user?.id && m.id !== dm.id && m.createdTimestamp > Date.now() - 15_000
+        );
+        for (const twin of twins.values()) await twin.delete().catch(() => null);
+      }
+    } catch { /* best effort */ }
     await message.delete().catch(() => null);
     return true;
   }
@@ -15623,7 +15679,10 @@ async function handleAiPrefixCommand(message, requestText) {
   aiCooldowns.set(message.author.id, Date.now());
 
   // Acknowledge before the (slow) gateway call so the channel never looks dead.
-  const thinking = await message.reply({ content: '🧠 **Working on it…**' }).catch(() => null);
+  // dedupReply returns null when another instance already answered — bail out
+  // so the command is never executed (and never replied to) twice.
+  const thinking = await dedupReply(message, { content: '🧠 **Working on it…**' });
+  if (!thinking) return;
 
   let intent;
   try {

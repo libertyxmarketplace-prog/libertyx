@@ -93,6 +93,23 @@ cards (`meetings.json`). `node cleanup-dms.mjs` silently deletes them — Discor
 never notifies the recipient. Use `--dry-run` to preview and `--purge` to also
 clear the records.
 
+For older DMs sent before that tracking existed, `node purge-dms.mjs` walks the
+recipient ids found in the bot's own data stores (Discord returns `[]` for
+`GET /users/@me/channels` and this bot has no `GUILD_MEMBERS` intent), opens each
+DM — which notifies nobody — and deletes the bot's messages inside a window:
+
+```
+node purge-dms.mjs --dry-run            # preview
+node purge-dms.mjs --days 30            # delete the last 30 days
+node purge-dms.mjs --channel id1,id2    # also consider those channels' authors
+```
+
+**Backfilling infractions.** The bot historically posted infraction cards
+without storing them. `node import-infractions.mjs` reads the infraction channel
+history back into `infractions.json` so `-ai list infractions` includes the old
+ones. It is idempotent (records are keyed by Discord message id) and supports
+`--dry-run`.
+
 In-game ER:LC control (`-ai jail RobloxName`, `in game ban X for Y`,
 `announce ...`, `hint ...`, `pm X ...`) and `-ai unban @user` are available to
 staff rather than owner-only.

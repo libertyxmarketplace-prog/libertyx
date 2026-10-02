@@ -149,86 +149,79 @@ export function parseWhen(input) {
 }
 // ── Cards ────────────────────────────────────────────────────────────────────
 
-const RSVP_LABEL = { yes: '✅ Can attend', no: '❌ Cannot attend', maybe: '🤔 Maybe' };
+const RSVP_LABEL = { yes: 'Can attend', no: 'Cannot attend' };
 
-/** Buttons every attendee can press (works in DMs and in the channel). */
+/** Thin divider used between card sections. */
+const divider = () =>
+  new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
+
+/** The two RSVP buttons — they work in DMs and in the channel. */
 function rsvpRow(id) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`meet_yes_${id}`).setLabel('Can attend').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`meet_no_${id}`).setLabel('Cannot attend').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId(`meet_maybe_${id}`).setLabel('Maybe').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`meet_no_${id}`).setLabel('Cannot attend').setStyle(ButtonStyle.Danger)
   );
 }
 
-/** Live RSVP tally shown on the announcement card. */
-function countsLine(meeting) {
-  const rsvp = meeting.rsvp || {};
-  const count = (status) => Object.values(rsvp).filter((r) => r.status === status).length;
-  const yes = count('yes');
-  const no = count('no');
-  const maybe = count('maybe');
-  const total = (meeting.attendees || []).length;
-  const pending = Math.max(0, total - yes - no - maybe);
-  return `**RSVPs** — ✅ ${yes}  ·  ❌ ${no}  ·  🤔 ${maybe}  ·  ⏳ ${pending}`;
-}
-
 /**
- * The meeting card.
+ * The meeting card — a compact Components V2 panel.
+ * Headings, bold labels and blockquotes only: no emoji, no tally line.
+ *
  * @param {object} meeting
  * @param {'invite'|'reminder'|'postponed'|'cancelled'|'start'} variant
- * @param {string|null} forUserId  set for DM cards so they show YOUR reply
+ * @param {string|null} forUserId set for DM cards so they show YOUR reply
  */
 function buildCard(meeting, variant = 'invite', forUserId = null) {
   const card = new ContainerBuilder();
   try {
-    card.setAccentColor(variant === 'cancelled' ? 0xed4245 : variant === 'postponed' ? 0xfaa61a : 0x5865f2);
+    card.setAccentColor(variant === 'cancelled' ? 0x80848e : variant === 'postponed' ? 0xfee75c : 0x5865f2);
   } catch { /* accent is cosmetic */ }
 
-  const heading =
-    variant === 'cancelled' ? '## Meeting Cancelled'
-      : variant === 'postponed' ? '## Meeting Postponed'
-        : variant === 'reminder' ? '## Meeting Reminder'
-          : variant === 'start' ? '## Meeting Starting Now'
-            : '## Meeting Invitation';
+  const heading = {
+    cancelled: '## Meeting Cancelled',
+    postponed: '## Meeting Postponed',
+    reminder: '## Meeting Reminder',
+    start: '## Meeting Starting Now'
+  }[variant] || '## Meeting Invitation';
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`${heading}\n**${meeting.title}**`)
-  );
-  card.addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`${heading}\n**${meeting.title}**`));
+  card.addSeparatorComponents(divider());
 
   const secs = Math.floor(meeting.startTs / 1000);
-  const lines = [
-    `> **When:** <t:${secs}:F> (<t:${secs}:R>)`,
-    `> **Where:** ${meeting.location || '*not set*'}`,
-    `> **Host:** <@${meeting.hostId}>`
+  const fields = [
+    `**When**  <t:${secs}:F>  ·  <t:${secs}:R>`,
+    `**Where**  ${meeting.location || 'Not set'}`,
+    `**Host**  <@${meeting.hostId}>`
   ];
-  if (meeting.agenda) lines.push(`> **Agenda:** ${meeting.agenda}`);
-  if (meeting.postponedCount) lines.push(`> **Postponed:** ${meeting.postponedCount} time(s)${meeting.lastPostponeReason ? ` — ${meeting.lastPostponeReason}` : ''}`);
-  if (variant === 'cancelled' && meeting.cancelReason) lines.push(`> **Reason:** ${meeting.cancelReason}`);
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(lines.join('\n')));
-
-  card.addSeparatorComponents(new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small));
-
-  if (forUserId) {
-    const mine = meeting.rsvp?.[forUserId];
-    const mineLabel = mine ? RSVP_LABEL[mine.status] : 'No response yet';
-    card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`${countsLine(meeting)}\n**Your response:** ${mineLabel}`)
+  if (meeting.agenda) fields.push(`**Agenda**  ${meeting.agenda}`);
+  if (meeting.postponedCount) {
+    fields.push(
+      `**Postponed**  ${meeting.postponedCount} time(s)` +
+        (meeting.lastPostponeReason ? ` — ${meeting.lastPostponeReason}` : '')
     );
-  } else {
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(countsLine(meeting)));
   }
+  if (variant === 'cancelled' && meeting.cancelReason) fields.push(`**Reason**  ${meeting.cancelReason}`);
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(fields.join('\n')));
 
   if (variant !== 'cancelled') {
+    if (forUserId) {
+      const status = meeting.rsvp?.[forUserId]?.status;
+      const reply = status === 'yes' ? 'Can attend' : status === 'no' ? 'Cannot attend' : 'No response yet';
+      card.addSeparatorComponents(divider());
+      card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**Your reply**\n> ${reply}`));
+    }
     card.addActionRowComponents(rsvpRow(meeting.id));
   }
+
+  card.addSeparatorComponents(divider());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent('-# Reminders are sent 7 days before and the morning of the meeting.')
   );
   return card;
 }
 
-function cardPayload(meeting, variant, forUserId = null) {
+/** Builds the Components V2 payload for a meeting card (exported for tests). */
+export function cardPayload(meeting, variant, forUserId = null) {
   return {
     components: [buildCard(meeting, variant, forUserId).toJSON()],
     flags: MessageFlags.IsComponentsV2
@@ -425,6 +418,22 @@ export async function scheduleMeeting({ guild, channel, title, start, location, 
   // Anything that is not an explicit id means "the staff team".
   if (!ids.size) (await staffMemberIds(guild, staffRoleId)).forEach((id) => ids.add(id));
 
+  // Idempotency guard: if another instance (or a double-fired event) already
+  // created this exact meeting, reuse it instead of DMing everyone twice.
+  loadMeetings(); // pick up anything another instance wrote to the shared file
+  const existing = [...meetings.values()].find(
+    (m) => m.status === 'scheduled' && m.title === (title || 'Staff Meeting') && Math.abs(m.startTs - when) < 60_000
+  );
+  if (existing) {
+    return {
+      ok: true,
+      message:
+        `ℹ️ **${existing.title}** is already scheduled for <t:${Math.floor(existing.startTs / 1000)}:F> — ` +
+        `I did not send duplicate invites.\n` +
+        `> Use -ai postpone the meeting or -ai cancel the meeting to change it.`
+    };
+  }
+
   const id = `mtg${Date.now().toString(36)}${Math.floor(Math.random() * 1e5).toString(36)}`;
   const meeting = {
     id,
@@ -567,8 +576,6 @@ export async function listMeetings({ guild }) {
 }
 // ── Buttons ──────────────────────────────────────────────────────────────────
 
-const STATUS_BY_KIND = { yes: 'yes', no: 'no', maybe: 'maybe' };
-
 /**
  * Handles a meeting RSVP button, in a DM or in the channel.
  * Edits the card in place so the tally stays accurate and nothing is re-pinged.
@@ -577,14 +584,33 @@ const STATUS_BY_KIND = { yes: 'yes', no: 'no', maybe: 'maybe' };
 export async function handleMeetingButton(interaction) {
   const match = /^meet_(yes|no|maybe)_(.+)$/.exec(interaction.customId || '');
   if (!match) return false;
-  const status = STATUS_BY_KIND[match[1]];
-  const meeting = meetings.get(match[2]);
+  const status = match[1];
+  const id = match[2];
+
+  // Another instance may own this meeting. Re-read the shared store before
+  // giving up, so a stale in-memory copy never shows "no longer exists".
+  let meeting = meetings.get(id);
   if (!meeting) {
-    await interaction.reply({ content: '❌ That meeting no longer exists.', flags: MessageFlags.Ephemeral }).catch(() => null);
+    loadMeetings();
+    meeting = meetings.get(id);
+  }
+
+  if (!meeting) {
+    await interaction
+      .reply({
+        content:
+          'That meeting is no longer available — it may have been cancelled or the record has been cleared.\n' +
+          '> Ask the host for the current details.',
+        flags: MessageFlags.Ephemeral
+      })
+      .catch(() => null);
     return true;
   }
+
   if (meeting.status === 'cancelled') {
-    await interaction.reply({ content: '🚫 That meeting was cancelled.', flags: MessageFlags.Ephemeral }).catch(() => null);
+    await interaction
+      .reply({ content: 'That meeting was cancelled.', flags: MessageFlags.Ephemeral })
+      .catch(() => null);
     return true;
   }
 
@@ -596,26 +622,23 @@ export async function handleMeetingButton(interaction) {
     at: Date.now()
   };
   saveMeetings();
-  armAll();
 
-  // The card is rebuilt for this viewer so "Your response" is correct.
+  // The card is rebuilt for this viewer so "Your reply" is correct.
   const payload = cardPayload(meeting, meeting.status === 'started' ? 'start' : 'invite', interaction.user.id);
   try {
     if (interaction.message && typeof interaction.message.edit === 'function') {
       await interaction.message.edit(payload);
-    } else {
-      await interaction.editReply(payload);
+    } else if (typeof interaction.update === 'function') {
+      await interaction.update(payload);
     }
   } catch {
     // Fall through to a plain acknowledgement so the click still registers.
   }
 
-  const label = RSVP_LABEL[status];
+  const label = RSVP_LABEL[status] || 'No response yet';
+  const suffix = previous && previous !== status ? ` (was ${RSVP_LABEL[previous] || previous})` : '';
   await interaction
-    .followUp({
-      content: `✅ Your response is **${label}**${previous && previous !== status ? ` (was ${RSVP_LABEL[previous]})` : ''}.`,
-      flags: MessageFlags.Ephemeral
-    })
+    .followUp({ content: `Your reply is **${label}**${suffix}.`, flags: MessageFlags.Ephemeral })
     .catch(() => null);
   return true;
 }

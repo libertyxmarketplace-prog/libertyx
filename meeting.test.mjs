@@ -15,7 +15,8 @@ import {
   listMeetings,
   handleMeetingButton,
   parseWhen,
-  listScheduledMeetings
+  listScheduledMeetings,
+  cardPayload
 } from './src/meetings.js';
 
 const store = path.join(os.tmpdir(), `meetings-test-${Date.now()}.json`);
@@ -196,6 +197,22 @@ console.log('stale 2023 ISO recovered from raw text:', 'ok', '->', new Date(reco
 const tonight = parseWhen('tonight');
 assert.ok(tonight && tonight > Date.now(), 'tonight is in the future');
 console.log('tonight is future:', 'ok');
+
+// 11. Card design: V2 panel, no emoji, no RSVP tally, no "Maybe" button.
+const cardPayloadOut = cardPayload(listScheduledMeetings()[0], 'invite', 'u1');
+const cardJson = cardPayloadOut.components[0];
+const EMOJI = /\p{Extended_Pictographic}/u;
+const text = cardJson.components.filter((c) => c.type === 10).map((c) => c.content).join('\n');
+const buttons = JSON.stringify(cardJson).match(/"label":"([^"]+)"/g) || [];
+assert.strictEqual(cardPayloadOut.flags, 1 << 15, 'card must carry the IsComponentsV2 flag');
+assert.strictEqual(EMOJI.test(text), false, 'card must contain no emoji');
+assert.strictEqual(text.includes('RSVPs'), false, 'card must not show the RSVP tally');
+assert.ok(!buttons.some((b) => /Maybe/i.test(b)), 'Maybe button must be gone');
+assert.strictEqual(buttons.length, 2, 'exactly two RSVP buttons');
+// Container type is 17 in this discord.js build (18 in newer ones).
+assert.ok([17, 18].includes(cardJson.type), 'card is a Components V2 container');
+console.log('card: V2 container / no emoji / no tally / 2 buttons:', 'ok');
+console.log('button labels:', buttons.join(' , '));
 
 fs.unlinkSync(store);
 console.log('\nALL MEETING TESTS PASSED');
