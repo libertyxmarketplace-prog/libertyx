@@ -87,6 +87,12 @@ every existing card in place**, so nobody is pinged a second time.
 and posts a revocation notice. `-ai revoke @user promotion` posts an official
 demotion/revocation card. `-ai dm @user ...` sends a private DM.
 
+**Cleaning up bot DMs.** Discord offers no API to enumerate a bot's DM history,
+so every DM the bot sends is recorded (`bot_dms.json`) alongside the meeting
+cards (`meetings.json`). `node cleanup-dms.mjs` silently deletes them — Discord
+never notifies the recipient. Use `--dry-run` to preview and `--purge` to also
+clear the records.
+
 In-game ER:LC control (`-ai jail RobloxName`, `in game ban X for Y`,
 `announce ...`, `hint ...`, `pm X ...`) and `-ai unban @user` are available to
 staff rather than owner-only.
@@ -111,7 +117,10 @@ Model ids can be pinned per provider with `AI_MODEL`, `OPENROUTER_MODEL` and
 
 **How it works** — the request goes to the highest available provider
 (OpenAI Chat Completions format), which returns one JSON object selecting from a
-closed list of 43 actions. The action list is filtered to the caller's tier
+closed list of 43 actions. The current date and time are injected into every
+prompt so the model can resolve "tomorrow at 7pm" correctly, and each provider
+is capped at a 10-second timeout so a slow model fails over instead of hanging.
+The action list is filtered to the caller's tier
 before the prompt is sent, so the directive team is never even offered the
 owner's actions. The result is validated locally again, then executed. An
 unknown action is refused rather than guessed at. Every action is written to

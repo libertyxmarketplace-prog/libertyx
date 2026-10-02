@@ -101,13 +101,9 @@ export function parseWhen(input) {
   if (!text) return null;
   const now = new Date();
 
-  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t ](\d{1,2})(?::(\d{2}))?)?/);
-  if (iso) {
-    const [, y, mo, d, h, mi] = iso;
-    return wallClock(new Date(Date.UTC(+y, +mo - 1, +d, 12)), +(h ?? 19), +(mi ?? 0));
-  }
-
-  const rel = text.match(/\bin\s+(\d+)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\b/);
+  // 1. Relative — checked FIRST so a duration is never mistaken for a date.
+  //    Covers "in 2 hours", "2 hours", "in 3 days", "45 minutes", "3d".
+  const rel = text.match(/\b(\d+(?:\.\d+)?)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w)\b/);
   if (rel) {
     const n = Number(rel[1]);
     const unit = rel[2][0];
@@ -115,6 +111,7 @@ export function parseWhen(input) {
     return now.getTime() + n * ms;
   }
 
+  // 2. Optional time of day: "at 7pm", "at 18:30", "19:00".
   let hour = null;
   let minute = 0;
   const ampm = text.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
@@ -123,24 +120,31 @@ export function parseWhen(input) {
     if (ampm[3] === 'pm') hour += 12;
     minute = Number(ampm[2] ?? 0);
   } else {
-    const h24 = text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/);
+    const h24 = text.match(/\b(?:at\s+)?(\d{1,2}):(\d{2})\b/);
     if (h24) {
       hour = Number(h24[1]);
-      minute = Number(h24[2] ?? 0);
+      minute = Number(h24[2]);
     }
   }
 
-  if (/tomorrow/.test(text)) {
-    return wallClock(new Date(now.getTime() + DAY), hour ?? 19, minute);
+  // Always the NEXT occurrence, so these branches can never return the past.
+  const upcoming = (base, h, m) => {
+    const ts = wallClock(base, h, m);
+    return ts > now.getTime() ? ts : ts + DAY;
+  };
+
+  // 3. Day words, resolved against the server's local wall clock.
+  if (/\btomorrow\b/.test(text)) return wallClock(new Date(now.getTime() + DAY), hour ?? 19, minute);
+  if (/\b(tonight|this evening|today)\b/.test(text)) return upcoming(now, hour ?? 19, minute);
+  if (hour !== null) return upcoming(now, hour, minute);
+
+  // 4. Absolute: "2026-03-14T19:00".
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t ](\d{1,2})(?::(\d{2}))?)?/);
+  if (iso) {
+    const [, y, mo, d, h, mi] = iso;
+    return wallClock(new Date(Date.UTC(+y, +mo - 1, +d, 12)), +(h ?? 19), +(mi ?? 0));
   }
-  if (/tonight/.test(text)) {
-    return wallClock(now, hour ?? 19, minute);
-  }
-  if (hour !== null) {
-    let ts = wallClock(now, hour, minute);
-    if (ts <= now.getTime()) ts += DAY;
-    return ts;
-  }
+
   return null;
 }
 // ── Cards ────────────────────────────────────────────────────────────────────
@@ -386,16 +390,30 @@ async function fireReminder(id, kind) {
  * `-ai schedule a meeting ...`
  * @returns {Promise<{ok: boolean, message: string}>}
  */
-export async function scheduleMeeting({ guild, channel, title, start, location, attendees, agenda, reminders, by, staffRoleId }) {
-  const when = parseWhen(start);
+export async function scheduleMeeting({ guild, channel, title, start, location, attendees, agenda, reminders, by, staffRoleId, raw }) {
+  // Use the parsed/model value first. If it is unusable OR lands in the past,
+  // fall back to what the human actually typed — the model sometimes invents a
+  // stale date when it does not know what day it is.
+  let when = parseWhen(start);
+  const stale = !when || when - Date.now() < 60_000;
+  if (stale && raw) {
+    const fallback = parseWhen(String(raw).replace(/^.*?-ai\s+/i, ''));
+    if (fallback && fallback - Date.now() >= 60_000) when = fallback;
+  }
+
   if (!when) {
     return {
       ok: false,
-      message: '❌ I could not read that time. Try "in 2 hours", "tomorrow at 7pm" or an ISO date like 2026-03-14T19:00.'
+      message: '❌ I could not read that time. Try "in 2 hours", "tomorrow at 7pm" or 2026-03-14T19:00.'
     };
   }
   if (when - Date.now() < 60_000) {
-    return { ok: false, message: '❌ That time is in the past — pick a time at least a minute from now.' };
+    return {
+      ok: false,
+      message:
+        `❌ I read that as <t:${Math.floor(when / 1000)}:F>, which has already passed.\n` +
+        `> Try a relative time instead — "in 2 hours" or "tomorrow at 7pm".`
+    };
   }
 
   const { ids, everyone } = await resolveAttendees(guild, attendees);

@@ -41,6 +41,8 @@ import {
   postponeMeeting as meetingPostpone,
   scheduleMeeting as meetingSchedule
 } from './meetings.js';
+import { initDmLog, recordDm } from './dmlog.js';
+const BOT_DMS_FILE = fileURLToPath(new URL('../bot_dms.json', import.meta.url));
 import {
   AI_DIRECTIVE_ID,
   AI_OWNER_ID,
@@ -1496,7 +1498,9 @@ function savePanels() {
 async function dmUser(discordClient, userId, payload) {
   try {
     const user = await discordClient.users.fetch(userId);
-    await user.send(payload);
+    const msg = await user.send(payload);
+    // Record the id so `node cleanup-dms.mjs` can remove it later.
+    recordDm(userId, msg.id, 'bot');
     return true;
   } catch {
     return false; // DMs closed / left the server - never crash.
@@ -9032,6 +9036,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadAiTempBans();
     scheduleAiTempBanSweep();
     loadInfractions();
+    initDmLog(BOT_DMS_FILE);
     // Meetings: restore state + re-arm the 7-day / morning-of / start reminders.
     const meetingCount = initMeetingService({
       client: readyClient || client,
@@ -15415,8 +15420,8 @@ async function aiListInfractions({ userId, limit = 10, guild }) {
     return {
       ok: true,
       message: userId
-        ? `✅ <@${userId}> has no recorded staff infractions.`
-        : '✅ There are no recorded staff infractions.'
+        ? `📭 No recorded infractions for <@${userId}>.`
+        : '📭 The infraction log is empty.\n> Infractions are recorded automatically when staff issue one with **/staff infraction**.'
     };
   }
   const activeCount = rows.filter((r) => !r.revoked).length;
@@ -15526,28 +15531,22 @@ const MEETINGS_FILE = fileURLToPath(new URL('../meetings.json', import.meta.url)
  */
 function buildAiHelpCard(tier) {
   const { groups, ownerGroups, examples, examplesOwner, note } = aiHelpSections(tier);
-  const asText = (g) => [`**${g.title}**`, ...g.items.map((i) => `> ${i}`)].join('\n');
+  const line = (g) => `> **${g.title}** — ${g.items.join(' · ')}`;
 
   const card = new ContainerBuilder();
   try { card.setAccentColor(0x5865f2); } catch { }
 
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `## AI Command Engine\n*Say what you want in plain English — it gets done.*`
-    )
-  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('## AI Command Engine'));
   card.addSeparatorComponents(thinLine());
 
   card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `### Available to you\n${groups.map(asText).join('\n\n')}`
-    )
+    new TextDisplayBuilder().setContent(`### Available to you\n${groups.map(line).join('\n')}`)
   );
 
   if (tier === 'owner') {
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`### Owner\n${ownerGroups.map(asText).join('\n\n')}`)
+      new TextDisplayBuilder().setContent(`### Owner\n${ownerGroups.map(line).join('\n')}`)
     );
   }
 

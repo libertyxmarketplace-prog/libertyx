@@ -171,5 +171,31 @@ const bad = await scheduleMeeting({ guild, channel, title: 'x', start: 'sometime
 assert.strictEqual(bad.ok, false);
 console.log('bad time refused:', 'ok');
 
+// 8. Bare duration ("2 hours", no "in") is read as relative to now.
+const bare = await scheduleMeeting({
+  guild, channel, title: 'Bare duration', start: '2 hours',
+  attendees: ['u1'], agenda: null, reminders: true, by,
+  raw: '-ai schedule a meeting in 2 hours'
+});
+assert.strictEqual(bare.ok, true, 'bare duration ok');
+console.log('bare "2 hours" accepted:', 'ok');
+
+// 9. A stale model-generated date recovers from what the human actually typed.
+//    This is the exact bug behind "That time is in the past".
+const stale = await scheduleMeeting({
+  guild, channel, title: 'Stale date', start: '2023-10-04T19:00',
+  attendees: ['u1'], agenda: null, reminders: true, by,
+  raw: '-ai schedule a staff meeting tomorrow at 7pm to talk about rosters'
+});
+assert.strictEqual(stale.ok, true, 'stale date recovered from raw text');
+const recovered = listScheduledMeetings().find((m) => m.title === 'Stale date');
+assert.ok(recovered.startTs > Date.now(), 'recovered time is in the future');
+console.log('stale 2023 ISO recovered from raw text:', 'ok', '->', new Date(recovered.startTs).toUTCString());
+
+// 10. "tonight" never returns a past time either.
+const tonight = parseWhen('tonight');
+assert.ok(tonight && tonight > Date.now(), 'tonight is in the future');
+console.log('tonight is future:', 'ok');
+
 fs.unlinkSync(store);
 console.log('\nALL MEETING TESTS PASSED');

@@ -486,7 +486,7 @@ async function callProvider(provider, messages, { timeout, maxTokens }) {
  *
  * @returns {Promise<{text: string, provider: string, model: string}>}
  */
-export async function callAIProvider(messages, { timeout = 30_000, maxTokens = 700 } = {}) {
+export async function callAIProvider(messages, { timeout = 10_000, maxTokens = 350 } = {}) {
   if (!aiConfigured()) {
     const err = new Error('No AI provider keys are configured on this bot.');
     err.code = 'NO_KEY';
@@ -553,6 +553,35 @@ const SYSTEM_PROMPT = [
   '__SCHEMA__'
 ].join('\n');
 
+/** Meeting timezone offset (hours from UTC) used to read "7pm" / "tomorrow". */
+const PROMPT_TZ_OFFSET = Number.isFinite(Number(process.env.MEETING_TZ_OFFSET))
+  ? Number(process.env.MEETING_TZ_OFFSET)
+  : -6;
+
+/**
+ * The current time, injected into every prompt.
+ *
+ * Without this the model has NO idea what day it is and happily answers
+ * "tomorrow at 7pm" with a date years in the past, which the meeting
+ * scheduler then rejects as "in the past".
+ */
+function nowContext() {
+  const now = new Date();
+  const utc = now.toISOString().replace('T', ' ').slice(0, 16);
+  const local = new Date(now.getTime() + PROMPT_TZ_OFFSET * 3_600_000)
+    .toISOString()
+    .replace('T', ' ')
+    .slice(0, 16);
+  const sign = PROMPT_TZ_OFFSET >= 0 ? '+' : '';
+  return [
+    `- Right now, UTC: ${utc}`,
+    `- Right now, server local time (UTC${sign}${PROMPT_TZ_OFFSET}): ${local}`,
+    '- Any date/time you output MUST be in the FUTURE relative to those lines.',
+    '- Output meeting times as YYYY-MM-DDTHH:MM in the SERVER LOCAL time shown above.',
+    '- Day names ("tomorrow", "today", "tonight") are resolved against those lines.'
+  ].join('\n');
+}
+
 /**
  * Builds the system prompt with the action schema injected.
  *
@@ -608,7 +637,7 @@ export function buildSystemPrompt(tier = 'owner') {
         '- Convert meeting times ("tomorrow 7pm") into an ISO datetime string YYYY-MM-DDTHH:MM.'
       ].join('\n');
 
-  return `${SYSTEM_PROMPT.replace('__SCHEMA__', schema)}\n\n${scope}`;
+  return `${SYSTEM_PROMPT.replace('__SCHEMA__', schema)}\n\nCONTEXT\n${nowContext()}\n\n${scope}`;
 }
 
 /** Extracts the first JSON object from a model response. */
@@ -851,7 +880,9 @@ export function parseLocally(request) {
   }
 
   // ── Staff records: infractions ──────────────────────────────────────────────
-  if (/\binfractions?\b/.test(t)) {
+  // "infra" (not "infraction") so common misspellings still land here:
+  // infraciton, infration, infraction, infractions ...
+  if (/\binfra/.test(t)) {
     if (/\b(revoke|remove|delete|clear|cancel|appeal|overturn|drop|expunge)\b/.test(t)) {
       return {
         action: 'infraction_revoke',
@@ -1286,110 +1317,28 @@ export async function resolveIntent(request, { tier = 'owner' } = {}) {
  */
 export function aiHelpSections(tier) {
   const groups = [
-    {
-      title: 'Sessions and panels',
-      items: [
-        'start a session vote with 5 users for 2 hours',
-        'close the session',
-        'post the session panel'
-      ]
-    },
-    {
-      title: 'Ticket desk',
-      items: [
-        'make the ticket desk busy',
-        'open internal affairs',
-        'close all tickets',
-        'what is the desk status'
-      ]
-    },
+    { title: 'Sessions', items: ['session vote with 5 users for 2 hours', 'close the session', 'post a panel'] },
     {
       title: 'Tickets',
-      items: [
-        'close this ticket',
-        'close the general ticket',
-        'ticket info',
-        'add @user to this ticket'
-      ]
+      items: ['close this ticket', 'ticket info', 'add @user to this ticket', 'desk busy / open / close all']
     },
-    {
-      title: 'Channel tools',
-      items: ['slowmode 30', 'pin the last message']
-    },
-    {
-      title: 'Community',
-      items: [
-        'make a suggestion that we add more staff',
-        'show the top suggestion',
-        'poll Friday or Saturday: session; no session'
-      ]
-    },
-    {
-      title: 'Info',
-      items: [
-        'how many players are online',
-        'whois @user',
-        'avatar @user',
-        'discord server info',
-        'bot stats',
-        'show the command directory'
-      ]
-    },
-    {
-      title: 'Staff records',
-      items: ['list infractions', 'list @user infractions', 'revoke @user infraction', 'revoke @user promotion']
-    },
-    {
-      title: 'Messages',
-      items: [
-        'dm @user you are invited to the meeting',
-        'send a message in game we are full',
-        'in game ban RobloxName for exploiting'
-      ]
-    },
+    { title: 'Staff records', items: ['list infractions', 'revoke an infraction', 'revoke a promotion'] },
     {
       title: 'Meetings',
-      items: [
-        'schedule a meeting in 2 hours to discuss staffing',
-        'schedule a staff meeting tomorrow at 7pm',
-        'postpone the meeting by 1 hour',
-        'cancel the meeting',
-        'list meetings'
-      ]
+      items: ['schedule a meeting in 2 hours', 'postpone it by 1 hour', 'cancel it', 'list meetings']
     },
+    { title: 'Messages', items: ['dm @user ...', 'announce / jail / ban / pm in game'] },
+    { title: 'Channel', items: ['slowmode 30', 'pin the last message', 'lock this channel'] },
+    { title: 'Community', items: ['make a suggestion ...', 'top suggestion', 'poll A or B: yes; no'] },
     {
-      title: 'In-game',
-      items: [
-        'jail RobloxName',
-        'unjail RobloxName',
-        'announce we are full',
-        'hint roadblock ahead',
-        'pm RobloxName to join staff'
-      ]
+      title: 'Info',
+      items: ['player count', 'whois @user', 'avatar @user', 'server info', 'bot stats', 'command directory']
     }
   ];
 
   const ownerGroups = [
-    {
-      title: 'Moderation',
-      items: [
-        'ban @user for 7 days for spamming',
-        'unban @user',
-        'kick @user for raiding',
-        'timeout @user for 2 hours',
-        'purge 25'
-      ]
-    },
-    {
-      title: 'Server',
-      items: [
-        'say Session starts in 5 minutes',
-        'lock this channel',
-        'hide this channel',
-        'set nickname of @user to Helper',
-        'give @user the Moderator role'
-      ]
-    },
+    { title: 'Moderation', items: ['ban @user for 7 days', 'kick @user', 'timeout @user', 'purge 25'] },
+    { title: 'Server', items: ['say ...', 'hide this channel', 'set a nickname', 'give @user a role'] },
     { title: 'System', items: ['retrigger the bot'] }
   ];
 
@@ -1402,7 +1351,7 @@ export function aiHelpSections(tier) {
 
 /** Renders one help group as markdown lines. */
 function renderHelpGroup(group) {
-  return [`**${group.title}**`, ...group.items.map((i) => `> ${i}`)].join('\n');
+  return `> **${group.title}** — ${group.items.join(' · ')}`;
 }
 
 /** Plain-text rendering of the help sections (fallback path). */
@@ -1410,7 +1359,6 @@ export function buildAiHelpText(tier) {
   const { groups, ownerGroups, examples, examplesOwner, note } = aiHelpSections(tier);
   const lines = [
     '## AI Command Engine',
-    '*Say what you want in plain English — it gets done.*',
     '',
     '### Available to you',
     ...groups.flatMap((g) => [renderHelpGroup(g), ''])
@@ -1997,7 +1945,10 @@ export async function executeIntent(intent, ctx) {
           attendees: args.attendees ?? ['staff'],
           agenda: args.agenda ? String(args.agenda).slice(0, 800) : null,
           reminders: args.reminders !== false && args.reminders !== 'false',
-          by: message.author
+          by: message.author,
+          // What the human actually typed — used to recover if the model
+          // invents a stale date for the meeting time.
+          raw: message.content
         });
       }
 
