@@ -66,10 +66,11 @@ Type what you want in plain English and the bot does it:
 
 **Access**
 
-| Tier | User ID | Can do |
-|------|---------|--------|
+| Tier | User ID / Role | Can do |
+|------|----------------|--------|
 | Owner | `1341965114101731418` | Everything, including bans, kicks, timeouts, purges, announcements, channel locks and retrigger |
 | Directive Team | `1341931745351700534` | Sessions, panels, ticket desk, suggestions, ticket members, server stats |
+| Staff Team | role `1341965114101731418` | Same set as Directive Team — anyone **wearing the Staff Team role** may run `-ai` |
 | Everyone else | — | Refused |
 
 **Providers.** Three independent providers are tried in order; the first one to
@@ -83,16 +84,16 @@ answer wins, so you only need one working key:
 
 Each provider has its **own circuit breaker**, so one that is rate limited, out
 of credit or offline is skipped with no network call at all rather than retried
-on every request. `-ai help` shows the live status of all three, and the bot log
-prints the chain on startup. With no keys at all the bot still works via its
-built-in offline parser.
+on every request. Provider/token status is **never shown unless you ask** —
+type `-ai providers` — and the bot log prints the chain on startup. With no keys
+at all the bot still works via its built-in offline parser.
 
 Model ids can be pinned per provider with `AI_MODEL`, `OPENROUTER_MODEL` and
 `HUGGINGFACE_MODEL` (comma separated).
 
 **How it works** — the request goes to the highest available provider
 (OpenAI Chat Completions format), which returns one JSON object selecting from a
-closed list of 22 actions. The action list is filtered to the caller's tier
+closed list of 35 actions. The action list is filtered to the caller's tier
 before the prompt is sent, so the directive team is never even offered the
 owner's actions. The result is validated locally again, then executed. An
 unknown action is refused rather than guessed at. Every action is written to
@@ -105,7 +106,8 @@ under the author's name.
 
 `-ai` is **prefix only** — there is deliberately no `/ai` slash command, so the
 engine can never be triggered by an interaction payload. Run `/commands` and go
-to the last page for the full reference, or type `-ai help`.
+to the last page for the full reference, or type `-ai help` (the help card is
+DM'd to you when your DMs are open, so only you can read it).
 
 Timed bans (`-ai ban @user for 7 days`) are stored in `ai_temp_bans.json` and
 lifted automatically by a sweeper that re-arms itself on boot.

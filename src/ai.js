@@ -14,6 +14,8 @@
  *  • OWNER    — 1341965114101731418 has every action.
  *  • DIRECTIVE— 1341931745351700534 gets the non-destructive set (status, desk
  *               toggles, panels, votes, suggestions).
+ *  • STAFF    — anyone holding the Staff Team role 1341965114101731418 gets the
+ *               same non-destructive set as the directive tier.
  *  • SAFETY   — the model may only select from the closed ACTION_SCHEMA below,
  *               and every action declares a `risk` level that is re-enforced by
  *               the executor. Anything unknown is refused, never guessed.
@@ -31,12 +33,22 @@ import axios from 'axios';
 // ── Access control ────────────────────────────────────────────────────────────
 export const AI_OWNER_ID = '1341965114101731418';
 export const AI_DIRECTIVE_ID = '1341931745351700534';
+// Staff Team role — every member holding it may use the non-destructive set.
+export const AI_STAFF_ROLE_ID = '1341965114101731418';
 
-/** Returns the permission tier of a Discord user for the AI engine. */
-export function aiAccessTier(userId) {
+/**
+ * Returns the permission tier of a Discord user for the AI engine.
+ *
+ * @param {string} userId
+ * @param {string[]} [roleIds] role ids of the member in the guild the command ran in
+ * @returns {'owner'|'directive'|'staff'|'none'}
+ */
+export function aiAccessTier(userId, roleIds = []) {
   if (!userId) return 'none';
   if (userId === AI_OWNER_ID) return 'owner';
   if (userId === AI_DIRECTIVE_ID) return 'directive';
+  // Staff Team role gets everything the directive tier gets (risk !== 'owner').
+  if (Array.isArray(roleIds) && roleIds.includes(AI_STAFF_ROLE_ID)) return 'staff';
   return 'none';
 }
 
@@ -166,7 +178,34 @@ export const ACTION_SCHEMA = [
     risk: 'owner',
     args: { verb: "'pm'|'message'|'hint'|'jail'|'unjail'|'kick'|'ban'|'unban'", player: 'roblox username', text: 'string or null' },
     desc: 'Execute an in-game ER:LC command against a player.'
-  }
+  },
+  // ── Ticket lifecycle (staff) ────────────────────────────────────────────────
+  {
+    action: 'ticket_close',
+    risk: 'directive',
+    args: {},
+    desc: 'Close the open ticket IN THIS CHANNEL: archive the transcript, then delete the channel. Use whenever someone says to close "this", "the" or one named single ticket (e.g. "close the general ticket"). NOT for departments or panels.'
+  },
+  { action: 'ticket_info', risk: 'directive', args: {}, desc: 'Show the details of the open ticket in this channel: category, author, claim, age and reason.' },
+  // ── Channel tools (staff) ───────────────────────────────────────────────────
+  { action: 'slowmode', risk: 'directive', args: { seconds: 'int 0-21600' }, desc: 'Set slowmode on this channel (0 turns it off).' },
+  { action: 'pin_message', risk: 'directive', args: {}, desc: "Pin the message being replied to, or otherwise the latest message in this channel." },
+  // ── Community & information (staff) ─────────────────────────────────────────
+  { action: 'poll', risk: 'directive', args: { question: 'string', options: 'string[] (2-10 answers)' }, desc: 'Post a numbered reaction poll in this channel.' },
+  { action: 'whois', risk: 'directive', args: { user_id: 'snowflake or null' }, desc: 'Member card: account age, join date, roles and timeout state. Defaults to the caller.' },
+  { action: 'avatar', risk: 'directive', args: { user_id: 'snowflake or null' }, desc: "Post a member's avatar image. Defaults to the caller." },
+  { action: 'guild_info', risk: 'directive', args: {}, desc: 'Discord server overview: members, roles, channels, boosts, owner and creation date.' },
+  { action: 'bot_stats', risk: 'directive', args: {}, desc: 'Bot ping, uptime and memory usage.' },
+  {
+    action: 'provider_status',
+    risk: 'directive',
+    args: {},
+    desc: 'Live AI provider status (ready / rate-limited / retry timers). ONLY use when the user EXPLICITLY asks about providers, tokens, credits or the gateway — never proactively.'
+  },
+  // ── Owner-only additions ────────────────────────────────────────────────────
+  { action: 'nick', risk: 'owner', args: { user_id: 'snowflake', nickname: 'string (empty to clear)' }, desc: "Set or clear a member's server nickname." },
+  { action: 'role_grant', risk: 'owner', args: { op: "'add'|'remove'", user_id: 'snowflake', role: 'role name or snowflake' }, desc: 'Add or remove a role on a member.' },
+  { action: 'channel_hide', risk: 'owner', args: { hidden: 'boolean' }, desc: 'Hide or reveal this channel for @everyone (View Channel).' }
 ];
 
 export const OWNER_ONLY_ACTIONS = new Set(ACTION_SCHEMA.filter((a) => a.risk === 'owner').map((a) => a.action));
@@ -478,7 +517,8 @@ export function buildSystemPrompt(tier = 'owner') {
         'You may use EVERY action listed below. All of them are permitted.',
         '',
         'How to choose:',
-        '- "close/lock/open <department>" (general, internal affairs, high rank, partnership, staff partnership, applications) -> desk_department',
+        '- closing ONE open ticket ("close this ticket", "close the general ticket") -> ticket_close; desk_department only locks a panel line and does NOT close open tickets',
+        '- "close/lock/open <department> line/panel" (general, internal affairs, high rank, partnership, staff partnership, applications) -> desk_department',
         '- "close all tickets", "close the desk", "shut the desk" -> desk_status with status "closed"',
         '- "make the desk busy" -> desk_status with status "busy"',
         '- "open all", "reopen tickets", "set the desk online" -> desk_status with status "online"',
@@ -488,13 +528,15 @@ export function buildSystemPrompt(tier = 'owner') {
       ].join('\n')
     : [
         'You may use EVERY action listed below. All of them are permitted for this caller.',
-        'The actions NOT listed (bans, kicks, timeouts, purges, announcements, channel locks, in-game commands, restarts) belong to the bot owner. If the request needs one of those, reply with action "unsupported".',
+        'The actions NOT listed (bans, kicks, timeouts, purges, announcements, channel locks, nicknames, roles, in-game commands, restarts) belong to the bot owner. If the request needs one of those, reply with action "unsupported".',
         '',
         'How to choose:',
-        '- "close/lock/open <department>" (general, internal affairs, high rank, partnership, staff partnership, applications) -> desk_department',
+        '- closing ONE open ticket ("close this ticket", "close the general ticket") -> ticket_close; desk_department only locks a panel line and does NOT close open tickets',
+        '- "close/lock/open <department> line/panel" (general, internal affairs, high rank, partnership, staff partnership, applications) -> desk_department',
         '- "close all tickets", "close the desk", "shut the desk" -> desk_status with status "closed"',
         '- "make the desk busy" -> desk_status with status "busy"',
-        '- "open all", "reopen tickets", "set the desk online" -> desk_status with status "online"'
+        '- "open all", "reopen tickets", "set the desk online" -> desk_status with status "online"',
+        '- provider/token/credit questions -> provider_status, but ONLY when explicitly asked'
       ].join('\n');
 
   return `${SYSTEM_PROMPT.replace('__SCHEMA__', schema)}\n\n${scope}`;
@@ -687,8 +729,12 @@ export function parseLocally(request) {
   if (/^(help|what can you do|commands|list|guide|options)\b/.test(t)) {
     return { action: 'ai_help', args: {}, reply: 'Here is everything the AI engine can do.' };
   }
-  if (/^(command directory|command guide|show commands)\b/.test(t)) {
+  if (/^(command directory|command guide|show commands|show (the )?command (directory|guide)|open (the )?command (directory|guide))\b/.test(t)) {
     return { action: 'commands_guide', args: {}, reply: 'Opening the interactive command directory.' };
+  }
+  // ── Provider status — ONLY on an explicit ask (never shown otherwise) ──────
+  if (/^(?:please\s+)?(providers?|provider status|ai providers|tokens?|credits?|api (status|health)|gateway status|ai (status|health))\b/.test(t)) {
+    return { action: 'provider_status', args: {}, reply: 'Checking the AI providers.' };
   }
 
   // ── Session vote ────────────────────────────────────────────────────────────
@@ -716,6 +762,25 @@ export function parseLocally(request) {
     const explicit = t.match(/panel\s*(hub|ticket|verify|verification|application|staff|information|info|shop|session|media)/)?.[1];
     const type = normalisePanelType(explicit || guessPanelFromText(t));
     if (type) return { action: 'panel_post', args: { type }, reply: `Posting the ${type} panel.` };
+  }
+
+  // ── Ticket info (this channel) ─────────────────────────────────────────────
+  if (/^(ticket info|ticket details|show ticket info|which ticket|what ticket)\b/.test(t)) {
+    return { action: 'ticket_info', args: {}, reply: 'Reading the open ticket.' };
+  }
+
+  // ── Close the OPEN ticket in this channel ──────────────────────────────────
+  // Singular "ticket" + a close verb = the actual ticket channel (transcript
+  // archive + delete). Plural "tickets", "desk", "panel", "department" and
+  // "all" keep their panel meaning further down.
+  if (
+    /\b(close|resolve|shut|archive|wrap up|end)\b/.test(t) &&
+    /\bticket\b/.test(t) &&
+    !/\btickets\b/.test(t) &&
+    !/\b(all|desk|panel|department|line)\b/.test(t) &&
+    !/\bthe session\b/.test(t)
+  ) {
+    return { action: 'ticket_close', args: {}, reply: 'Closing the open ticket in this channel.' };
   }
 
   // ── Ticket desk ─────────────────────────────────────────────────────────────
@@ -753,10 +818,95 @@ export function parseLocally(request) {
     if (text) return { action: 'suggestion_create', args: { text }, reply: 'Posting your suggestion.' };
   }
 
+  // ── Nicknames & roles (owner) ──────────────────────────────────────────────
+  if (ticketUser && /\b(nick ?name|nickname|rename)\b/.test(t)) {
+    const cleared = /\b(clear|remove|reset|delete|none|default)\b/.test(t);
+    let nickname = '';
+    if (!cleared) {
+      nickname = raw
+        .replace(/^.*?\b(?:nick ?name|nickname|rename)\b/i, ' ')
+        .replace(/<@!?\d{17,20}>|\b\d{17,20}\b/g, ' ')
+        .replace(/\b(set|change|to|as|of|the|a|an|for|on|member|user|please|their|his|her)\b/ig, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/^[\s:,\-]+|[\s:,\-]+$/g, '')
+        .trim()
+        .slice(0, 32);
+    }
+    return {
+      action: 'nick',
+      args: { user_id: ticketUser, nickname },
+      reply: cleared ? `Clearing the nickname of <@${ticketUser}>.` : `Setting the nickname of <@${ticketUser}>.`
+    };
+  }
+  if (ticketUser && /\b(add|remove|give|take|strip|grant)\b/.test(t) && /\b(role|rank)\b/.test(t)) {
+    const op = /\b(remove|take|strip)\b/.test(t) ? 'remove' : 'add';
+    const role = raw
+      .replace(/<@!?\d{17,20}>|\b\d{17,20}\b/g, ' ')
+      .replace(/\b(add|remove|give|take|strip|grant|the|a|an|role|rank|to|from|on|member|user|please|of|their|his|her|as|this)\b/ig, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^[\s:,\-]+|[\s:,\-]+$/g, '')
+      .trim()
+      .slice(0, 100);
+    return {
+      action: 'role_grant',
+      args: { op, user_id: ticketUser, role },
+      reply: `${op === 'add' ? 'Adding' : 'Removing'} a role on <@${ticketUser}>.`
+    };
+  }
+
   // ── Ticket members ──────────────────────────────────────────────────────────
   if (/\b(add|unadd|remove)\b/.test(t) && /\b(ticket|user|member)\b/.test(t) && ticketUser) {
     const op = /\b(unadd|remove)\b/.test(t) ? 'unadd' : 'add';
     return { action: 'ticket_member', args: { op, user_id: ticketUser }, reply: `${op === 'add' ? 'Adding' : 'Removing'} <@${ticketUser}> from this ticket.` };
+  }
+
+  // ── Polls ───────────────────────────────────────────────────────────────────
+  if (/\bpoll\b/.test(t)) {
+    const body = raw
+      .replace(/^.*?\bpoll\b\s*/i, '')
+      .replace(/^(?:about|on|for|regarding|the question(?: is)?|is|are)\s+/i, '')
+      .trim();
+    let question = body;
+    let pollOptions = [];
+    const sep = body.includes(':') ? ':' : body.includes(' - ') ? ' - ' : null;
+    if (sep) {
+      const idx = body.indexOf(sep);
+      question = body.slice(0, idx).trim();
+      pollOptions = body.slice(idx + sep.length).split(/\s*[;|]\s*|\s+(?:or|vs)\.?\s+/i).map((s) => s.trim()).filter(Boolean);
+    } else {
+      const parts = body.split(/\s*[;|]\s*|\s+(?:or|vs)\.?\s+/i).map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        question = parts.shift();
+        pollOptions = parts;
+      }
+    }
+    if (question) {
+      return { action: 'poll', args: { question, options: pollOptions.slice(0, 10) }, reply: 'Posting a poll.' };
+    }
+  }
+
+  // ── Member lookups (whois / avatar) ────────────────────────────────────────
+  if (/\b(whois|who is)\b/.test(t) && ticketUser && !/\bonline\b/.test(t)) {
+    return { action: 'whois', args: { user_id: ticketUser }, reply: 'Pulling that member card.' };
+  }
+  if (/^(?:please\s+)?(whois|who is|member info|user info|check me|check myself)\b/.test(t) && !/\b(online|staff|host|playing)\b/.test(t)) {
+    return { action: 'whois', args: { user_id: null }, reply: 'Pulling your member card.' };
+  }
+  if (/\b(avatar|pfp|profile pic(?:ture)?)\b/.test(t)) {
+    return { action: 'avatar', args: { user_id: ticketUser }, reply: 'Fetching that avatar.' };
+  }
+
+  // ── Discord server overview (NOT the ER:LC game stats) ─────────────────────
+  if (
+    /\b(guild info|discord server|server overview|how many members|member count|how many (roles|channels|people|users))\b/.test(t) &&
+    !/erlc|in ?game|roblox|player/.test(t)
+  ) {
+    return { action: 'guild_info', args: {}, reply: 'Pulling the Discord server overview.' };
+  }
+
+  // ── Bot vitals ──────────────────────────────────────────────────────────────
+  if (/^(?:please\s+)?(bot ping|bot stats|bot status|ping|uptime|latency)\b/.test(raw.toLowerCase())) {
+    return { action: 'bot_stats', args: {}, reply: 'Checking bot vitals.' };
   }
 
   // ── Stats ───────────────────────────────────────────────────────────────────
@@ -815,6 +965,31 @@ export function parseLocally(request) {
   }
   if (/\bunlock\b/.test(t) && /\b(channel|chat)\b/.test(t)) {
     return { action: 'channel_lock', args: { locked: false, reason: 'AI channel control' }, reply: 'Unlocking this channel.' };
+  }
+
+  // ── Slowmode ───────────────────────────────────────────────────────────────
+  if (/\bslow ?mode\b/.test(t)) {
+    if (/\b(off|disable|disabled|stop|none|0)\b/.test(t)) {
+      return { action: 'slowmode', args: { seconds: 0 }, reply: 'Turning slowmode off.' };
+    }
+    const smMins = t.match(/(\d{1,4})\s*(?:m|min|mins|minutes?)\b/);
+    const smSecs = t.match(/(\d{1,4})\s*(?:s|sec|secs|seconds?)\b/);
+    const smBare = t.match(/(\d{1,4})/);
+    const seconds = Math.min(smMins ? Number(smMins[1]) * 60 : smSecs ? Number(smSecs[1]) : smBare ? Number(smBare[1]) : 30, 21600);
+    return { action: 'slowmode', args: { seconds }, reply: `Setting slowmode to ${seconds}s.` };
+  }
+
+  // ── Pin the latest (or replied-to) message ─────────────────────────────────
+  if (/^(?:please\s+)?pin\b/.test(t) || /\bpin (this|it|the last|the latest|last message)\b/.test(t)) {
+    return { action: 'pin_message', args: {}, reply: 'Pinning that message.' };
+  }
+
+  // ── Hide / reveal this channel (owner) ─────────────────────────────────────
+  if (/\b(hide|invisible)\b/.test(t) && /\b(channel|chat|this)\b/.test(t)) {
+    return { action: 'channel_hide', args: { hidden: true }, reply: 'Hiding this channel from @everyone.' };
+  }
+  if (/\b(unhide|reveal|make visible|visible again)\b/.test(t) && /\b(channel|chat|this)\b/.test(t)) {
+    return { action: 'channel_hide', args: { hidden: false }, reply: 'Revealing this channel.' };
   }
 
   // ── Announcements ───────────────────────────────────────────────────────────
@@ -930,53 +1105,140 @@ export async function resolveIntent(request, { tier = 'owner' } = {}) {
   return local;
 }
 
-// ── Help text ─────────────────────────────────────────────────────────────────
+// ── Help content ─────────────────────────────────────────────────────────────
 
-/** Builds the `-ai help` card body as markdown, scoped to the caller's tier. */
+/**
+ * Structured `-ai help` content, shared by the Components V2 help card that
+ * index.js sends (DM-first, so only the requester sees it) and the plain-text
+ * fallback below.
+ *
+ * Style rules: no emoji, no backticks — headings, bold group titles and
+ * blockquotes only, so the card reads like a clean panel.
+ *
+ * Provider/token status is deliberately NOT part of help — it only appears
+ * when someone explicitly asks for it (`-ai providers` -> provider_status).
+ *
+ * @returns {{ groups: Array<{title: string, items: string[]}>,
+ *             ownerGroups: Array<{title: string, items: string[]}>,
+ *             examples: string[], examplesOwner: string[], note: string }}
+ */
+export function aiHelpSections(tier) {
+  const groups = [
+    {
+      title: 'Sessions and panels',
+      items: [
+        'start a session vote with 5 users for 2 hours',
+        'close the session',
+        'post the session panel'
+      ]
+    },
+    {
+      title: 'Ticket desk',
+      items: [
+        'make the ticket desk busy',
+        'open internal affairs',
+        'close all tickets',
+        'what is the desk status'
+      ]
+    },
+    {
+      title: 'Tickets',
+      items: [
+        'close this ticket',
+        'close the general ticket',
+        'ticket info',
+        'add @user to this ticket'
+      ]
+    },
+    {
+      title: 'Channel tools',
+      items: ['slowmode 30', 'pin the last message']
+    },
+    {
+      title: 'Community',
+      items: [
+        'make a suggestion that we add more staff',
+        'show the top suggestion',
+        'poll Friday or Saturday: session; no session'
+      ]
+    },
+    {
+      title: 'Info',
+      items: [
+        'how many players are online',
+        'whois @user',
+        'avatar @user',
+        'discord server info',
+        'bot stats',
+        'show the command directory'
+      ]
+    }
+  ];
+
+  const ownerGroups = [
+    {
+      title: 'Moderation',
+      items: [
+        'ban @user for 7 days for spamming',
+        'unban @user',
+        'kick @user for raiding',
+        'timeout @user for 2 hours',
+        'purge 25'
+      ]
+    },
+    {
+      title: 'Server',
+      items: [
+        'say Session starts in 5 minutes',
+        'lock this channel',
+        'hide this channel',
+        'set nickname of @user to Helper',
+        'give @user the Moderator role'
+      ]
+    },
+    {
+      title: 'In-game',
+      items: [
+        'jail RobloxName',
+        'unjail RobloxName',
+        'announce we are full',
+        'hint roadblock ahead',
+        'pm RobloxName to join staff'
+      ]
+    },
+    { title: 'System', items: ['retrigger the bot'] }
+  ];
+
+  const examples = ['close this ticket', 'start a session vote with 5 users for 2 hours', 'make the ticket desk busy'];
+  const examplesOwner = [...examples, 'ban @user for 3 days for advertising'];
+  const note = 'Type -ai providers when you want live provider status — it is never shown otherwise.';
+
+  return { groups, ownerGroups, examples, examplesOwner, note, tier };
+}
+
+/** Renders one help group as markdown lines. */
+function renderHelpGroup(group) {
+  return [`**${group.title}**`, ...group.items.map((i) => `> ${i}`)].join('\n');
+}
+
+/** Plain-text rendering of the help sections (fallback path). */
 export function buildAiHelpText(tier) {
-  const directive = [
-    '**Sessions** — `start a session vote with 5 users for 2 hours` · `close the session` · `post the session panel`',
-    '**Tickets** — `make the ticket desk busy` · `close the general ticket` · `open internal affairs` · `close all tickets` · `add <@user> to this ticket`',
-    '**Community** — `make a suggestion that we add more staff` · `show the top suggestion`',
-    '**Info** — `how many players are online` · `show the command directory`'
-  ];
-  const owner = [
-    '**Moderation** — `ban <@user> for 7 days for spamming` · `unban <@user>` · `kick <@user> for raiding` · `timeout <@user> for 2 hours` · `purge 25`',
-    '**Server** — `say Session starts in 5 minutes` · `lock this channel` · `post the verification panel`',
-    '**In-game** — `jail RobloxName` · `unjail RobloxName` · `announce we are full` · `hint roadblock ahead` · `pm RobloxName to join staff`',
-    '**System** — `retrigger the bot` · `how many players are online`'
-  ];
+  const { groups, ownerGroups, examples, examplesOwner, note } = aiHelpSections(tier);
   const lines = [
-    '## 🤖 AI Command Engine',
-    'Type a request in plain English and I will run it for you.',
+    '## AI Command Engine',
+    '*Say what you want in plain English — it gets done.*',
     '',
-    '### Directive Team — available to you',
-    ...directive.map((l) => `- ${l}`)
+    '### Available to you',
+    ...groups.flatMap((g) => [renderHelpGroup(g), ''])
   ];
   if (tier === 'owner') {
-    lines.push('', '### Owner — additionally available to you', ...owner.map((l) => `- ${l}`));
+    lines.push('### Owner', ...ownerGroups.flatMap((g) => [renderHelpGroup(g), '']));
   }
   lines.push(
-    '',
     '### Examples',
-    '> `-ai start a session vote with 5 users`',
-    '> `-ai close the general ticket`',
-    '> `-ai ban @user for 3 days for advertising`',
+    ...(tier === 'owner' ? examplesOwner : examples).map((e) => `> -ai ${e}`),
     '',
-    '### AI providers',
-    ...providerStatus().map((p) => {
-      if (!p.open) return `> 🟢 **${p.name}** — ready (${p.models.length} model${p.models.length === 1 ? '' : 's'})`;
-      const why = {
-        'daily-limit': 'free daily limit used up',
-        'rate-limited': 'rate limited',
-        'needs-checkin': 'needs its daily check-in',
-        unauthorized: 'key rejected',
-        error: 'unavailable'
-      }[p.reason] ?? p.reason;
-      return `> 🔴 **${p.name}** — ${why}, retries <t:${Math.floor(p.retryAt / 1000)}:R>`;
-    }),
-    '',
-    `-# Owner <@${AI_OWNER_ID}> · Directive Team <@${AI_DIRECTIVE_ID}>`
+    `-# ${note}`
   );
   return lines.join('\n');
 }
@@ -1048,9 +1310,13 @@ export async function executeIntent(intent, ctx) {
         if (!PANEL_TYPES.has(type)) {
           return { ok: false, message: `❌ Unknown panel type. Choose one of: ${[...PANEL_TYPES].join(', ')}.` };
         }
+        // Session panels go to the dedicated session area unless the request
+        // pinned an explicit channel — other panels stay in the current one.
         const targetChannel = args.channel_id
           ? await ctx.client.channels.fetch(String(args.channel_id)).catch(() => null)
-          : message.channel;
+          : type === 'session'
+            ? null
+            : message.channel;
         if (!targetChannel?.isTextBased?.()) return { ok: false, message: '❌ I could not find that channel.' };
         const result = await ctx.postPanelByType(message, type, targetChannel, null);
         return { ok: true, message: `✅ ${result}` };
@@ -1070,7 +1336,8 @@ export async function executeIntent(intent, ctx) {
         ctx.saveTicketDeskState();
         await ctx.refreshAllTicketPanels(ctx.client, message.channel);
         const icon = status === 'online' ? '🟢' : status === 'busy' ? '🟠' : '🔴';
-        return { ok: true, message: `${icon} Ticket desk is now **${status}**. The panel has been refreshed.` };
+        const note = status === 'closed' ? ' Open tickets are untouched — `close this ticket` closes one.' : '';
+        return { ok: true, message: `${icon} Ticket desk is now **${status}**. The panel has been refreshed.${note}` };
       }
 
       case 'desk_department': {
@@ -1089,7 +1356,12 @@ export async function executeIntent(intent, ctx) {
           ctx.saveTicketDeskState();
           await ctx.refreshAllTicketPanels(ctx.client);
         }
-        return { ok: true, message: `${open ? '🔓 Opened' : '🔒 Locked'} **${dept.replace(/_/g, ' ')}**.` };
+        return {
+          ok: true,
+          message: open
+            ? `🔓 Opened **${dept.replace(/_/g, ' ')}**.`
+            : `🔒 Locked **${dept.replace(/_/g, ' ')}** ticket-panel line — new tickets are blocked, open tickets are untouched (say \`close this ticket\` to close one).`
+        };
       }
 
       case 'desk_info': {
@@ -1174,7 +1446,7 @@ export async function executeIntent(intent, ctx) {
           ok: false,
           message:
             `❌ ${blocked} is restricted to the bot owner.\n` +
-            `> Ask <@${AI_OWNER_ID}> to run it, or type \`-ai help\` to see what you can run.`
+            `> Ask the bot owner to run it, or type \`-ai help\` to see what you can run.`
         };
       }
 
@@ -1193,7 +1465,7 @@ export async function executeIntent(intent, ctx) {
           ok: false,
           message:
             `❌ I could not do that — it needs a permission you do not have.\n` +
-            `> Ask <@${AI_OWNER_ID}> to run it, or type \`-ai help\` to see what you can run.`
+            `> Ask the bot owner to run it, or type \`-ai help\` to see what you can run.`
         };
       }
 
@@ -1296,6 +1568,256 @@ export async function executeIntent(intent, ctx) {
           return { ok: false, message: '❌ Tell me what the message should say.' };
         }
         return await ctx.erlcAction({ verb, player, text, message });
+      }
+
+      // ── Ticket lifecycle ────────────────────────────────────────────────────
+      case 'ticket_close': {
+        const ticket = ctx.getActiveTicket?.(message.channel);
+        if (!ticket) {
+          return {
+            ok: false,
+            message:
+              '❌ There is no open ticket in this channel.\n' +
+              '> To lock a department of the ticket panel instead, say e.g. `close the general department`.'
+          };
+        }
+        await ctx.closeTicket(message.channel, ticket, message.author.tag, message.author.id);
+        return {
+          ok: true,
+          message: `🔒 **Closing ticket:** ${ticket.categoryName || 'Ticket'} — the transcript is being archived and this channel deletes itself in a few seconds.`
+        };
+      }
+
+      case 'ticket_info': {
+        const ticket = ctx.getActiveTicket?.(message.channel);
+        if (!ticket) return { ok: false, message: '❌ There is no open ticket in this channel.' };
+        const opened = Number.isFinite(ticket.createdAt) ? `<t:${Math.floor(ticket.createdAt)}:R>` : 'unknown';
+        return {
+          ok: true,
+          message:
+            `## 🎫 Active Ticket\n` +
+            `> **Category:** ${ticket.categoryName || ticket.categoryKey || 'unknown'}\n` +
+            `> **Author:** <@${ticket.authorId}>\n` +
+            `> **Claimed by:** ${ticket.claimedBy ? `<@${ticket.claimedBy}>` : '*Unclaimed*'}\n` +
+            `> **Opened:** ${opened}\n` +
+            `> **Reason:** ${ticket.reason || '*No reason given*'}\n` +
+            `> **Channel:** <#${message.channelId}>`
+        };
+      }
+
+      // ── Channel tools ───────────────────────────────────────────────────────
+      case 'slowmode': {
+        if (!message.channel?.isTextBased?.() || typeof message.channel.edit !== 'function') {
+          return { ok: false, message: '❌ I cannot set slowmode in this channel.' };
+        }
+        const seconds = clampNumber(args.seconds, 0, 21600, 0);
+        await message.channel.edit({ rateLimitPerUser: seconds });
+        return {
+          ok: true,
+          message: seconds
+            ? `🐢 Slowmode is now **${seconds}s** in <#${message.channelId}>.`
+            : `⚡ Slowmode turned off in <#${message.channelId}>.`
+        };
+      }
+
+      case 'pin_message': {
+        const refId = message.reference?.messageId;
+        let target = refId ? await message.channel.messages.fetch(refId).catch(() => null) : null;
+        if (!target) {
+          const recent = await message.channel.messages.fetch({ limit: 5 }).catch(() => null);
+          target = recent?.find((m) => m.id !== message.id) ?? null;
+        }
+        if (!target) return { ok: false, message: '❌ I could not find a message to pin.' };
+        if (target.pinned) return { ok: false, message: 'ℹ️ That message is already pinned.' };
+        await target.pin().catch((err) => {
+          throw new Error(`Could not pin (Manage Messages needed): ${err.message}`);
+        });
+        return { ok: true, message: `📌 Pinned a message in <#${message.channelId}>.` };
+      }
+
+      case 'channel_hide': {
+        if (typeof message.channel.permissionOverwrites?.edit !== 'function') {
+          return { ok: false, message: '❌ I cannot change visibility for this channel type.' };
+        }
+        const hidden = args.hidden !== false && args.hidden !== 'false';
+        await message.channel.permissionOverwrites.edit(
+          message.guild.id,
+          { ViewChannel: !hidden },
+          { reason: `Visibility changed by ${message.author.tag} via AI` }
+        );
+        return {
+          ok: true,
+          message: hidden ? '🙈 This channel is now hidden from everyone.' : '👀 This channel is visible to everyone again.'
+        };
+      }
+
+      // ── Community & information ─────────────────────────────────────────────
+      case 'poll': {
+        const question = String(args.question ?? '').trim().slice(0, 250);
+        const rawOptions = Array.isArray(args.options) ? args.options : String(args.options ?? '').split(/[;|]/);
+        const options = rawOptions.map((o) => String(o).trim()).filter(Boolean).slice(0, 10);
+        if (!question) return { ok: false, message: '❌ A poll needs a question.' };
+        if (options.length < 2) {
+          return {
+            ok: false,
+            message: '❌ A poll needs at least 2 options — separate them with `;`.\n> Example: `poll Friday or Saturday: session; no session`'
+          };
+        }
+        const emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        const body = `📊 **${question}**\n\n` + options.map((o, i) => `${emojis[i]} ${o}`).join('\n');
+        const sent = await message.channel.send({ content: body, allowedMentions: { parse: [] } });
+        for (let i = 0; i < options.length; i++) {
+          await sent.react(emojis[i]).catch(() => {});
+        }
+        return { ok: true, message: `📊 Poll posted in <#${message.channelId}>.` };
+      }
+
+      case 'whois': {
+        const userId = ctx.resolveUserId(args.user_id ?? null) ?? message.author.id;
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        const user = member?.user ?? (await ctx.client.users.fetch(userId).catch(() => null));
+        if (!user) return { ok: false, message: '❌ I could not find that user.' };
+        const created = `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`;
+        if (!member) {
+          return {
+            ok: true,
+            message:
+              `## 👤 ${user.tag}\n` +
+              `> **ID:** \`${user.id}\`\n` +
+              `> **Account created:** ${created}\n` +
+              `> *Not in this server.*`
+          };
+        }
+        const joined = member.joinedTimestamp ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>` : 'unknown';
+        const roles = member.roles.cache
+          .filter((r) => r.id !== message.guild.id)
+          .sort((a, b) => b.position - a.position);
+        const roleList = roles.first(15).map((r) => `**${r.name}**`).join(' · ') || '*None*';
+        const extra = roles.size > 15 ? ` (+${roles.size - 15} more)` : '';
+        const top = member.roles.highest && member.roles.highest.id !== message.guild.id
+          ? `**${member.roles.highest.name}**`
+          : '*None*';
+        return {
+          ok: true,
+          message:
+            `## 👤 ${user.tag}${member.nickname ? ` (\`${member.nickname}\`)` : ''}\n` +
+            `> **ID:** \`${user.id}\`\n` +
+            `> **Account created:** ${created}\n` +
+            `> **Joined server:** ${joined}\n` +
+            `> **Timeout:** ${member.isCommunicationDisabled() ? '🔇 Yes' : 'No'}\n` +
+            `> **Top role:** ${top}\n` +
+            `> **Roles (${roles.size}):** ${roleList}${extra}`
+        };
+      }
+
+      case 'avatar': {
+        const userId = ctx.resolveUserId(args.user_id ?? null) ?? message.author.id;
+        const user = await ctx.client.users.fetch(userId).catch(() => null);
+        if (!user) return { ok: false, message: '❌ I could not find that user.' };
+        const url = user.displayAvatarURL({ size: 512, dynamic: true });
+        await message.channel.send({
+          embeds: [{ color: 0x5865f2, title: `Avatar — ${user.tag}`, url, image: { url } }],
+          allowedMentions: { parse: [] }
+        });
+        return { ok: true, message: `🖼 Avatar for **${user.tag}** posted above.` };
+      }
+
+      case 'guild_info': {
+        const g = message.guild;
+        if (!g) return { ok: false, message: '❌ This only works inside a server.' };
+        return {
+          ok: true,
+          message:
+            `## 🌐 ${g.name}\n` +
+            `> **Members:** ${g.memberCount}\n` +
+            `> **Roles:** ${g.roles.cache.size} · **Channels:** ${g.channels.cache.size}\n` +
+            `> **Owner:** ${g.ownerId ? `<@${g.ownerId}>` : 'unknown'}\n` +
+            `> **Created:** <t:${Math.floor(g.createdTimestamp / 1000)}:R>\n` +
+            `> **Boosts:** ${g.premiumSubscriptionCount ?? 0} (level ${g.premiumTier})`
+        };
+      }
+
+      case 'bot_stats': {
+        const up = ctx.client.uptime ?? 0;
+        const h = Math.floor(up / 3_600_000);
+        const m = Math.floor(up / 60_000) % 60;
+        const s = Math.floor(up / 1000) % 60;
+        const rssMb = process.memoryUsage().rss / 1_048_576;
+        const ping = Math.round(ctx.client.ws?.ping ?? 0);
+        return {
+          ok: true,
+          message:
+            `## 🤖 Bot Stats\n` +
+            `> **Gateway ping:** ${ping}ms\n` +
+            `> **Uptime:** ${h}h ${m}m ${s}s\n` +
+            `> **Memory:** ${rssMb.toFixed(0)} MB\n` +
+            `> **Servers:** ${ctx.client.guilds.cache.size}`
+        };
+      }
+
+      case 'provider_status': {
+        const rows = providerStatus().map((p) => {
+          if (!p.open) return `> 🟢 **${p.name}** — ready (${p.models.length} model${p.models.length === 1 ? '' : 's'})`;
+          const why = {
+            'daily-limit': 'free daily limit used up',
+            'rate-limited': 'rate limited',
+            'needs-checkin': 'needs its daily check-in',
+            unauthorized: 'key rejected',
+            error: 'unavailable'
+          }[p.reason] ?? p.reason;
+          return `> 🔴 **${p.name}** — ${why}, retries <t:${Math.floor(p.retryAt / 1000)}:R>`;
+        });
+        return {
+          ok: true,
+          message: `## 🧠 AI Providers\n${rows.length ? rows.join('\n') : '> No provider keys are configured — the built-in parser handles everything.'}`
+        };
+      }
+
+      // ── Owner extras ────────────────────────────────────────────────────────
+      case 'nick': {
+        const userId = ctx.resolveUserId(args.user_id, message);
+        if (!userId) return { ok: false, message: '❌ I need a member — mention them or give me their user id.' };
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        if (!member) return { ok: false, message: '❌ That member is not in the server.' };
+        const nickname = String(args.nickname ?? '').trim().slice(0, 32);
+        await member.setNickname(
+          nickname || null,
+          `Nickname ${nickname ? 'set' : 'cleared'} by ${message.author.tag} via AI`
+        );
+        return {
+          ok: true,
+          message: nickname
+            ? `✏️ Nickname of <@${userId}> is now **${nickname}**.`
+            : `🧹 Nickname of <@${userId}> cleared.`
+        };
+      }
+
+      case 'role_grant': {
+        const op = args.op === 'remove' ? 'remove' : 'add';
+        const userId = ctx.resolveUserId(args.user_id, message);
+        if (!userId) return { ok: false, message: '❌ I need a member — mention them or give me their user id.' };
+        const query = String(args.role ?? '').trim().replace(/^<@&|>$/g, '');
+        if (!query) return { ok: false, message: '❌ Tell me which role to add or remove (name or id).' };
+        const roles = message.guild.roles.cache;
+        const role = /^\d{17,20}$/.test(query)
+          ? roles.get(query) ?? null
+          : roles.find((r) => r.name.toLowerCase() === query.toLowerCase()) ??
+            roles.find((r) => r.name.toLowerCase().includes(query.toLowerCase()));
+        if (!role) return { ok: false, message: `❌ I could not find a role matching \`${query.slice(0, 50)}\`.` };
+        const me = message.guild.members.me;
+        if (me && role.position >= me.roles.highest.position) {
+          return { ok: false, message: '❌ That role is higher than my highest role.' };
+        }
+        const member = await message.guild.members.fetch(userId).catch(() => null);
+        if (!member) return { ok: false, message: '❌ That member is not in the server.' };
+        if (op === 'add') {
+          if (member.roles.cache.has(role.id)) return { ok: true, message: `ℹ️ <@${userId}> already has **${role.name}**.` };
+          await member.roles.add(role, `Role added by ${message.author.tag} via AI`);
+          return { ok: true, message: `✅ Added **${role.name}** to <@${userId}>.` };
+        }
+        if (!member.roles.cache.has(role.id)) return { ok: true, message: `ℹ️ <@${userId}> does not have **${role.name}**.` };
+        await member.roles.remove(role, `Role removed by ${message.author.tag} via AI`);
+        return { ok: true, message: `🗑 Removed **${role.name}** from <@${userId}>.` };
       }
 
       default:

@@ -36,9 +36,10 @@ import { RULES_PAGES } from './rules.js';
 import {
   AI_DIRECTIVE_ID,
   AI_OWNER_ID,
+  AI_STAFF_ROLE_ID,
   aiAccessTier,
   aiConfigured,
-  buildAiHelpText,
+  aiHelpSections,
   executeIntent,
   logAiAction,
   providerStatus,
@@ -7299,7 +7300,8 @@ async function handleShopSelect(interaction) {
 async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
   const t = String(type || '').toLowerCase();
   if (t === 'session') {
-    const channel = targetChannel || postInteraction.channel;
+    // Dedicated session area wins unless the caller pinned an explicit channel.
+    const channel = targetChannel || (await resolveSessionChannel(postInteraction.guild, postInteraction.channel));
     const stats = await fetchServerStats();
     const role = pingRole || null;
     const pingMention = role ? formatRoleMention(role.id, postInteraction.guildId) : null;
@@ -9013,7 +9015,7 @@ client.once(Events.ClientReady, async (readyClient) => {
       `[AI] Engine ${aiConfigured() ? 'ready' : 'OFFLINE (no provider keys)'} — chain: ${providerSummary()}`
     );
     console.log(
-      `[AI] Access: owner <@${AI_OWNER_ID}>, directive <@${AI_DIRECTIVE_ID}>. Try \`-ai help\`.`
+      `[AI] Access: owner <@${AI_OWNER_ID}>, directive <@${AI_DIRECTIVE_ID}>, Staff Team role <@&${AI_STAFF_ROLE_ID}>. Try \`-ai help\`.`
     );
     for (const gid of uniqueGuilds) {
       const g = readyClient.guilds.cache.get(gid);
@@ -14561,6 +14563,7 @@ function buildCommandsGuidePage(pageIndex = 0) {
         `> • **-add @user** / **-unadd @user** Manage ticket channel members\n` +
         `> • **-partnership <text>** Submit a partnership application inside a ticket\n` +
         `> • **-confirm** Verify a paid partnership payment\n` +
+        `> • **-ai <request>** AI Command Engine — say it in plain English (full guide on page 9)\n` +
         `> • **-status** Show the current ticket desk availability`
       )
     );
@@ -14595,31 +14598,69 @@ function buildCommandsGuidePage(pageIndex = 0) {
   } else {
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## 🤖 Command Directory — AI Command Engine\n` +
-        `*Page 9 of ${totalPages} • Just say what you want in plain English.*\n\n` +
-        `> **Prefix only:** there is no \`/ai\` slash command. Type \`-ai <request>\` in any channel.\n\n` +
-        `### Directive Team — available to you\n` +
-        `> • **Sessions** — \`-ai start a session vote with 5 users for 2 hours\` · \`-ai close the session\`\n` +
-        `> • **Panels** — \`-ai post the session panel\` · \`-ai post the ticket panel\` · \`-ai post the verification panel\`\n` +
-        `> • **Ticket desk** — \`-ai make the ticket desk busy\` · \`-ai close the general ticket\` · \`-ai open internal affairs\` · \`-ai close all tickets\`\n` +
-        `> • **Applications** — \`-ai close staff applications\` · \`-ai open applications\`\n` +
-        `> • **Tickets** — \`-ai add @user to this ticket\` · \`-ai remove @user from this ticket\`\n` +
-        `> • **Suggestions** — \`-ai make a suggestion that we add more staff\` · \`-ai show the top suggestion\`\n` +
-        `> • **Info** — \`-ai how many players are online\` · \`-ai what is the desk status\`\n\n` +
-        `### Owner — additionally available to you\n` +
-        `> • **Moderation** — \`-ai ban @user for 7 days for spamming\` · \`-ai ban @user permanently\` · \`-ai unban @user\` · \`-ai kick @user for raiding\` · \`-ai timeout @user for 2 hours\` · \`-ai unmute @user\` · \`-ai purge 25\`\n` +
-        `> • **Server** — \`-ai say Session starts in 5 minutes\` · \`-ai lock this channel\` · \`-ai unlock this channel\`\n` +
-        `> • **In-game** — \`-ai jail RobloxName\` · \`-ai unjail RobloxName\` · \`-ai pm RobloxName to join staff\` · \`-ai announce we are full\` · \`-ai hint roadblock ahead\` · \`-ai kick RobloxName\` · \`-ai ban RobloxName\` · \`-ai unban RobloxName\`\n` +
-        `> • **System** — \`-ai retrigger the bot\` · \`-ai refresh everything\`\n\n` +
+        `## Command Directory — AI Command Engine\n` +
+        `*Page 9 of ${totalPages} — say what you want in plain English.*\n\n` +
+        `### How it works\n` +
+        `> There is no /ai slash command — type -ai <request> in any channel.\n` +
+        `> The bot reads plain English, runs the action and replies in seconds.\n\n` +
+        `### Available to you\n` +
+        `**Sessions and panels**\n` +
+        `> -ai start a session vote with 5 users for 2 hours\n` +
+        `> -ai close the session\n` +
+        `> -ai post the session panel\n\n` +
+        `**Ticket desk**\n` +
+        `> -ai make the ticket desk busy\n` +
+        `> -ai open internal affairs\n` +
+        `> -ai close all tickets\n` +
+        `> -ai what is the desk status\n\n` +
+        `**Tickets**\n` +
+        `> -ai close this ticket\n` +
+        `> -ai close the general ticket\n` +
+        `> -ai ticket info\n` +
+        `> -ai add @user to this ticket\n\n` +
+        `**Applications**\n` +
+        `> -ai close staff applications\n` +
+        `> -ai open applications\n\n` +
+        `**Channel tools**\n` +
+        `> -ai slowmode 30\n` +
+        `> -ai pin the last message\n\n` +
+        `**Community**\n` +
+        `> -ai make a suggestion that we add more staff\n` +
+        `> -ai show the top suggestion\n` +
+        `> -ai poll Friday or Saturday: session; no session\n\n` +
+        `**Info**\n` +
+        `> -ai how many players are online\n` +
+        `> -ai whois @user\n` +
+        `> -ai avatar @user\n` +
+        `> -ai discord server info\n` +
+        `> -ai bot stats\n\n` +
+        `### Owner\n` +
+        `**Moderation**\n` +
+        `> -ai ban @user for 7 days for spamming\n` +
+        `> -ai unban @user\n` +
+        `> -ai kick @user for raiding\n` +
+        `> -ai timeout @user for 2 hours\n` +
+        `> -ai purge 25\n\n` +
+        `**Server**\n` +
+        `> -ai say Session starts in 5 minutes\n` +
+        `> -ai lock this channel\n` +
+        `> -ai hide this channel\n` +
+        `> -ai set nickname of @user to Helper\n` +
+        `> -ai give @user the Moderator role\n\n` +
+        `**In-game**\n` +
+        `> -ai jail RobloxName\n` +
+        `> -ai unjail RobloxName\n` +
+        `> -ai announce we are full\n` +
+        `> -ai pm RobloxName to join staff\n\n` +
+        `**System**\n` +
+        `> -ai retrigger the bot\n\n` +
         `### Notes\n` +
-        `> • Type \`-ai help\` at any time for your full list and live provider status.\n` +
-        `> • Three AI providers (FreeTheAI, OpenRouter, HuggingFace) are tried in order —\n` +
-        `> whichever answers first wins, so a rate limit never blocks you.\n` +
-        `> • Nothing is guessed: if the request is unclear the bot refuses instead of acting.\n` +
-        `> • Suggestions are posted with your exact words, never rewritten by the AI.\n` +
-        `> • Every action is written to Security-Logs with the request, user, provider and result.\n` +
-        `> • Access: <@${AI_OWNER_ID}> (owner) and <@${AI_DIRECTIVE_ID}> (Directive Team).\n\n` +
-        `-# Owner <@${AI_OWNER_ID}> · Directive Team <@${AI_DIRECTIVE_ID}>`
+        `> Type -ai help at any time — it is DM'd to you so only you can read it.\n` +
+        `> Provider and token status is never shown unless you ask: -ai providers.\n` +
+        `> Nothing is guessed — unclear requests are refused instead of acted on.\n` +
+        `> Suggestions are posted with your exact words, never rewritten.\n` +
+        `> Every action is written to Security-Logs with the request and result.\n` +
+        `> Access: Staff Team role and above, Directive Team, bot owner.`
       )
     );
   }
@@ -14931,7 +14972,36 @@ function aiModLogCard(title, lines) {
 }
 
 /**
+ * Resolves the dedicated area that session content (vote cards, session
+ * panels) must be posted in — never whichever channel the command was typed in.
+ *
+ * Priority:
+ *  1. SESSION_CHANNEL_ID from .env — the configured session channel.
+ *  2. The first visible text channel whose name mentions "session".
+ *  3. The channel the command was run in (legacy behaviour).
+ */
+async function resolveSessionChannel(guild, fallbackChannel) {
+  if (config.sessionChannelId && guild) {
+    const ch = await guild.channels.fetch(config.sessionChannelId).catch(() => null);
+    if (ch?.isTextBased?.()) return ch;
+    console.warn(
+      `[session] SESSION_CHANNEL_ID ${config.sessionChannelId} is missing or not a text channel — falling back.`
+    );
+  }
+  if (guild) {
+    const named = guild.channels.cache
+      .filter((c) => c.isTextBased?.() && c.viewable !== false && /session/i.test(c.name || ''))
+      .sort((a, b) => a.position - b.position)
+      .first();
+    if (named) return named;
+  }
+  return fallbackChannel;
+}
+
+/**
  * Opens a session vote from the AI path, mirroring the `/session vote` handler.
+ * The card is posted in the dedicated session area (resolveSessionChannel),
+ * while the confirmation reply stays in the channel the command was typed in.
  * @returns {Promise<{ok: boolean, message: string}>}
  */
 async function aiStartSessionVote({ message, needed, duration, roleId, hostName }) {
@@ -14940,10 +15010,19 @@ async function aiStartSessionVote({ message, needed, duration, roleId, hostName 
   if (!role) role = message.guild.roles.cache.get(SERVER.pingRoleId) ?? null;
   if (!role) role = message.guild.roles.cache.get(message.guild.id);
 
+  const target = await resolveSessionChannel(message.guild, message.channel);
+  if (!target?.isTextBased?.()) {
+    return {
+      ok: false,
+      message:
+        '❌ I could not find the session channel. Set SESSION_CHANNEL_ID in .env to your dedicated session channel id.'
+    };
+  }
+
   const vote = {
     id: `v${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
     guildId: message.guildId,
-    channelId: message.channelId,
+    channelId: target.id,
     messageId: null,
     hostId: message.author.id,
     hostName,
@@ -14964,7 +15043,7 @@ async function aiStartSessionVote({ message, needed, duration, roleId, hostName 
 
   let sent;
   try {
-    sent = await message.channel.send({
+    sent = await target.send({
       allowedMentions: { roles: [role.id] },
       components: [buildVoteContainer(vote).toJSON()],
       files: voteFiles,
@@ -14973,18 +15052,18 @@ async function aiStartSessionVote({ message, needed, duration, roleId, hostName 
   } catch (sendErr) {
     const msg = String(sendErr?.message ?? sendErr);
     if (!/allowed_mentions|Invalid Form Body|parse/i.test(msg)) {
-      return { ok: false, message: `❌ Could not post the vote card here (${msg}).` };
+      return { ok: false, message: `❌ Could not post the vote card in <#${target.id}> (${msg}).` };
     }
     console.warn(`[ai] vote ping rejected (${msg}) - retrying without role ping.`);
     try {
-      sent = await message.channel.send({
+      sent = await target.send({
         components: [buildVoteContainer(vote).toJSON()],
         files: voteFiles,
         allowedMentions: { parse: [] },
         flags: MessageFlags.IsComponentsV2
       });
     } catch (err) {
-      return { ok: false, message: `❌ Could not post the vote card here (${err.message}).` };
+      return { ok: false, message: `❌ Could not post the vote card in <#${target.id}> (${err.message}).` };
     }
   }
 
@@ -14996,7 +15075,7 @@ async function aiStartSessionVote({ message, needed, duration, roleId, hostName 
   const durLabel = { '30m': '30 minutes', '1h': '1 hour', '2h': '2 hours', '5h': '5 hours' }[duration] ?? '1 hour';
   return {
     ok: true,
-    message: `🗳️ Session vote is live in <#${message.channelId}> — needs **${needed}** votes, ends <t:${Math.floor(vote.endTs / 1000)}:R> (${durLabel}). Ping role: ${formatRoleMention(role.id, message.guildId)}`
+    message: `🗳️ Session vote is live in <#${target.id}> — needs **${needed}** votes, ends <t:${Math.floor(vote.endTs / 1000)}:R> (${durLabel}). Ping role: ${formatRoleMention(role.id, message.guildId)}`
   };
 }
 
@@ -15215,27 +15294,98 @@ function aiTopSuggestion() {
 }
 
 /**
+ * Components V2 help card for `-ai help`, scoped to the caller's tier.
+ *
+ * Clean panel style: headings, bold group titles and blockquotes only —
+ * no emoji, no backticks, no owner/footer mentions.
+ */
+function buildAiHelpCard(tier) {
+  const { groups, ownerGroups, examples, examplesOwner, note } = aiHelpSections(tier);
+  const asText = (g) => [`**${g.title}**`, ...g.items.map((i) => `> ${i}`)].join('\n');
+
+  const card = new ContainerBuilder();
+  try { card.setAccentColor(0x5865f2); } catch { }
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## AI Command Engine\n*Say what you want in plain English — it gets done.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Available to you\n${groups.map(asText).join('\n\n')}`
+    )
+  );
+
+  if (tier === 'owner') {
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`### Owner\n${ownerGroups.map(asText).join('\n\n')}`)
+    );
+  }
+
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Examples\n${(tier === 'owner' ? examplesOwner : examples).map((e) => `> -ai ${e}`).join('\n')}`
+    )
+  );
+
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`-# ${note}`));
+  return card;
+}
+
+/**
+ * Sends `-ai help`.
+ *
+ * Privacy: the card is DM'd to the requester first, so ONLY they can read it,
+ * and their public `-ai` command message is deleted. If their DMs are closed
+ * we fall back to an in-channel reply that auto-deletes after a minute.
+ *
+ * @returns {Promise<boolean>} true when the card went to DMs.
+ */
+async function sendAiHelp(message, tier) {
+  const payload = { components: [buildAiHelpCard(tier).toJSON()], flags: MessageFlags.IsComponentsV2 };
+  const dm = await message.author.send(payload).catch(() => null);
+  if (dm) {
+    await message.delete().catch(() => null);
+    return true;
+  }
+  await autoDeleteReply(message, payload, 60000);
+  return false;
+}
+
+/**
  * Handles the `-ai <request>` prefix command.
  *
- * Access: owner (every action) and the Directive Team (non-destructive set).
- * Everyone else is refused so the command cannot be probed.
+ * Access: owner (every action), the Directive Team, and anyone wearing the
+ * Staff Team role (non-destructive set). Everyone else is refused.
  */
 async function handleAiPrefixCommand(message, requestText) {
-  const tier = aiAccessTier(message.author.id);
+  // Tier comes from the user id OR the Staff Team role the member actually
+  // wears in this guild (role ids are read off the live member, not the author).
+  const member =
+    message.member || (await message.guild?.members.fetch(message.author.id).catch(() => null));
+  const roleIds = member?.roles?.cache ? [...member.roles.cache.keys()] : [];
+  const tier = aiAccessTier(message.author.id, roleIds);
 
   if (tier === 'none') {
     await autoDeleteReply(
       message,
-      '❌ The AI command engine is limited to the bot owner and the Directive Team.',
+      `❌ The AI command engine is limited to the **Staff Team** role, the Directive Team and the bot owner.`,
       20000
     );
     return;
   }
 
-  // `-ai` with no request, or an explicit help word, always answers instantly.
+  // `-ai` with no request, or an explicit help word, always answers instantly —
+  // via DM when possible so only the requester sees it.
   const trimmed = String(requestText || '').trim();
-  if (!trimmed || /^(help|what can you do|commands|list|guide|options)\b/i.test(trimmed)) {
-    await autoDeleteReply(message, buildAiHelpText(tier), 60000);
+  if (!trimmed || /^(help|what can you do|commands|list|guide|options|menu|abilities|what can i ask|how do you work)\b/i.test(trimmed)) {
+    await sendAiHelp(message, tier);
     return;
   }
 
@@ -15260,6 +15410,14 @@ async function handleAiPrefixCommand(message, requestText) {
     return;
   }
 
+  // Odd phrasings the model maps to ai_help get the private card too, instead
+  // of the executor's plain-text version.
+  if (intent.action === 'ai_help') {
+    await thinking?.delete().catch(() => null);
+    await sendAiHelp(message, tier);
+    return;
+  }
+
   const ctx = {
     client,
     message,
@@ -15276,6 +15434,9 @@ async function handleAiPrefixCommand(message, requestText) {
     handleCommandsGuideCommand,
     handleRetriggerCommand,
     getActiveTicket,
+    // Close the ACTIVE ticket in this channel: transcript archive + delete.
+    closeTicket: (channel, ticket, byTag, byId) =>
+      closeTicketChannel(client, channel, ticket, byTag, byId, 6000),
     // Datastores the AI is allowed to flip.
     ticketDeskState,
     saveTicketDeskState,
@@ -15856,8 +16017,11 @@ client.on(Events.MessageCreate, async (message) => {
     // ── 2. -ai <plain english request> — AI Command Engine ──
     // Runs BEFORE the ticket-desk staff gate so the engine's own access rules
     // (owner + Directive Team) are the only thing that decides who may use it.
-    if (lower === 'ai' || lower.startsWith('ai ')) {
-      await handleAiPrefixCommand(message, trimmed.slice(2).trim());
+    // NOTE: `lower`/`trimmed` live inside the partnership/loa block above and are
+    // OUT OF SCOPE here — use `raw` (already lowercased) plus the original text.
+    if (raw === 'ai' || raw.startsWith('ai ')) {
+      const aiRequest = message.content.slice(1).trim().slice(2).trim();
+      await handleAiPrefixCommand(message, aiRequest);
       return;
     }
 
@@ -16866,5 +17030,6 @@ export {
   handleRetriggerCommand,
   buildCommandsGuidePage,
   buildInformationCard,
-  handleInformationCommand
+  handleInformationCommand,
+  buildAiHelpCard
 };
