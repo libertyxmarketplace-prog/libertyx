@@ -149,29 +149,33 @@ export function parseWhen(input) {
 }
 // ── Cards ────────────────────────────────────────────────────────────────────
 
+/** Still used to label replies from older cards that had RSVP buttons. */
 const RSVP_LABEL = { yes: 'Can attend', no: 'Cannot attend' };
 
 /** Thin divider used between card sections. */
 const divider = () =>
   new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
 
-/** The two RSVP buttons — they work in DMs and in the channel. */
-function rsvpRow(id) {
+/** True for an absolute http(s) link the card can turn into a button. */
+const isLink = (value) => /^https?:\/\/\S+$/i.test(String(value || '').trim());
+
+/** A link button — it opens the voice channel / invite and never notifies. */
+function joinRow(url) {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`meet_yes_${id}`).setLabel('Can attend').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`meet_no_${id}`).setLabel('Cannot attend').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Join the meeting').setURL(url)
   );
 }
 
 /**
- * The meeting card — a compact Components V2 panel.
- * Headings, bold labels and blockquotes only: no emoji, no tally line.
+ * The meeting card — a compact Components V2 panel, sent as a DM.
+ * Headings, bold labels and blockquotes only: no emoji, no RSVP controls.
+ * The single button is the location link, and it only appears when the host
+ * actually supplied a place for the meeting.
  *
  * @param {object} meeting
  * @param {'invite'|'reminder'|'postponed'|'cancelled'|'start'} variant
- * @param {string|null} forUserId set for DM cards so they show YOUR reply
  */
-function buildCard(meeting, variant = 'invite', forUserId = null) {
+function buildCard(meeting, variant = 'invite') {
   const card = new ContainerBuilder();
   try {
     card.setAccentColor(variant === 'cancelled' ? 0x80848e : variant === 'postponed' ? 0xfee75c : 0x5865f2);
@@ -203,14 +207,11 @@ function buildCard(meeting, variant = 'invite', forUserId = null) {
   if (variant === 'cancelled' && meeting.cancelReason) fields.push(`**Reason**  ${meeting.cancelReason}`);
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent(fields.join('\n')));
 
-  if (variant !== 'cancelled') {
-    if (forUserId) {
-      const status = meeting.rsvp?.[forUserId]?.status;
-      const reply = status === 'yes' ? 'Can attend' : status === 'no' ? 'Cannot attend' : 'No response yet';
-      card.addSeparatorComponents(divider());
-      card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**Your reply**\n> ${reply}`));
-    }
-    card.addActionRowComponents(rsvpRow(meeting.id));
+  // The one button: where it starts. Added only when the host gave a location.
+  const url = meeting.locationUrl || (isLink(meeting.location) ? String(meeting.location).trim() : null);
+  if (variant !== 'cancelled' && url) {
+    card.addSeparatorComponents(divider());
+    card.addActionRowComponents(joinRow(url));
   }
 
   card.addSeparatorComponents(divider());
@@ -221,9 +222,9 @@ function buildCard(meeting, variant = 'invite', forUserId = null) {
 }
 
 /** Builds the Components V2 payload for a meeting card (exported for tests). */
-export function cardPayload(meeting, variant, forUserId = null) {
+export function cardPayload(meeting, variant) {
   return {
-    components: [buildCard(meeting, variant, forUserId).toJSON()],
+    components: [buildCard(meeting, variant).toJSON()],
     flags: MessageFlags.IsComponentsV2
   };
 }
@@ -353,11 +354,13 @@ async function fireReminder(id, kind) {
     meeting.status = 'started';
     meeting.sentStart = true;
     saveMeetings();
+    // Everyone gets a fresh "starting now" DM — this one is meant to notify.
     await editAnnouncement(meeting, cardPayload(meeting, 'start')).catch(() => null);
-    for (const uid of Object.keys(meeting.rsvp || {})) {
-      if (meeting.rsvp[uid]?.status === 'no') continue;
-      await sendDm(uid, cardPayload(meeting, 'start', uid)).catch(() => null);
+    for (const uid of meeting.attendees || []) {
+      const msg = await sendDm(uid, cardPayload(meeting, 'start')).catch(() => null);
+      if (msg && meeting.rsvp?.[uid]) meeting.rsvp[uid].dmMessageId = msg.id;
     }
+    saveMeetings();
     return;
   }
 
@@ -434,6 +437,32 @@ export async function scheduleMeeting({ guild, channel, title, start, location, 
     };
   }
 
+  // Resolve the place: a channel id/mention becomes a readable label plus a
+  // joinable link; an invite or URL is used verbatim as the button target.
+  let locationLabel = null;
+  let locationUrl = null;
+  const loc = String(location ?? '').trim();
+  if (loc) {
+    const channelId = isLink(loc) ? null : loc.match(/\b\d{17,20}\b/)?.[0] ?? null;
+    if (channelId && guild) {
+      const ch = await guild.channels.fetch(channelId).catch(() => null);
+      if (ch) {
+        locationLabel = `<#${ch.id}>`;
+        // /voice/ deep-links straight into a voice channel and offers to join.
+        locationUrl = ch.isVoiceBased?.()
+          ? `https://discord.com/voice/${guild.id}/${ch.id}`
+          : `https://discord.com/channels/${guild.id}/${ch.id}`;
+      } else {
+        locationLabel = loc;
+      }
+    } else if (isLink(loc)) {
+      locationLabel = loc;
+      locationUrl = loc;
+    } else {
+      locationLabel = loc;
+    }
+  }
+
   const id = `mtg${Date.now().toString(36)}${Math.floor(Math.random() * 1e5).toString(36)}`;
   const meeting = {
     id,
@@ -442,7 +471,8 @@ export async function scheduleMeeting({ guild, channel, title, start, location, 
     hostTag: by.tag,
     title: title || 'Staff Meeting',
     startTs: when,
-    location: location || null,
+    location: locationLabel,
+    locationUrl,
     agenda: agenda || null,
     attendees: [...ids].slice(0, MAX_ATTENDEES),
     rsvp: {},
@@ -459,17 +489,8 @@ export async function scheduleMeeting({ guild, channel, title, start, location, 
     createdAt: Date.now()
   };
 
-  // Announcement first, so the buttons exist in-channel too.
-  if (channel?.isTextBased?.()) {
-    try {
-      const sent = await channel.send(cardPayload(meeting, 'invite'));
-      meeting.messageId = sent.id;
-    } catch (err) {
-      console.warn('[meetings] could not post announcement:', err.message);
-    }
-  }
-
-  // DM every attendee and remember each message id for in-place edits.
+  // DM only — the invitation never appears in any channel. Each message id is
+  // remembered so a postpone or cancel edits it in place instead of re-pinging.
   let delivered = 0;
   for (const uid of meeting.attendees) {
     const msg = await sendDm(uid, cardPayload(meeting, 'invite', uid));
@@ -488,8 +509,9 @@ export async function scheduleMeeting({ guild, channel, title, start, location, 
     ok: true,
     message:
       `✅ **${meeting.title}** scheduled for <t:${Math.floor(when / 1000)}:F> (<t:${Math.floor(when / 1000)}:R>).\n` +
-      `> **Invites delivered:** ${delivered}/${meeting.attendees.length}\n` +
-      `> **Reminders:** ${meeting.reminders ? '7 days prior + the morning of' : 'off'}${meeting.messageId ? `\n> **Announcement:** <#${meeting.channelId}>` : ''}`
+      `> **Invitation sent:** ${delivered}/${meeting.attendees.length} by DM` +
+      `${locationUrl ? `\n> **Join button:** ${locationLabel}` : `\n> **Where:** ${locationLabel || 'not set — add a voice channel or link'}`}\n` +
+      `> **Reminders:** ${meeting.reminders ? '7 days prior + the morning of' : 'off'}`
   };
 }
 /** `-ai postpone the meeting by <duration>` */
@@ -561,15 +583,12 @@ export async function listMeetings({ guild }) {
   if (!rows.length) return { ok: true, message: '📭 There are no meetings scheduled.' };
 
   const lines = rows.map((m, i) => {
-    const rsvp = m.rsvp || {};
-    const yes = Object.values(rsvp).filter((r) => r.status === 'yes').length;
-    const nope = Object.values(rsvp).filter((r) => r.status === 'no').length;
-    const maybe = Object.values(rsvp).filter((r) => r.status === 'maybe').length;
     const status = m.status === 'scheduled' ? '' : ` **(${m.status})**`;
     return (
       `${i + 1}. **${m.title}**${status} — <t:${Math.floor(m.startTs / 1000)}:F> (<t:${Math.floor(m.startTs / 1000)}:R>)\n` +
-      `> Where: ${m.location || '*not set*'} · Host: <@${m.hostId}>\n` +
-      `> RSVPs: ✅ ${yes} · ❌ ${nope} · 🤔 ${maybe} · Attendees: ${(m.attendees || []).length}`
+      `> Where: ${m.location || 'Not set'} · Host: <@${m.hostId}>\n` +
+      `> Invited: ${(m.attendees || []).length} · Invited by DM` +
+      (m.postponedCount ? ` · Postponed ${m.postponedCount} time(s)` : '')
     );
   });
   return { ok: true, message: `## Scheduled Meetings\n${lines.join('\n\n')}` };

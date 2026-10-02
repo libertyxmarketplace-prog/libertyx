@@ -15583,18 +15583,21 @@ function buildAiHelpCard(tier) {
  *   instance already answered (the caller should stop).
  */
 async function dedupReply(commandMessage, payload) {
-  // Stagger both instances so they do not fetch/send in lockstep.
-  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 220) + 80));
+  // Stagger the two instances so their fetch/send windows rarely overlap.
+  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 350) + 150));
 
-  const before = await commandMessage.channel?.messages?.fetch({ limit: 10 }).catch(() => null);
-  if (before) {
-    const answered = before.find(
-      (m) => m.author?.id === client.user?.id && m.reference?.messageId === commandMessage.id
-    );
-    if (answered) return null; // another instance already handled this command
-  }
+  // Every bot reply that answers this specific command message.
+  const references = (msgs) =>
+    !msgs
+      ? []
+      : [...msgs.values()].filter(
+          (m) => m.author?.id === client.user?.id && m.reference?.messageId === commandMessage.id
+        );
 
-  let sent = null;
+  let seen = await commandMessage.channel?.messages?.fetch({ limit: 20 }).catch(() => null);
+  if (references(seen).length) return null; // the other instance already answered
+
+  let sent;
   try {
     sent = await commandMessage.reply(payload);
   } catch (err) {
@@ -15602,18 +15605,20 @@ async function dedupReply(commandMessage, payload) {
     return null;
   }
 
-  // Clean up any twin produced by the other instance in the same window.
-  try {
-    await new Promise((r) => setTimeout(r, 450));
-    const after = await commandMessage.channel?.messages?.fetch({ limit: 8 }).catch(() => null);
-    if (after) {
-      const twins = after.filter(
-        (m) => m.author?.id === client.user?.id && m.id !== sent.id && m.reference?.messageId === commandMessage.id
-      );
-      for (const twin of twins.values()) await twin.delete().catch(() => null);
+  // Settle on exactly ONE reply. Both instances sort the twins the same way
+  // (oldest snowflake wins), so the loser deletes its own copy and stops BEFORE
+  // running the command — the winner carries on and edits its reply with the
+  // result. Without this both copies would stay and both would execute.
+  await new Promise((r) => setTimeout(r, 1000));
+  const after = await commandMessage.channel?.messages?.fetch({ limit: 20 }).catch(() => null);
+  const twins = references(after).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (twins.length > 1) {
+    if (twins[0].id !== sent.id) {
+      await sent.delete().catch(() => null);
+      return null; // the other instance won — let it run the command
     }
-  } catch { /* best effort */ }
-
+    for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
+  }
   return sent;
 }
 

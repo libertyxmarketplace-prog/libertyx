@@ -74,13 +74,20 @@ Type what you want in plain English and the bot does it:
 | Everyone else | — | Refused |
 
 **Meetings.** `-ai schedule a meeting in 2 hours to discuss staffing` DMs every
-attendee an RSVP card (Can attend / Cannot attend / Maybe), posts an announcement
-with the same buttons, and schedules reminder DMs **7 days prior** and **the
-morning of**. `-ai postpone the meeting by 1 hour` shifts the time and **edits
-every existing card in place**, so nobody is pinged a second time.
-`-ai cancel the meeting` tells everyone who replied. State lives in
-`meetings.json` and reminders are re-armed on boot. Times are read in the
-`MEETING_TZ_OFFSET` offset (default `-6`, US Central).
+attendee a Components V2 invitation — it is **never posted in a channel**. The
+card carries a single **Join the meeting** button that opens the voice channel
+(or the invite the host supplied), and it only appears when a location was
+actually given. Reminder DMs go out **7 days prior** and **the morning of**, and
+at start time everyone gets a fresh *Meeting Starting Now* DM. `-ai postpone the
+meeting by 1 hour` shifts the time and **edits every existing card in place**, so
+nobody is pinged a second time; `-ai cancel the meeting` does the same. State
+lives in `meetings.json` and reminders are re-armed on boot. Times are read in
+the `MEETING_TZ_OFFSET` offset (default `-6`, US Central).
+
+**Duplicate replies.** When two bot instances receive the same message event,
+`dedupReply()` makes them agree on a single winner (oldest reply id): the loser
+deletes its own copy and stops **before** running the command, so a command
+executes once and produces exactly one reply.
 
 **Staff records.** `/staff infraction` is logged to `infractions.json`;
 `-ai list infractions` shows the log and `-ai revoke @user infraction` clears one

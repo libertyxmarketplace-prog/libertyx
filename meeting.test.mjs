@@ -66,6 +66,11 @@ const client = {
 
 const guild = {
   id: 'g1',
+  channels: {
+    async fetch(id) {
+      return { id, name: 'staff-voice', isVoiceBased: () => true };
+    }
+  },
   members: {
     async fetch() {},
     cache: {
@@ -107,13 +112,13 @@ console.log('parseWhen "gibberish":', parseWhen('gibberish') === null ? 'ok' : '
 
 const by = { id: 'owner1', tag: 'owner#0001' };
 
-// 1. Schedule → DMs every attendee + posts one announcement.
+// 1. Schedule → DMs every attendee, posts NOTHING in the channel.
 const sched = await scheduleMeeting({
   guild,
   channel,
   title: 'Command Meeting',
   start: 'in 2 hours',
-  location: '<#999>',
+  location: '<#987654321098765432>',
   attendees: ['u1', 'u2'],
   agenda: 'Weekly staffing review',
   reminders: true,
@@ -122,25 +127,25 @@ const sched = await scheduleMeeting({
 });
 assert.strictEqual(sched.ok, true, 'schedule ok');
 console.log('schedule message:', sched.message.split('\n')[0]);
-console.log('DMs to u1:', dms.get('u1')?.length, '| DMs to u2:', dms.get('u2')?.length, '| announcements:', channelMsgs.length);
-assert.strictEqual(dms.get('u1').length, 1);
-assert.strictEqual(channelMsgs.length, 1);
+console.log('DMs to u1:', dms.get('u1')?.length, '| DMs to u2:', dms.get('u2')?.length, '| channel posts:', channelMsgs.length);
+assert.strictEqual(dms.get('u1').length, 1, 'one invite DM per attendee');
+assert.strictEqual(channelMsgs.length, 0, 'nothing is posted in the channel');
 
 const meeting = listScheduledMeetings()[0];
 const originalStart = meeting.startTs;
 
-// 2. RSVP via button (in-channel style interaction).
+// 2. Legacy RSVP buttons still work for cards created by older builds.
 const interaction = {
   customId: `meet_yes_${meeting.id}`,
   user: { id: 'u1' },
-  message: makeMessage('ch_0', channelMsgs[0].payload),
+  message: makeMessage('legacy_dm', dms.get('u1')[0].payload),
   async followUp() {},
   async reply() {}
 };
 const handled = await handleMeetingButton(interaction);
 assert.strictEqual(handled, true);
 assert.strictEqual(meeting.rsvp.u1.status, 'yes');
-console.log('RSVP u1 recorded:', meeting.rsvp.u1.status === 'yes' ? 'ok' : 'FAIL');
+console.log('legacy RSVP button still handled:', 'ok');
 
 // 3. Postpone → shifts time, EDITS existing DMs (no new DMs).
 const beforeCount = dms.get('u1').length;
@@ -154,7 +159,7 @@ console.log('postpone moved time 2h:', 'ok', '| new DMs created:', dms.get('u1')
 const list = await listMeetings({ guild });
 assert.strictEqual(list.ok, true);
 console.log('list meetings header:', list.message.split('\n')[0]);
-console.log('list shows RSVP counts:', list.message.includes('RSVPs') ? 'ok' : 'FAIL');
+console.log('list shows where/host/invited:', list.message.includes('Where:') && list.message.includes('Invited:') ? 'ok' : 'FAIL');
 
 // 5. Cancel → edits everyone, marks cancelled.
 const cancel = await cancelMeeting({ guild, reason: 'holiday', user: by });
@@ -198,21 +203,30 @@ const tonight = parseWhen('tonight');
 assert.ok(tonight && tonight > Date.now(), 'tonight is in the future');
 console.log('tonight is future:', 'ok');
 
-// 11. Card design: V2 panel, no emoji, no RSVP tally, no "Maybe" button.
-const cardPayloadOut = cardPayload(listScheduledMeetings()[0], 'invite', 'u1');
+// 11. Card design: DM-only V2 panel with a single location link button.
+const cardPayloadOut = cardPayload(listScheduledMeetings()[0], 'invite');
 const cardJson = cardPayloadOut.components[0];
 const EMOJI = /\p{Extended_Pictographic}/u;
 const text = cardJson.components.filter((c) => c.type === 10).map((c) => c.content).join('\n');
-const buttons = JSON.stringify(cardJson).match(/"label":"([^"]+)"/g) || [];
+const labels = JSON.stringify(cardJson).match(/"label":"([^"]+)"/g) || [];
+const urls = JSON.stringify(cardJson).match(/"url":"([^"]+)"/g) || [];
+
 assert.strictEqual(cardPayloadOut.flags, 1 << 15, 'card must carry the IsComponentsV2 flag');
-assert.strictEqual(EMOJI.test(text), false, 'card must contain no emoji');
-assert.strictEqual(text.includes('RSVPs'), false, 'card must not show the RSVP tally');
-assert.ok(!buttons.some((b) => /Maybe/i.test(b)), 'Maybe button must be gone');
-assert.strictEqual(buttons.length, 2, 'exactly two RSVP buttons');
 // Container type is 17 in this discord.js build (18 in newer ones).
 assert.ok([17, 18].includes(cardJson.type), 'card is a Components V2 container');
-console.log('card: V2 container / no emoji / no tally / 2 buttons:', 'ok');
-console.log('button labels:', buttons.join(' , '));
+assert.strictEqual(EMOJI.test(text), false, 'card must contain no emoji');
+assert.strictEqual(text.includes('RSVPs'), false, 'card must not show an RSVP tally');
+assert.ok(!labels.some((l) => /can attend|cannot attend|maybe/i.test(l)), 'no RSVP buttons');
+assert.strictEqual(labels.length, 1, 'exactly one button');
+assert.ok(/Join the meeting/.test(labels[0]), 'button is the join link');
+assert.ok(urls.some((u) => u.includes('discord.com/voice/g1/987654321098765432')), 'voice deep link');
+console.log('card: V2 / no emoji / no tally / no RSVP / voice join button:', 'ok');
+console.log('button:', labels[0], '->', urls[0]);
+
+// 12. Without a location there is no button at all.
+const noPlace = cardPayload({ ...listScheduledMeetings()[0], location: null, locationUrl: null }, 'invite');
+assert.strictEqual(noPlace.components[0].components.filter((c) => c.type === 1).length, 0, 'no button without a place');
+console.log('no location -> no button:', 'ok');
 
 fs.unlinkSync(store);
 console.log('\nALL MEETING TESTS PASSED');
