@@ -4,3 +4,41 @@ npm-debug.log*
 
 # AI engine: pending timed bans are runtime state, not source.
 ai_temp_bans.json
+
+# Runtime logs / debug output — never commit.
+*.log
+bot-console.log
+bot-err.log
+bot-error.log
+secret-role-debug.log
+
+# Local runtime state files — never commit (untracked only; tracked json stays tracked).
+economy.json
+app_gate.json
+app_panels.json
+info_panels.json
+meetings.json
+secret_role.json
+verify_panels.json
+votes.json
+appeals.json
+applications.json
+infractions.json
+loas.json
+panels.json
+safezone_strikes.json
+suggestions.json
+tickets.json
+ticket_desk.json
+ticket_panels.json
+
+# Local assets / caches / scratch.
+assets/
+src/assets/
+.claude/
+.kilo/
+
+# Test / scratch scripts at root (not part of the bot).
+*.mjs
+patch-status.txt
+

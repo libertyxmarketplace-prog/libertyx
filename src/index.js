@@ -30,7 +30,8 @@ import {
   TextInputBuilder,
   TextInputStyle,
   TextDisplayBuilder,
-  ThumbnailBuilder
+  ThumbnailBuilder,
+  UserSelectMenuBuilder
 } from 'discord.js';
 import { fileURLToPath } from 'node:url';
 import { RULES_PAGES } from './rules.js';
@@ -7435,8 +7436,9 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
   }
   if (t === 'economy') {
     const channel = targetChannel || postInteraction.channel;
-    const hasBanner = fs.existsSync(ECONOMY_BANNER_PATH);
-    const files = hasBanner ? [new AttachmentBuilder(ECONOMY_BANNER_PATH, { name: 'economy_banner.png' })] : [];
+    const econBannerPath = fileURLToPath(new URL('./assets/economy_banner.png', import.meta.url));
+    const hasBanner = fs.existsSync(econBannerPath);
+    const files = hasBanner ? [new AttachmentBuilder(econBannerPath, { name: 'economy_banner.png' })] : [];
     const sent = await channel.send({
       allowedMentions: { parse: [] },
       components: [buildEconomyMainCard().toJSON()],
@@ -7461,169 +7463,830 @@ const ECON_EMOJI = {
   dot: '1546363864298430525',
   northstar: '1546362770067558400'
 };
+
 const ECON_ROBBERIES = [
-  { id: 'bank', label: 'Bank', payout: 6500, scene: '2:00', survive: '20:00', leo: '10' },
-  { id: 'jewelry', label: 'Jewelry Store', payout: 3000, scene: '1:00', survive: '15:00', leo: '6' },
-  { id: 'house', label: 'House', payout: 1500, scene: '1:00', survive: '13:00', leo: '4' },
-  { id: 'atm', label: 'ATM', payout: 700, scene: 'None', survive: '12:30', leo: '2' },
-  { id: 'register', label: 'Cash Register', payout: 300, scene: 'None', survive: '10:00', leo: '0' }
+  {
+    name: 'Tuscaloosa State Bank Heist',
+    payout: 6500,
+    leo: 10,
+    scene: 'Remain at the scene for at least 2:00 after the robbery begins.',
+    survival: '20:00; paid immediately at the end.',
+    status: 'NOT ENOUGH LEO'
+  },
+  {
+    name: 'Crown Jewelers Robbery',
+    payout: 3000,
+    leo: 6,
+    scene: 'Remain at the scene for at least 1:00 after the robbery begins.',
+    survival: '15:00; paid immediately at the end.',
+    status: 'NOT ENOUGH LEO'
+  },
+  {
+    name: 'Luxury Residential Burglary',
+    payout: 1500,
+    leo: 4,
+    scene: 'Remain at the scene for at least 1:00 after the robbery begins.',
+    survival: '13:00; paid immediately at the end.',
+    status: 'NOT ENOUGH LEO'
+  },
+  {
+    name: 'Commercial ATM Drill',
+    payout: 700,
+    leo: 2,
+    scene: 'None. Your survival timer begins as soon as the robbery call is sent.',
+    survival: '12:30; paid immediately at the end.',
+    status: 'NOT ENOUGH LEO'
+  },
+  {
+    name: 'Convenience Store Register',
+    payout: 300,
+    leo: 0,
+    scene: 'None. Your survival timer begins as soon as the robbery call is sent.',
+    survival: '10:00; paid immediately at the end.',
+    status: '🟢 Available'
+  }
 ];
+
 const ECON_DEPTS = [
-  { id: 'treasury', label: 'Server Treasury', emojiId: null, fallback: '🏛️' },
-  { id: 'tuscaloosa', label: 'Tuscaloosa Sheriff', emojiId: '1546362692229664778', fallback: '⭐' },
-  { id: 'dispatch', label: 'Alabama Dispatch', emojiId: '1546362793077506180', fallback: '📻' },
-  { id: 'alea', label: 'ALEA', emojiId: '1546362722923581533', fallback: '🛡️' },
-  { id: 'dot', label: 'Alabama DOT', emojiId: '1546363864298430525', fallback: '🚧' },
-  { id: 'northstar', label: 'Northstar', emojiId: '1546362770067558400', fallback: '🚑' }
+  { id: 'alea', label: 'Alabama Law Enforcement Agency', emojiId: '1546362722923581533', fallback: '🛡️' },
+  { id: 'tuscaloosa', label: "Tuscaloosa County Sheriff's Office", emojiId: '1546362692229664778', fallback: '⭐' },
+  { id: 'dispatch', label: 'Alabama 911 Emergency Dispatch', emojiId: '1546362793077506180', fallback: '📻' },
+  { id: 'dot', label: 'Alabama Department of Transportation', emojiId: '1546363864298430525', fallback: '🚧' },
+  { id: 'northstar', label: 'Northstar Emergency Medical Services', emojiId: '1546362770067558400', fallback: '🚑' }
 ];
-let econData = { funds: {}, tx: [] };
-function loadEcon() {
-  try { if (fs.existsSync(ECONOMY_FILE)) econData = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf8')); } catch {}
-  for (const d of ECON_DEPTS) if (typeof econData.funds[d.id] !== 'number') econData.funds[d.id] = d.id === 'treasury' ? 50000 : 10000;
-  if (!Array.isArray(econData.tx)) econData.tx = [];
+
+// Department fund transfers are limited to these roles (+ Administrator).
+const ECON_TRANSFER_ROLE_IDS = [
+  '1346603587744301166', // Tuscaloosa Fire
+  '1346603583432425502', // Department Leader
+  '1554680683924824125'  // Department Affairs
+];
+
+/** Staff roles allowed to run `-close economy` / `-open economy` (+ Administrator / ManageGuild). */
+const ECON_GATE_ROLE_IDS = [
+  ...ECON_TRANSFER_ROLE_IDS,
+  '1341965116098962005', // example: senior staff (add your staff role ids here)
+];
+
+/** True when a guild member may open/close the whole economy. */
+function econGateRoleOk(member) {
+  if (!member) return false;
+  try {
+    if (member.permissions?.has?.(PermissionFlagsBits.Administrator)) return true;
+    if (member.permissions?.has?.(PermissionFlagsBits.ManageGuild)) return true;
+  } catch {}
+  let ids = [];
+  if (member.roles?.cache) ids = [...member.roles.cache.values()].map((r) => r.id);
+  else if (Array.isArray(member.roles)) ids = member.roles;
+  return ids.some((id) => ECON_GATE_ROLE_IDS.includes(id));
 }
-function saveEcon() { try { fs.writeFileSync(ECONOMY_FILE, JSON.stringify(econData, null, 2)); } catch {} }
+
+/** True when a guild member may move department funds. */
+function econTransferRoleOk(member) {
+  if (!member) return false;
+  try { if (member.permissions?.has?.(PermissionFlagsBits.Administrator)) return true; } catch {}
+  let ids = [];
+  if (member.roles?.cache) ids = [...member.roles.cache.values()].map((r) => r.id);
+  else if (Array.isArray(member.roles)) ids = member.roles;
+  return ids.some((id) => ECON_TRANSFER_ROLE_IDS.includes(id));
+}
+
+const ECON_CIV_PAY_MS = 10 * 60 * 1000; // one complete 10-minute Civilian interval
+const ECON_CIV_PAY_AMOUNT = 20;         // paid once per completed interval
+const ECON_DAILY_BONUS = 500;           // ;daily claim, once per 24h
+
+let econData = { v: 3, funds: {}, users: {}, tx: [], closed: false, closedAt: null, closedBy: null, closedReason: null };
+
+function loadEcon() {
+  try {
+    if (fs.existsSync(ECONOMY_FILE)) econData = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf8'));
+  } catch {}
+  // v3 hard reset — this economy is brand new: every balance starts at 0 and
+  // old duplicated/test transactions are wiped so nothing fake carries over.
+  if (!econData || econData.v !== 3) {
+    econData = { v: 3, funds: {}, users: {}, tx: [] };
+  }
+  if (!econData.funds || typeof econData.funds !== 'object') econData.funds = {};
+  if (!econData.users || typeof econData.users !== 'object') econData.users = {};
+  if (!Array.isArray(econData.tx)) econData.tx = [];
+  if (typeof econData.funds.treasury !== 'number') econData.funds.treasury = 0;
+  for (const d of ECON_DEPTS) {
+    if (typeof econData.funds[d.id] !== 'number') econData.funds[d.id] = 0;
+  }
+  if (typeof econData.closed !== 'boolean') econData.closed = false;
+  saveEcon();
+}
+
+function saveEcon() {
+  try { fs.writeFileSync(ECONOMY_FILE, JSON.stringify(econData, null, 2)); } catch {}
+}
+
+/** True while the economy is globally closed via `-close economy`. */
+function isEconClosed() { return econData?.closed === true; }
+
+function econClosedText() {
+  const when = econData?.closedAt ? `<t:${Math.floor(Number(econData.closedAt) / 1000)}:R>` : '';
+  return (
+    `🔒 **The Alabama Economy is currently closed.**\n` +
+    `> All economy buttons and money actions are temporarily disabled while staff finish maintenance.\n` +
+    (econData?.closedReason ? `> **Reason:** ${econData.closedReason}\n` : '') +
+    (when ? `> **Closed:** ${when}` : '') +
+    `\n-# Ask staff to run \`-open economy\` when maintenance is done.`
+  );
+}
+
+/** Replies ephemerally when a blocked economy interaction is attempted. */
+async function replyEconClosed(interaction) {
+  const payload = { content: econClosedText(), flags: MessageFlags.Ephemeral };
+  try {
+    if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+    else await interaction.reply(payload);
+  } catch {}
+  return true;
+}
+
+/** Disables every button inside an already-built Components-V2 card JSON. */
+function disableEconCardButtons(cardJson) {
+  try {
+    const walk = (node) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { for (const n of node) walk(n); return; }
+      // discord.js button json: { type: 2, custom_id, disabled }
+      if (node.type === 2) { node.disabled = true; return; }
+      for (const v of Object.values(node)) walk(v);
+    };
+    walk(cardJson);
+  } catch {}
+  return cardJson;
+}
+
+/** Posts/replaces the closed banner text on the main economy card. */
+function applyEconClosedState(card) {
+  if (!isEconClosed()) return card;
+  try {
+    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `🔒 **ECONOMY CLOSED — TEMPORARILY DISABLED**\n` +
+        `> All buttons below are disabled until staff run \`-open economy\`.` +
+        (econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : '')
+      )
+    );
+  } catch {}
+  return card;
+}
+
 loadEcon();
+
 function fmtCash(n) { return '$' + Number(n || 0).toLocaleString('en-US'); }
-function econDeptEmoji(d) { if (!d.emojiId) return d.fallback; return `<:_:${d.emojiId}>`; }
+
+function econDeptEmoji(d) {
+  if (!d.emojiId) return d.fallback || '🏛️';
+  return `<:_:${d.emojiId}>`;
+}
+
 function econWeekSpent() {
   const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
   let total = 0;
-  for (const t of econData.tx) if (t.ts >= cutoff && t.kind === 'send') total += Number(t.amount || 0);
+  for (const t of econData.tx) {
+    if (t.ts >= cutoff && (t.kind === 'send' || t.kind === 'p2p_send' || t.kind === 'dept_send')) {
+      total += Number(t.amount || 0);
+    }
+  }
   return total;
 }
 
+function getEconUser(userId) {
+  if (!econData.users[userId]) {
+    econData.users[userId] = {
+      cash: 0, // Brand-new economy — everyone starts at exactly $0
+      bank: 0,
+      created: Date.now()
+    };
+    saveEcon();
+  }
+  const u = econData.users[userId];
+  if (typeof u.cash !== 'number') u.cash = 0;
+  if (typeof u.bank !== 'number') u.bank = 0;
+  return u;
+}
+
+/** Builds the permanent main economy hub card posted in the channel */
 function buildEconomyMainCard() {
   const card = new ContainerBuilder();
-  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.moneybag}> Alabama Money Hub\nWelcome to the state money hub. Check robbery payouts, look at jobs and paychecks, or manage department funds.\n*Pick a section below to get started. Have fun and roleplay fair.*`));
+  if (fs.existsSync(ECONOMY_BANNER_PATH)) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png'))
+    );
+  }
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Alabama Economy System\n` +
+      `Manage your personal finances, earn cash through active roleplay, and track state funds across Alabama State Roleplay.\n` +
+      `Use the quick actions below to open your wallet, send cash, or review recent activity. Every balance starts at **$0** — everything you hold is earned in-game.`
+    )
+  );
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_send').setLabel('Send Cash').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('econ_wallet').setLabel('My Wallet').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_tx').setLabel('Transactions').setStyle(ButtonStyle.Secondary)
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`<:_:${ECON_EMOJI.shield}> **Robbery Guide**\n> Payouts, timers, and what cops need to show up.\n\n<:_:${ECON_EMOJI.newsletter}> **Jobs and Paychecks**\n> How civilian pay works and what jobs are coming.\n\n<:_:${ECON_EMOJI.moneybag}> **Department Funds**\n> Live balances for every Alabama department plus the Server Treasury.`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### Economy Opportunities\n` +
+      `Multiple paths to build your wealth and support the state. Pick a section to learn how it works.`
+    )
+  );
+
+  // Section 1: Robberies
+  card.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `**Robberies**\n` +
+          `High-risk scores with real payouts across Alabama. Law enforcement response is required for the bigger jobs — check live LEO requirements before you start.`
+        )
+      )
+      .setButtonAccessory(
+        new ButtonBuilder().setCustomId('econ_robbery').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+      )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('econ_robbery').setLabel('Robbery').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('econ_jobs').setLabel('Jobs').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('econ_funds').setLabel('Funds').setStyle(ButtonStyle.Secondary)
-  ));
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('econ_daily').setLabel('Daily Bonus').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('econ_cash').setLabel('My Cash').setStyle(ButtonStyle.Secondary)
-  ));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Economy'));
+
+  // Section 2: Jobs & Paychecks
+  card.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `**Jobs & Paychecks**\n` +
+          `Earn steady income while you roleplay. Civilian pay is tracked live through the ER:LC API, and department payroll runs on Melonly shifts.`
+        )
+      )
+      .setButtonAccessory(
+        new ButtonBuilder().setCustomId('econ_jobs').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+      )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  // Section 3: Department Funds
+  card.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `**Department Funds**\n` +
+          `Live balances for the Server Treasury and every registered department, plus the transfer desk for authorised department leadership.`
+        )
+      )
+      .setButtonAccessory(
+        new ButtonBuilder().setCustomId('econ_funds').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+      )
+  );
+  card.addSeparatorComponents(thinLine());
+
+  // Section 4: More Features
+  card.addSectionComponents(
+    new SectionBuilder()
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `**More Features**\n` +
+          `Banking vault, chat commands, civilian pay, daily bonus, and the full list of system mechanics.`
+        )
+      )
+      .setButtonAccessory(
+        new ButtonBuilder().setCustomId('econ_features').setLabel('More Features').setStyle(ButtonStyle.Secondary)
+      )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Economy System'));
+  applyEconClosedState(card);
   return card;
 }
 
-function buildEconRobberyCard() {
+/** Live count of law-enforcement players from the ER:LC API (null when unavailable). */
+let econLeoCache = { ts: 0, count: 0, ok: false };
+async function erlcLiveLeoCount() {
+  if (econLeoCache.ts && Date.now() - econLeoCache.ts < 20000) return econLeoCache.ok ? econLeoCache.count : null;
+  if (!config.apiKey) { econLeoCache = { ts: Date.now(), count: 0, ok: false }; return null; }
+  try {
+    const res = await axios.get(`${erlcBase()}/server/players`, {
+      headers: { 'Server-Key': config.apiKey },
+      timeout: 6000
+    });
+    const list = Array.isArray(res.data) ? res.data : [];
+    const leo = list.filter((p) => {
+      const team = String(p?.Team || '').toLowerCase();
+      if (!team || team === 'civilian') return false;
+      return /(police|sheriff|state|law|troop|highway|patrol|correction|fbi|uspis|dispatch|dep)/.test(team);
+    }).length;
+    econLeoCache = { ts: Date.now(), count: leo, ok: true };
+    return leo;
+  } catch {
+    econLeoCache = { ts: Date.now(), count: 0, ok: false };
+    return null;
+  }
+}
+
+/** Ephemeral Sub-Card: Robbery Operations */
+async function buildEconRobberyCard() {
+  const leoOnline = await erlcLiveLeoCount();
   const card = new ContainerBuilder();
-  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.shield}> Robbery Guide\n*Plan it right. Big scores need more cops around and more time on scene.*`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Robbery Guide\n` +
+      `Reserve a robbery to set up. The priority and survival timer start only after the in-game robbery is committed. Payment is issued when the full timer ends.\n\n` +
+      `**Live LEO online:** \`${leoOnline === null ? 'unavailable' : leoOnline}\`` +
+      (leoOnline === null ? '' : ` — robberies needing more LEO than this stay on standby.`) +
+      `\n\n*Setting up a robbery does not start the priority. The timer starts only after the in-game robbery is actually committed. If you are killed, arrested, jailed, disconnect, or leave before it ends, you get no payout.*`
+    )
+  );
   card.addSeparatorComponents(thinLine());
   for (const r of ECON_ROBBERIES) {
-    const need = r.leo === '0' ? 'OPEN' : `${r.leo} LEO needed`;
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${r.label}** • $${r.payout.toLocaleString()} • ${need}\n> Scene time: ${r.scene} • Survive: ${r.survive}\n> Status: DISABLED`));
+    const status = leoOnline === null ? 'LIVE STATUS UNAVAILABLE' : (leoOnline >= r.leo ? 'AVAILABLE' : `NEEDS ${r.leo} LEO`);
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `**${r.name}** • \`${status}\`\n` +
+        `Payout \`${fmtCash(r.payout)}\` • LEO needed \`${r.leo}\`\n` +
+        `Scene: ${r.scene}\n` +
+        `Survival: ${r.survival}`
+      )
+    );
   }
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`> LEO means how many cops must be in game. 0 of 10 means the map is quiet right now.\n> No cop baiting. No combat logging. Fail RP can void your payout.`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `**Robbery Guidelines**\n` +
+      `Only begin a robbery when you are ready to actively roleplay it.\n` +
+      `Do not intentionally reset, respawn, or disconnect to avoid law enforcement.\n` +
+      `Payouts are only awarded after the full survival requirement and scene verification.\n` +
+      `Starting another robbery while one is already active may result in the new robbery being voided.\n` +
+      `All Alabama State Roleplay rules remain in effect during robberies.\n` +
+      `GTA Driving speed is capped at **105 mph** even in pursuits.`
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Robbery'));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Robbery System'));
   return card;
 }
 
+/** Ephemeral Sub-Card: Jobs & Paychecks */
 function buildEconJobsCard() {
   const card = new ContainerBuilder();
-  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.newsletter}> Jobs and Paychecks\n*Work a job, get paid, stack your cash.*`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Jobs & Paychecks\n` +
+      `*Work a job, earn regular wages, and build your fortune across Alabama State Roleplay.*`
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### How It Works\n> Stay on civilian team in game and pay drops every 10 minutes through the ER:LC system.\n> Melonly handles payroll on top of that for extra bonuses and department pay.`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `### How Jobs Work\n` +
+      `The ER:LC API exposes the live team, not civilian job titles, so all players on Civilian use the same pay rate.\n` +
+      `Every complete **10-minute interval** on Civilian pays once. Switching teams or leaving starts a new unpaid timer.\n` +
+      `Department payroll uses **Melonly shift start/end**, not the civilian job timer.\n\n` +
+      `### Pay Schedule\n` +
+      `Civilian pay: **${fmtCash(ECON_CIV_PAY_AMOUNT)} per complete 10-minute interval**, tracked live from the ER:LC API while you stay in-game on Civilian.\n` +
+      `Paid automatically — no claim needed. Check \`Transaction\` history anytime to see your earnings.\n\n` +
+      `### Department Shifts\n` +
+      `Logged duty shifts are compensated directly from department budgets during weekly payroll runs.\n\n` +
+      `### Whitelisted & Public Careers\n` +
+      `Advanced roles with higher pay multipliers (Heavy Towing, Armored Transit, Private Security) will unlock in upcoming updates.`
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Whitelisted Jobs\n> Coming Soon. Special roles with bigger paychecks are on the way.`));
-  card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Public Jobs\n> Coming Soon. Open jobs anyone can grab will show here.`));
-  card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('econ_jobs_white').setLabel('Whitelisted').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('econ_jobs_pay').setLabel('View Payout').setStyle(ButtonStyle.Secondary)
-  ));
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Jobs'));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Jobs & Payroll'));
   return card;
 }
 
+/** Ephemeral Sub-Card: Department Funds */
 function buildEconFundsCard() {
   const card = new ContainerBuilder();
-  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
-  const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), 0);
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.moneybag}> Department Funds\n*The Server Treasury holds the main state cash. Departments spend from their own pots.*\n\n> **Total across departments:** ${fmtCash(total)}\n> **Weekly spending:** ${fmtCash(econWeekSpent())}`));
+  const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), Number(econData.funds.treasury || 0));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Department Funds & Treasury\n` +
+      `Every account in this ledger starts at **$0** — balances only change through real transfers and payroll.\n` +
+      `Only Department Leadership (Department Leader, Department Affairs, Tuscaloosa Fire) or an Administrator may move department funds.\n\n` +
+      `**Server Treasury**\n` +
+      `Available reserves: **${fmtCash(econData.funds.treasury)}**\n` +
+      `Source: 5% tax on all player-to-player transfers\n\n` +
+      `**Total government capital:** **${fmtCash(total)}**\n` +
+      `**Spending this week:** **${fmtCash(econWeekSpent())}**`
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_tx').setLabel('Transactions').setStyle(ButtonStyle.Secondary)));
-  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(`### Department Financial Overview\nLive balance for each registered department across Alabama:`)
+  );
   for (const d of ECON_DEPTS) {
-    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`${econDeptEmoji(d)} **${d.label}**\n> Balance: ${fmtCash(econData.funds[d.id])}`));
-    card.addActionRowComponents(new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`econ_send_${d.id}`).setLabel('Send').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`econ_dep_${d.id}`).setLabel('Deposit').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`econ_wd_${d.id}`).setLabel('Withdraw').setStyle(ButtonStyle.Secondary)
-    ));
-    card.addSeparatorComponents(thinLine());
+    card.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `${econDeptEmoji(d)} **${d.label}** — ${fmtCash(econData.funds[d.id])}`
+      )
+    );
   }
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Funds'));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_tx').setLabel('View Transactions').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_dept_transfer_start').setLabel('Department Transfer').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Department Funds'));
   return card;
 }
 
+/** Ephemeral Sub-Card: More Features */
+function buildEconFeaturesCard() {
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Economy Features & System Mechanics\n` +
+      `*Everything you need to know about earning, spending, and protecting your money.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `**Starting Balance**\n` +
+      `Every account begins at **$0**. Nothing is gifted — all money comes from in-game work and transfers.\n\n` +
+      `**Civilian Team Pay**\n` +
+      `Earn **${fmtCash(ECON_CIV_PAY_AMOUNT)} every 10 minutes** automatically while you remain in-game on the Civilian team (detected live through the ER:LC API).\n` +
+      `Switching teams or disconnecting resets the timer.\n\n` +
+      `**Department Payroll**\n` +
+      `Department shifts are paid from **Melonly shift start/end records**, never the civilian timer.\n\n` +
+      `**State Bank Vault**\n` +
+      `Deposit Cash to protect it from street steals. Withdraw anytime to spend, trade, or send cash.\n\n` +
+      `**Send Transfer Tax**\n` +
+      `A **5% tax** on every player-to-player send goes to the Server Treasury. The recipient receives the remaining **95%**.\n\n` +
+      `**Chat Commands**\n` +
+      `\`;cash\` — DM yourself your live wallet balance.\n` +
+      `\`;daily\` — claim ${fmtCash(ECON_DAILY_BONUS)} once every 24 hours.\n` +
+      `\`;steal\` — attempt to pickpocket cash from a nearby civilian (50% chance, banked cash is safe).`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_wallet').setLabel('My Wallet').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_send').setLabel('Send Cash').setStyle(ButtonStyle.Success)
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • More Features'));
+  return card;
+}
+
+/** Ephemeral Sub-Card: User Wallet & Banking */
+function buildEconWalletCard(userId) {
+  const user = getEconUser(userId);
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Citizen Wallet & Banking Vault\n` +
+      `Your personal cash and bank holdings in Alabama State Roleplay.\n\n` +
+      `**Cash on Hand:** \`${fmtCash(user.cash)}\`\n` +
+      `**Bank Vault:** \`${fmtCash(user.bank)}\`\n` +
+      `**Total Net Worth:** \`${fmtCash(user.cash + user.bank)}\`\n\n` +
+      `*Tip: Keep excess money in your Bank Vault — banked cash cannot be stolen with \`;steal\`.*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_bank_dep').setLabel('Deposit to Bank').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('econ_bank_wd').setLabel('Withdraw Cash').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_send').setLabel('Send Cash').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_wallet_refresh').setLabel('Refresh').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Citizen Banking'));
+  return card;
+}
+
+/** Ephemeral Sub-Card: Send Cash User Selection */
+function buildEconSendCard(userId) {
+  const user = getEconUser(userId);
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Send Cash Transfer\n` +
+      `Select the Discord user who should receive cash directly from your personal wallet.\n\n` +
+      `**Available Cash:** \`${fmtCash(user.cash)}\` on hand (bank funds are not sent — withdraw first).\n` +
+      `**State Tax:** a **5% tax** is taken from the amount and sent to the Server Treasury.\n` +
+      `The recipient receives the remaining **95%**.\n\n` +
+      `*Select a recipient below to proceed:*`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new UserSelectMenuBuilder().setCustomId('econ_send_user_select').setPlaceholder('Select a citizen recipient...')
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Cash Transfers'));
+  return card;
+}
+
+/** Ephemeral Sub-Card: Recent Transactions */
 function buildEconTxCard() {
   const card = new ContainerBuilder();
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## Transactions\n*Last 10 money moves.*`));
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `## Recent Economy Transactions\n*Last 10 financial movements across Alabama State Roleplay.*`
+    )
+  );
   card.addSeparatorComponents(thinLine());
-  const last = [...econData.tx].reverse().slice(0, 10);
-  if (!last.length) card.addTextDisplayComponents(new TextDisplayBuilder().setContent('> No moves yet. Send cash to kick things off.'));
-  else for (const t of last) card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`> **${t.kind.toUpperCase()}** ${fmtCash(t.amount)} • ${t.from} to ${t.to}\n> <t:${Math.floor(t.ts / 1000)}:R> by <@${t.by}>`));
+  const seen = new Set();
+  const last = [];
+  for (let i = econData.tx.length - 1; i >= 0 && last.length < 10; i--) {
+    const t = econData.tx[i];
+    // Guard against historical duplicates: same movement, same second = one entry.
+    const sig = `${t.kind}|${t.from}|${t.to}|${t.amount}|${t.net || 0}|${Math.floor((t.ts || 0) / 1000)}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    last.push(t);
+  }
+  if (!last.length) {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent('No transactions recorded yet. Transfer cash or work shifts to begin.'));
+  } else {
+    for (const t of last) {
+      if (t.kind === 'p2p_send') {
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `**TRANSFER** ${fmtCash(t.net)} (<@${t.from}> ➔ <@${t.to}>)\n` +
+            `State Tax: ${fmtCash(t.tax)} • <t:${Math.floor(t.ts / 1000)}:R>`
+          )
+        );
+      } else if (t.kind === 'civ_pay') {
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `**CIVILIAN PAY** ${fmtCash(t.amount)} ➔ <@${t.to}>\n` +
+            `10-minute Civilian interval • <t:${Math.floor(t.ts / 1000)}:R>`
+          )
+        );
+      } else if (t.kind === 'daily') {
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `**DAILY BONUS** ${fmtCash(t.amount)} ➔ <@${t.to}>\n` +
+            `<t:${Math.floor(t.ts / 1000)}:R>`
+          )
+        );
+      } else {
+        card.addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `**${(t.kind || 'MOVE').toUpperCase()}** ${fmtCash(t.amount)} (${t.from} ➔ ${t.to})\n` +
+            `<t:${Math.floor(t.ts / 1000)}:R> by <@${t.by}>`
+          )
+        );
+      }
+    }
+  }
   card.addSeparatorComponents(thinLine());
-  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_funds').setLabel('Back to Funds').setStyle(ButtonStyle.Secondary)));
-  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Funds'));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Transaction Ledger'));
   return card;
 }
 
 async function handleEconomyButton(interaction) {
   const id = interaction.customId;
-  if (id === 'econ_home') { await interaction.update({ components: [buildEconomyMainCard().toJSON()] }); return true; }
-  if (id === 'econ_robbery') { await interaction.update({ components: [buildEconRobberyCard().toJSON()] }); return true; }
-  if (id === 'econ_jobs') { await interaction.update({ components: [buildEconJobsCard().toJSON()] }); return true; }
-  if (id === 'econ_funds') { await interaction.update({ components: [buildEconFundsCard().toJSON()] }); return true; }
-  if (id === 'econ_tx') { await interaction.update({ components: [buildEconTxCard().toJSON()] }); return true; }
-  if (id === 'econ_daily') { await interaction.reply({ content: 'You grabbed your daily bonus of $500. Come back tomorrow for more.', flags: MessageFlags.Ephemeral }); return true; }
-  if (id === 'econ_cash') {
-    const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), 0);
-    await interaction.reply({ content: `State cash right now: ${fmtCash(total)}. Treasury holds ${fmtCash(econData.funds.treasury)}.`, flags: MessageFlags.Ephemeral });
+
+  // Global kill-switch: while closed every economy button is dead.
+  // econ_home stays alive so users can still see the CLOSED banner.
+  if (isEconClosed() && id !== 'econ_home') {
+    // If the click came from the main panel message, refresh that card so its
+    // buttons visually lock too — best-effort, never throws.
+    try {
+      if (interaction.message && !interaction.replied && !interaction.deferred) {
+        const closedJson = disableEconCardButtons(applyEconClosedState(buildEconomyMainCard()).toJSON());
+        await interaction.update({ components: [closedJson] }).catch(() => null);
+        await interaction.followUp({ content: econClosedText(), flags: MessageFlags.Ephemeral }).catch(() => null);
+        return true;
+      }
+    } catch {}
+    await replyEconClosed(interaction);
     return true;
   }
-  if (id === 'econ_jobs_white' || id === 'econ_jobs_pay') {
-    const title = id === 'econ_jobs_white' ? 'Whitelisted Jobs' : 'Public Jobs Payout';
-    await interaction.reply({ components: [new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(`### ${title} • Coming Soon`)).addSeparatorComponents(thinLine()).addTextDisplayComponents(new TextDisplayBuilder().setContent('> This part is not open yet. Check back soon.')).addSeparatorComponents(thinLine()).addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Jobs')).toJSON()], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+
+  // Ephemeral sub-views for economy features:
+  if (id === 'econ_robbery') {
+    await interaction.reply({
+      components: [(await buildEconRobberyCard()).toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
     return true;
   }
-  if (id.startsWith('econ_send_') || id.startsWith('econ_dep_') || id.startsWith('econ_wd_')) {
-    const kind = id.startsWith('econ_send_') ? 'send' : id.startsWith('econ_dep_') ? 'dep' : 'wd';
-    const deptId = id.replace('econ_send_', '').replace('econ_dep_', '').replace('econ_wd_', '');
-    if (kind === 'send') {
-      const opts = ECON_DEPTS.filter((d) => d.id !== deptId).map((d) => new StringSelectMenuOptionBuilder().setLabel(d.label).setValue(d.id).setDescription(`${fmtCash(econData.funds[d.id])}`));
-      const menu = new StringSelectMenuBuilder().setCustomId(`econ_sendto_${deptId}`).setPlaceholder('Where should the cash go?').addOptions(opts);
-      await interaction.reply({ components: [new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Send cash\n> From: **${deptId}** (${fmtCash(econData.funds[deptId])})\n> Pick who gets it, then type the amount.`)).addActionRowComponents(new ActionRowBuilder().addComponents(menu)).toJSON()], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
-      return true;
-    }
-    const modal = new ModalBuilder().setCustomId(`econ_modal_${kind}_${deptId}`).setTitle('Enter amount').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount').setPlaceholder('Example: 500').setStyle(TextInputStyle.Short).setRequired(true)));
+  if (id === 'econ_jobs') {
+    await interaction.reply({
+      components: [buildEconJobsCard().toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+  if (id === 'econ_funds') {
+    await interaction.reply({
+      components: [buildEconFundsCard().toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+  if (id === 'econ_features') {
+    await interaction.reply({
+      components: [buildEconFeaturesCard().toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+  if (id === 'econ_wallet') {
+    await interaction.reply({
+      components: [buildEconWalletCard(interaction.user.id).toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+  if (id === 'econ_wallet_refresh') {
+    await interaction.update({
+      components: [buildEconWalletCard(interaction.user.id).toJSON()]
+    });
+    return true;
+  }
+  if (id === 'econ_send') {
+    await interaction.reply({
+      components: [buildEconSendCard(interaction.user.id).toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+  if (id === 'econ_tx') {
+    await interaction.reply({
+      components: [buildEconTxCard().toJSON()],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  // Banking modals:
+  if (id === 'econ_bank_dep') {
+    const user = getEconUser(interaction.user.id);
+    const modal = new ModalBuilder()
+      .setCustomId('econ_modal_bank_dep')
+      .setTitle('Deposit Cash to Bank')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel(`Amount to Deposit (Max: ${fmtCash(user.cash)})`)
+            .setPlaceholder('e.g. 250')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
     await interaction.showModal(modal);
     return true;
   }
+  if (id === 'econ_bank_wd') {
+    const user = getEconUser(interaction.user.id);
+    const modal = new ModalBuilder()
+      .setCustomId('econ_modal_bank_wd')
+      .setTitle('Withdraw Cash from Bank')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel(`Amount to Withdraw (Max: ${fmtCash(user.bank)})`)
+            .setPlaceholder('e.g. 250')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  // Department transfer flow: Department Leader / Department Affairs / Tuscaloosa Fire / Admin only.
+  if (id === 'econ_dept_transfer_start') {
+    const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+    if (!econTransferRoleOk(member)) {
+      await interaction.reply({
+        content: 'Only Department Leadership (Department Leader, Department Affairs, Tuscaloosa Fire) or an Administrator may move department funds.',
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+    const opts = [
+      { id: 'treasury', label: 'Server Treasury' },
+      ...ECON_DEPTS
+    ].map((d) =>
+      new StringSelectMenuOptionBuilder()
+        .setLabel(d.label)
+        .setValue(d.id)
+        .setDescription(`Balance: ${fmtCash(econData.funds[d.id])}`)
+    );
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('econ_dept_pick_source')
+      .setPlaceholder('Select department to transfer funds from...')
+      .addOptions(opts);
+    await interaction.reply({
+      components: [
+        new ContainerBuilder()
+          .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(`### Department Fund Transfer\nSelect the source department or Server Treasury:`)
+          )
+          .addActionRowComponents(new ActionRowBuilder().addComponents(menu))
+          .toJSON()
+      ],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
   return false;
 }
 
 async function handleEconomySelect(interaction) {
-  if (interaction.customId.startsWith('econ_sendto_')) {
-    const fromId = interaction.customId.replace('econ_sendto_', '');
+  if (isEconClosed()) { await replyEconClosed(interaction); return true; }
+  if (interaction.customId === 'econ_dept_pick_source') {
+    const fromId = interaction.values?.[0];
+    if (!fromId) return true;
+    const destOpts = [
+      { id: 'treasury', label: 'Server Treasury' },
+      ...ECON_DEPTS
+    ]
+      .filter((d) => d.id !== fromId)
+      .map((d) =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(d.label)
+          .setValue(d.id)
+          .setDescription(`Balance: ${fmtCash(econData.funds[d.id])}`)
+      );
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`econ_dept_pick_dest_${fromId}`)
+      .setPlaceholder('Select destination department...')
+      .addOptions(destOpts);
+    await interaction.reply({
+      components: [
+        new ContainerBuilder()
+          .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent(
+              `### 🏛️ Department Fund Transfer\n> **From:** \`${fromId}\` (${fmtCash(econData.funds[fromId])})\nSelect where the funds should go:`
+            )
+          )
+          .addActionRowComponents(new ActionRowBuilder().addComponents(menu))
+          .toJSON()
+      ],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  if (interaction.customId.startsWith('econ_dept_pick_dest_')) {
+    const fromId = interaction.customId.replace('econ_dept_pick_dest_', '');
     const toId = interaction.values?.[0];
-    const modal = new ModalBuilder().setCustomId(`econ_modal_send_${fromId}_${toId}`).setTitle('Send cash').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount to send').setPlaceholder('Example: 500').setStyle(TextInputStyle.Short).setRequired(true)));
+    if (!toId) return true;
+    const modal = new ModalBuilder()
+      .setCustomId(`econ_modal_dept_${fromId}_${toId}`)
+      .setTitle('Department Transfer Amount')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel(`Amount to Transfer (Max: ${fmtCash(econData.funds[fromId])})`)
+            .setPlaceholder('e.g. 5000')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  return false;
+}
+
+async function handleEconomyUserSelect(interaction) {
+  if (isEconClosed()) { await replyEconClosed(interaction); return true; }
+  if (interaction.customId === 'econ_send_user_select') {
+    const targetUserId = interaction.values?.[0];
+    if (!targetUserId) return true;
+    if (targetUserId === interaction.user.id) {
+      await interaction.reply({ content: '❌ You cannot send cash to yourself.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const sender = getEconUser(interaction.user.id);
+    const modal = new ModalBuilder()
+      .setCustomId(`econ_modal_usersend_${targetUserId}`)
+      .setTitle('Send Cash Transfer')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('amount')
+            .setLabel(`Cash Amount to Send (Available: ${fmtCash(sender.cash)})`)
+            .setPlaceholder('e.g. 250 (5% tax goes to Server Treasury)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
     await interaction.showModal(modal);
     return true;
   }
@@ -7632,30 +8295,165 @@ async function handleEconomySelect(interaction) {
 
 async function handleEconomyModal(interaction) {
   if (!interaction.customId.startsWith('econ_modal_')) return false;
-  const parts = interaction.customId.replace('econ_modal_', '').split('_');
-  const kind = parts[0];
-  const amt = Math.floor(Number(interaction.fields.getTextInputValue('amount')));
-  if (!amt || amt <= 0 || amt > 100000000) { await interaction.reply({ content: 'That amount does not look right. Try a number above 0.', flags: MessageFlags.Ephemeral }); return true; }
-  let fromId; let toId;
-  if (kind === 'send') { fromId = parts[1]; toId = parts[2]; }
-  else if (kind === 'dep') { toId = parts[1]; fromId = 'treasury'; }
-  else { fromId = parts[1]; toId = 'treasury'; }
-  if (kind === 'dep') { econData.funds[toId] = Number(econData.funds[toId] || 0) + amt; }
-  else {
-    if (Number(econData.funds[fromId] || 0) < amt) { await interaction.reply({ content: 'Not enough cash in that fund for that move.', flags: MessageFlags.Ephemeral }); return true; }
+  if (isEconClosed()) { await replyEconClosed(interaction); return true; }
+
+  // P2P Cash Send
+  if (interaction.customId.startsWith('econ_modal_usersend_')) {
+    const targetUserId = interaction.customId.replace('econ_modal_usersend_', '');
+    const rawAmt = interaction.fields.getTextInputValue('amount').replace(/[^0-9]/g, '');
+    const amt = Math.floor(Number(rawAmt));
+    if (!amt || amt <= 0) {
+      await interaction.reply({ content: '❌ Please enter a valid positive dollar amount.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    if (amt > 10000000) {
+      await interaction.reply({ content: '❌ Transaction amount exceeds maximum allowed limit.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const sender = getEconUser(interaction.user.id);
+    if (sender.cash < amt) {
+      await interaction.reply({
+        content: `❌ Insufficient on-hand cash. You currently have **${fmtCash(sender.cash)}** in your wallet. (Bank funds cannot be sent directly; withdraw them first).`,
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+
+    const tax = Math.max(1, Math.floor(amt * 0.05));
+    const net = amt - tax;
+
+    sender.cash -= amt;
+    const recipient = getEconUser(targetUserId);
+    recipient.cash += net;
+    econData.funds.treasury = (Number(econData.funds.treasury) || 0) + tax;
+
+    // Guard against duplicate submits (multi-instance replays write the same movement twice):
+    // skip this entry if an identical one landed in the last 10 seconds.
+    const dupe = [...econData.tx].reverse().slice(0, 8).some((t) =>
+      t.kind === 'p2p_send' && t.from === interaction.user.id && t.to === targetUserId &&
+      Number(t.amount) === amt && (Date.now() - Number(t.ts || 0)) < 10000
+    );
+    if (!dupe) {
+      econData.tx.push({
+        kind: 'p2p_send',
+        from: interaction.user.id,
+        to: targetUserId,
+        amount: amt,
+        net,
+        tax,
+        by: interaction.user.id,
+        ts: Date.now()
+      });
+      if (econData.tx.length > 200) econData.tx = econData.tx.slice(-200);
+    }
+    saveEcon();
+
+    try {
+      await interaction.client.users.send(targetUserId, `You received a cash transfer of **${fmtCash(net)}** from <@${interaction.user.id}> (5% state tax of ${fmtCash(tax)} deducted).`);
+    } catch {}
+
+    await interaction.reply({
+      content: `<:_:${ECON_EMOJI.moneybag}> Successfully sent **${fmtCash(net)}** to <@${targetUserId}>!\nA 5% tax of **${fmtCash(tax)}** was transferred to the Server Treasury.\nRemaining on-hand cash: **${fmtCash(sender.cash)}**.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  // Bank Deposit
+  if (interaction.customId === 'econ_modal_bank_dep') {
+    const rawAmt = interaction.fields.getTextInputValue('amount').replace(/[^0-9]/g, '');
+    const amt = Math.floor(Number(rawAmt));
+    if (!amt || amt <= 0) {
+      await interaction.reply({ content: '❌ Please enter a valid positive dollar amount.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const user = getEconUser(interaction.user.id);
+    if (user.cash < amt) {
+      await interaction.reply({ content: `❌ You only have **${fmtCash(user.cash)}** on hand to deposit.`, flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    user.cash -= amt;
+    user.bank += amt;
+    saveEcon();
+    await interaction.reply({
+      content: `Deposited **${fmtCash(amt)}** into your Bank Vault!\nOn-hand Cash: **${fmtCash(user.cash)}**\nBank Vault: **${fmtCash(user.bank)}**\nYour banked funds are now 100% protected against pickpockets.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  // Bank Withdraw
+  if (interaction.customId === 'econ_modal_bank_wd') {
+    const rawAmt = interaction.fields.getTextInputValue('amount').replace(/[^0-9]/g, '');
+    const amt = Math.floor(Number(rawAmt));
+    if (!amt || amt <= 0) {
+      await interaction.reply({ content: '❌ Please enter a valid positive dollar amount.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    const user = getEconUser(interaction.user.id);
+    if (user.bank < amt) {
+      await interaction.reply({ content: `❌ You only have **${fmtCash(user.bank)}** in your Bank Vault to withdraw.`, flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    user.bank -= amt;
+    user.cash += amt;
+    saveEcon();
+    await interaction.reply({
+      content: `Withdrew **${fmtCash(amt)}** from your Bank Vault!\nOn-hand Cash: **${fmtCash(user.cash)}**\nBank Vault: **${fmtCash(user.bank)}**`,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
+  // Department Funds Transfer — re-verified server-side: leadership roles only.
+  if (interaction.customId.startsWith('econ_modal_dept_')) {
+    const member = interaction.member || (await interaction.guild?.members.fetch(interaction.user.id).catch(() => null));
+    if (!econTransferRoleOk(member)) {
+      await interaction.reply({
+        content: 'Only Department Leadership (Department Leader, Department Affairs, Tuscaloosa Fire) or an Administrator may move department funds.',
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+    const parts = interaction.customId.replace('econ_modal_dept_', '').split('_');
+    const fromId = parts[0];
+    const toId = parts[1];
+    const rawAmt = interaction.fields.getTextInputValue('amount').replace(/[^0-9]/g, '');
+    const amt = Math.floor(Number(rawAmt));
+    if (!amt || amt <= 0) {
+      await interaction.reply({ content: '❌ Please enter a valid positive dollar amount.', flags: MessageFlags.Ephemeral });
+      return true;
+    }
+    if ((Number(econData.funds[fromId]) || 0) < amt) {
+      await interaction.reply({ content: `❌ Not enough capital in \`${fromId}\` (Balance: ${fmtCash(econData.funds[fromId])}).`, flags: MessageFlags.Ephemeral });
+      return true;
+    }
     econData.funds[fromId] -= amt;
-    if (kind === 'send') econData.funds[toId] = Number(econData.funds[toId] || 0) + amt;
+    econData.funds[toId] = (Number(econData.funds[toId]) || 0) + amt;
+    const dupeDept = [...econData.tx].reverse().slice(0, 8).some((t) =>
+      t.kind === 'dept_send' && t.from === fromId && t.to === toId &&
+      Number(t.amount) === amt && (Date.now() - Number(t.ts || 0)) < 10000
+    );
+    if (!dupeDept) {
+      econData.tx.push({
+        kind: 'dept_send',
+        from: fromId,
+        to: toId,
+        amount: amt,
+        by: interaction.user.id,
+        ts: Date.now()
+      });
+      if (econData.tx.length > 200) econData.tx = econData.tx.slice(-200);
+    }
+    saveEcon();
+    await interaction.reply({
+      content: `<:_:${ECON_EMOJI.moneybag}> Transferred **${fmtCash(amt)}** from \`${fromId}\` to \`${toId}\` successfully.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
   }
-  econData.tx.push({ kind, from: fromId, to: toId, amount: amt, by: interaction.user.id, ts: Date.now() });
-  if (econData.tx.length > 200) econData.tx = econData.tx.slice(-200);
-  saveEcon();
-  if (kind === 'dep' || kind === 'wd') {
-    try { await interaction.user.send(`Your ${kind === 'dep' ? 'deposit' : 'withdrawal'} of ${fmtCash(amt)} went through.`); } catch {}
-    await interaction.reply({ content: `Done. I also sent you a DM receipt.`, flags: MessageFlags.Ephemeral });
-  } else {
-    await interaction.reply({ content: `Sent ${fmtCash(amt)} from ${fromId} to ${toId}.`, flags: MessageFlags.Ephemeral });
-  }
-  return true;
+
+  return false;
 }
 
 // ── /loa + -loa Leave of Absence system ──
@@ -8290,18 +9088,25 @@ async function handleMediaCommand(interaction) {
 async function handlePanelHubCommand(hubInteraction) {
   const member = hubInteraction.member || (await hubInteraction.guild?.members.fetch(hubInteraction.user.id).catch(() => null));
   if (!isStaffMember(member) && !member?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
-    await hubInteraction.reply({ content: '❌ You must have staff permissions to post panels.', flags: MessageFlags.Ephemeral });
+    if (!hubInteraction.replied && !hubInteraction.deferred) {
+      await hubInteraction.reply({ content: '❌ You must have staff permissions to post panels.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
     return;
   }
-  await hubInteraction.deferReply({ flags: MessageFlags.Ephemeral });
+  // Guard: only defer if not already acknowledged (handles race between old/new bot instances)
+  if (!hubInteraction.deferred && !hubInteraction.replied) {
+    await hubInteraction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
   const type = hubInteraction.options?.getString?.('type', true);
   const targetChannel = hubInteraction.options?.getChannel?.('channel') || hubInteraction.channel;
   const pingRole = hubInteraction.options?.getRole?.('ping_role') || null;
+  console.log(`[panel] Posting type="${type}" to #${targetChannel?.name ?? targetChannel?.id} by ${hubInteraction.user.tag}`);
   try {
     const msg = await postPanelByType(hubInteraction, type, targetChannel, pingRole);
-    await hubInteraction.editReply({ content: `✅ ${msg}` });
+    await hubInteraction.editReply({ content: `✅ ${msg}` }).catch(() => {});
   } catch (err) {
-    await hubInteraction.editReply({ content: `❌ Could not post panel (${err.message}).` });
+    console.error(`[panel] postPanelByType error for type="${type}":`, err);
+    await hubInteraction.editReply({ content: `❌ Could not post panel: ${err.message}` }).catch(() => {});
   }
 }
 
@@ -13364,8 +14169,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleEconomyModal(interaction);
       return;
     }
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('econ_sendto_')) {
+    if (interaction.isStringSelectMenu() && (interaction.customId.startsWith('econ_sendto_') || interaction.customId.startsWith('econ_dept_'))) {
       await handleEconomySelect(interaction);
+      return;
+    }
+    if (interaction.isUserSelectMenu() && interaction.customId.startsWith('econ_')) {
+      await handleEconomyUserSelect(interaction);
       return;
     }
     if (interaction.isButton() && interaction.customId.startsWith('econ_')) {
@@ -16848,6 +17657,71 @@ client.on(Events.MessageCreate, async (message) => {
       const aiRequest = message.content.slice(1).trim().slice(2).trim();
       await handleAiPrefixCommand(message, aiRequest);
       return;
+    }
+
+    // ── Economy global kill-switch (-close economy / -open economy) ──
+    // Handled BEFORE the ticket-desk staff gate so economy staff (transfer roles)
+    // can freeze/unfreeze without needing ticket-desk staff perms.
+    {
+      const isEconGateCmd =
+        raw === 'close economy' || raw.startsWith('close economy ') ||
+        raw === 'open economy' || raw.startsWith('open economy ') ||
+        raw === 'economy status' || raw === 'economy-status' || raw === 'econ status';
+      if (isEconGateCmd) {
+        if (raw === 'close economy' || raw.startsWith('close economy ')) {
+          if (!econGateRoleOk(message.member)) {
+            await autoDeleteReply(message, '❌ You do not have permission to close the economy.', 30000);
+            return;
+          }
+          const reason = message.content.slice(1).trim().slice('close economy'.length).trim();
+          if (isEconClosed()) {
+            await autoDeleteReply(message, '🔒 The economy is already **CLOSED** (buttons are disabled).', 30000);
+            return;
+          }
+          econData.closed = true;
+          econData.closedAt = Date.now();
+          econData.closedBy = message.author?.id || null;
+          econData.closedReason = reason || null;
+          saveEcon();
+          await autoDeleteReply(
+            message,
+            `🔒 **Alabama Economy is now CLOSED.**\n` +
+            `> All economy buttons and money actions are disabled until you run \`-open economy\`.` +
+            (reason ? `\n> **Reason:** ${reason}` : ''),
+            30000
+          );
+          return;
+        }
+        if (raw === 'open economy' || raw.startsWith('open economy ')) {
+          if (!econGateRoleOk(message.member)) {
+            await autoDeleteReply(message, '❌ You do not have permission to open the economy.', 30000);
+            return;
+          }
+          if (!isEconClosed()) {
+            await autoDeleteReply(message, '🔓 The economy is already **OPEN**.', 30000);
+            return;
+          }
+          econData.closed = false;
+          econData.closedAt = null;
+          econData.closedBy = null;
+          econData.closedReason = null;
+          saveEcon();
+          await autoDeleteReply(
+            message,
+            '🔓 **Alabama Economy is now OPEN.**\n> All economy buttons and money actions are enabled again.',
+            30000
+          );
+          return;
+        }
+        await autoDeleteReply(
+          message,
+          isEconClosed()
+            ? `🔒 Economy status: **CLOSED**${econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : ''}\n> Run \`-open economy\` to re-enable it.`
+            : '🔓 Economy status: **OPEN**\n> Run `-close economy [reason]` to freeze it.',
+          30000
+        );
+        return;
+      }
     }
 
     const isKnownCmd =
