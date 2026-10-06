@@ -268,7 +268,7 @@ export const ACTION_SCHEMA = [
 
 export const OWNER_ONLY_ACTIONS = new Set(ACTION_SCHEMA.filter((a) => a.risk === 'owner').map((a) => a.action));
 export const ALL_ACTIONS = new Set(ACTION_SCHEMA.map((a) => a.action));
-export const PANEL_TYPES = new Set(['session', 'ticket', 'verify', 'application', 'information', 'shop']);
+export const PANEL_TYPES = new Set(['session', 'ticket', 'verify', 'application', 'information', 'shop', 'economy']);
 
 // ── Small parsing helpers ─────────────────────────────────────────────────────
 
