@@ -52,12 +52,26 @@ import {
   aiAccessTier,
   aiConfigured,
   aiHelpSections,
+  chatAiAnswer,
   executeIntent,
   logAiAction,
   providerStatus,
   providerSummary,
-  resolveIntent
+  resolveIntent,
+  sharedAiChatAnswer
 } from './ai.js';
+import {
+  AI_CONVERSATION_TTL_MS,
+  aiConvoKey,
+  aiSupportsConvo,
+  applyAiAnswer,
+  clearAiConvo,
+  currentAiSlot,
+  getAiConvo,
+  isAiCancelAnswer,
+  startAiConvo,
+  touchAiConvo
+} from './ai_converse.js';
 import http from 'node:http';
 import path from 'node:path';
 import { fork } from 'node:child_process';
@@ -1309,6 +1323,23 @@ const lastTicketPanelByChannel = new Map();
 const lastAppPanelByChannel = new Map();
 // Remembers newest verification dashboard per guild:channel
 const lastVerifyPanelByChannel = new Map();
+// Remembers newest economy hub per guild:channel so reposts edit instead of doubling.
+const lastEconPanelByChannel = new Map();
+const ECON_PANELS_FILE = fileURLToPath(new URL('../econ_panels.json', import.meta.url));
+function saveEconPanels() {
+  try {
+    const flat = {};
+    for (const [k, v] of lastEconPanelByChannel) flat[k] = v;
+    fs.writeFileSync(ECON_PANELS_FILE, JSON.stringify(flat, null, 2));
+  } catch {}
+}
+function loadEconPanels() {
+  try {
+    if (!fs.existsSync(ECON_PANELS_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(ECON_PANELS_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) lastEconPanelByChannel.set(k, v);
+  } catch {}
+}
 // Remembers spoiler ping mention per panel so live refresh preserves it until shutdown.
 const panelPingMentionByChannel = new Map();
 // Panels flipped green by a started session - the refresh loop keeps them
@@ -1428,7 +1459,7 @@ function buildSuggestionContainer(sug, discordClient = null) {
   const infoText =
     `**Submitted by:** <@${sug.authorId}>\n\n` +
     `**Suggestion**\n` +
-    `### ${sug.text}`;
+    `### ${neutralizeMentions(sug.text)}`;
 
   const avatarUrl =
     sug.authorAvatar ||
@@ -2401,7 +2432,7 @@ async function handleSuggestionCommand(interaction) {
     const top = sorted[0];
     const topCard = new ContainerBuilder();
     topCard.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(`## 🏆 Top Community Suggestion (#${top.id})`)
+      new TextDisplayBuilder().setContent(`## Top Community Suggestion (#${top.id})`)
     );
     topCard.addSeparatorComponents(thinLine());
     topCard.addTextDisplayComponents(
@@ -2409,7 +2440,7 @@ async function handleSuggestionCommand(interaction) {
         `> **Submitted by:** <@${top.authorId}>\n` +
         `> **Votes:** **${top.upvoters.length}** Upvotes • **${top.downvoters.length}** Downvotes\n\n` +
         `**Suggestion**\n` +
-        `${top.text}\n\n` +
+        `${neutralizeMentions(top.text)}\n\n` +
         (top.messageId && top.channelId && top.guildId
           ? `> **Jump to Message:** [View Original Suggestion](https://discord.com/channels/${top.guildId}/${top.channelId}/${top.messageId})`
           : '')
@@ -2461,7 +2492,9 @@ async function handleSuggestionCommand(interaction) {
   try {
     postedMsg = await targetChannel.send({
       components: [buildSuggestionContainer(sug, interaction.client).toJSON()],
-      flags: MessageFlags.IsComponentsV2
+      flags: MessageFlags.IsComponentsV2,
+      // Only the author may ping — @everyone/@here/roles in the text stay silent.
+      allowedMentions: { parse: [], users: [interaction.user.id] }
     });
   } catch (err) {
     await interaction.editReply({
@@ -2483,7 +2516,8 @@ async function handleSuggestionCommand(interaction) {
     });
     if (thread) {
       await thread.send({
-        content: `💬 **Discussion for Suggestion #${sug.id}**\nShare your thoughts, feedback, or suggestions for refinement below!`
+        content: `**Discussion for Suggestion #${sug.id}**\nShare your thoughts, feedback, or suggestions for refinement below!`,
+        allowedMentions: { parse: [] }
       }).catch(() => null);
     }
   } catch (err) {
@@ -2491,7 +2525,7 @@ async function handleSuggestionCommand(interaction) {
   }
 
   await interaction.editReply({
-    content: `✅ Your suggestion has been posted in <#${targetChannel.id}>! Discussion thread created.`
+    content: `Your suggestion has been posted in <#${targetChannel.id}>! Discussion thread created.`
   });
 }
 
@@ -5876,6 +5910,7 @@ async function findExistingPanelMessage(channel, type) {
   if (type === 'ticket') map = lastTicketPanelByChannel;
   else if (type === 'verify') map = lastVerifyPanelByChannel;
   else if (type === 'app') map = lastAppPanelByChannel;
+  else if (type === 'economy') map = lastEconPanelByChannel;
 
   const savedId = map?.get(chanKey);
   if (savedId) {
@@ -5906,6 +5941,12 @@ async function findExistingPanelMessage(channel, type) {
       if (str.includes('staff_app_open') || str.includes('Staff Application') || str.includes('app_type_select')) {
         map?.set(chanKey, msg.id);
         saveAppPanels();
+        return msg;
+      }
+    } else if (type === 'economy') {
+      if (str.includes('econ_send') && str.includes('econ_tx') && str.includes('econ_robbery')) {
+        map?.set(chanKey, msg.id);
+        saveEconPanels();
         return msg;
       }
     }
@@ -7436,15 +7477,102 @@ async function postPanelByType(postInteraction, type, targetChannel, pingRole) {
   }
   if (t === 'economy') {
     const channel = targetChannel || postInteraction.channel;
+    const chanKey = `${postInteraction.guildId || postInteraction.guild?.id || channel.guild?.id}:${channel.id}`;
     const econBannerPath = fileURLToPath(new URL('./assets/economy_banner.png', import.meta.url));
     const hasBanner = fs.existsSync(econBannerPath);
     const files = hasBanner ? [new AttachmentBuilder(econBannerPath, { name: 'economy_banner.png' })] : [];
+    const cardJson = buildEconomyMainCard().toJSON();
+    // 1) Reuse tracked panel id — edit in place, never post a second one.
+    const trackedId = lastEconPanelByChannel.get(chanKey);
+    if (trackedId) {
+      const existing = await channel.messages.fetch(trackedId).catch(() => null);
+      if (existing) {
+        // Only edit when the content genuinely changed (or the banner is missing).
+        const sameContent = JSON.stringify(existing.components ?? []) === JSON.stringify(cardJson);
+        const hasBanner = JSON.stringify(existing.components ?? []).includes('economy_banner');
+        if (sameContent && hasBanner) {
+          // Up to date — the panel is left completely untouched.
+          try {
+            const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+            if (recent) for (const m of recent.values()) {
+              if (m.id === existing.id || m.author?.id !== client.user?.id) continue;
+              const dump = JSON.stringify(m.components ?? []);
+              if (dump.includes('econ_send') && dump.includes('econ_robbery')) await m.delete().catch(() => null);
+            }
+          } catch {}
+          return `Economy panel in <#${channel.id}> is already up to date.`;
+        }
+        // Banner is now inside the card as a MediaGallery — no separate embed needed.
+        await existing.edit({
+          components: [cardJson],
+          allowedMentions: { parse: [] }
+        }).catch(() => null);
+      }
+      // Clean any other duplicate panels around it.
+      try {
+        const recent = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+        if (recent) for (const m of recent.values()) {
+          if (m.id === trackedId || m.author?.id !== client.user?.id) continue;
+          const dump = JSON.stringify(m.components ?? []);
+          if (dump.includes('econ_send') && dump.includes('econ_robbery')) await m.delete().catch(() => null);
+        }
+      } catch {}
+      // Re-track the survivor so the map stays correct.
+      try {
+        const reFetched = await channel.messages.fetch(trackedId).catch(() => null);
+        if (reFetched) lastEconPanelByChannel.set(chanKey, reFetched.id);
+        else lastEconPanelByChannel.delete(chanKey);
+        saveEconPanels();
+      } catch {}
+      const refreshed = sameContent && hasBanner
+        ? `Economy panel in <#${channel.id}> is already up to date.`
+        : `Economy panel refreshed in <#${channel.id}>.`;
+      console.log('[ECONOMY] Panel sync for <#%s>: %s', channel.id, refreshed);
+      return refreshed;
+    }
+    // 2) No tracked id — scan for an existing hub and adopt it.
+    try {
+      const recent = await channel.messages.fetch({ limit: 30 }).catch(() => null);
+      if (recent) {
+        let hub = null;
+        for (const m of recent.values()) {
+          if (m.author?.id !== client.user?.id) continue;
+          const dump = JSON.stringify(m.components ?? []);
+          if (dump.includes('econ_send') && dump.includes('econ_tx') && dump.includes('econ_robbery')) { hub = m; break; }
+        }
+        if (hub) {
+          // Only edit when the content genuinely changed (or the banner is missing).
+          const sameContent = JSON.stringify(hub.components ?? []) === JSON.stringify(cardJson);
+          const hasBanner = JSON.stringify(hub.components ?? []).includes('economy_banner');
+          if (!(sameContent && hasBanner)) {
+            // Banner is now inside the card as a MediaGallery — no separate embed needed.
+            await hub.edit({
+              components: [cardJson],
+              allowedMentions: { parse: [] }
+            }).catch(() => null);
+          }
+          lastEconPanelByChannel.set(chanKey, hub.id);
+          saveEconPanels();
+          // Delete any other hub doubles.
+          for (const m of recent.values()) {
+            if (m.id === hub.id || m.author?.id !== client.user?.id) continue;
+            const dump = JSON.stringify(m.components ?? []);
+            if (dump.includes('econ_send') && dump.includes('econ_robbery')) await m.delete().catch(() => null);
+          }
+          return sameContent && hasBanner
+            ? `Economy panel in <#${channel.id}> is already up to date.`
+            : `Economy panel refreshed in <#${channel.id}>.`;
+        }
+      }
+    } catch {}
     const sent = await channel.send({
       allowedMentions: { parse: [] },
-      components: [buildEconomyMainCard().toJSON()],
+      components: [cardJson],
       files,
       flags: MessageFlags.IsComponentsV2
     });
+    lastEconPanelByChannel.set(chanKey, sent.id);
+    saveEconPanels();
     return `Economy panel posted in <#${channel.id}>.`;
   }
   throw new Error('Unknown panel type.');
@@ -7457,12 +7585,32 @@ const ECON_EMOJI = {
   newsletter: '1556890746995609602',
   moneybag: '1556890676711661649',
   shield: '1556890344510201937',
+  config: '1556890286750441472',
   tuscaloosa: '1546362692229664778',
   dispatch: '1546362793077506180',
   alea: '1546362722923581533',
   dot: '1546363864298430525',
   northstar: '1546362770067558400'
 };
+
+/** Only these 4 pretty custom emojis may be used inside economy cards. */
+function econEm(name) {
+  const id = ECON_EMOJI[name];
+  return id ? `<:${name}:${id}>` : '';
+}
+/** Banner attachment for economy cards (main + ephemeral sub-views). */
+function econBannerFile() {
+  try {
+    if (fs.existsSync(ECONOMY_BANNER_PATH)) return new AttachmentBuilder(ECONOMY_BANNER_PATH, { name: 'economy_banner.png' });
+  } catch {}
+  return null;
+}
+/** Neutralises @everyone / @here so suggestion text can never ghost-ping. */
+function neutralizeMentions(s) {
+  return String(s ?? '')
+    .replace(/@(everyone|here)/gi, '@\u200b$1')
+    .replace(/<@&(\d+)>/g, '@\u200brole:$1');
+}
 
 const ECON_ROBBERIES = [
   {
@@ -7503,7 +7651,7 @@ const ECON_ROBBERIES = [
     leo: 0,
     scene: 'None. Your survival timer begins as soon as the robbery call is sent.',
     survival: '10:00; paid immediately at the end.',
-    status: '🟢 Available'
+    status: 'Available'
   }
 ];
 
@@ -7587,11 +7735,11 @@ function isEconClosed() { return econData?.closed === true; }
 function econClosedText() {
   const when = econData?.closedAt ? `<t:${Math.floor(Number(econData.closedAt) / 1000)}:R>` : '';
   return (
-    `🔒 **The Alabama Economy is currently closed.**\n` +
+    `${econEm('shield')} **The Alabama Economy is currently closed.**\n` +
     `> All economy buttons and money actions are temporarily disabled while staff finish maintenance.\n` +
     (econData?.closedReason ? `> **Reason:** ${econData.closedReason}\n` : '') +
-    (when ? `> **Closed:** ${when}` : '') +
-    `\n-# Ask staff to run \`-open economy\` when maintenance is done.`
+    (when ? `> **Closed:** ${when}\n` : '') +
+    `-# Ask staff to run -open economy when maintenance is done.`
   );
 }
 
@@ -7620,16 +7768,17 @@ function disableEconCardButtons(cardJson) {
   return cardJson;
 }
 
-/** Posts/replaces the closed banner text on the main economy card. */
+/** Posts/replaces the closed banner text on the main economy card (idempotent — never doubles). */
 function applyEconClosedState(card) {
   if (!isEconClosed()) return card;
   try {
+    const dump = JSON.stringify(card.toJSON());
+    if (dump.includes('ECONOMY CLOSED')) return card;
     card.addSeparatorComponents(thinLine());
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `🔒 **ECONOMY CLOSED — TEMPORARILY DISABLED**\n` +
-        `> All buttons below are disabled until staff run \`-open economy\`.` +
-        (econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : '')
+         `${econEm('shield')} **ECONOMY CLOSED: TEMPORARILY DISABLED** ` +
+         (econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : '')
       )
     );
   } catch {}
@@ -7671,7 +7820,7 @@ function getEconUser(userId) {
   return u;
 }
 
-/** Builds the permanent main economy hub card posted in the channel */
+/** Builds the permanent main economy hub card posted in the channel (single clean panel) */
 function buildEconomyMainCard() {
   const card = new ContainerBuilder();
   if (fs.existsSync(ECONOMY_BANNER_PATH)) {
@@ -7682,8 +7831,8 @@ function buildEconomyMainCard() {
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
       `## Alabama Economy System\n` +
-      `Manage your personal finances, earn cash through active roleplay, and track state funds across Alabama State Roleplay.\n` +
-      `Use the quick actions below to open your wallet, send cash, or review recent activity. Every balance starts at **$0** — everything you hold is earned in-game.`
+      `Your money hub for Alabama State Roleplay. Earn, save and track every dollar.\n` +
+      `Everyone starts at **$0**. Use the quick actions below to get going.`
     )
   );
   card.addActionRowComponents(
@@ -7694,24 +7843,19 @@ function buildEconomyMainCard() {
     )
   );
   card.addSeparatorComponents(thinLine());
-  card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(
-      `### Economy Opportunities\n` +
-      `Multiple paths to build your wealth and support the state. Pick a section to learn how it works.`
-    )
-  );
 
   // Section 1: Robberies
   card.addSectionComponents(
     new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `**Robberies**\n` +
-          `High-risk scores with real payouts across Alabama. Law enforcement response is required for the bigger jobs — check live LEO requirements before you start.`
+          `${econEm('shield')} **Robberies**\n` +
+          `> Real payouts from corner stores to the state bank.\n` +
+          `> Bigger jobs need police online. Hold the scene, survive the timer, get paid.`
         )
       )
       .setButtonAccessory(
-        new ButtonBuilder().setCustomId('econ_robbery').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('econ_robbery').setLabel('Robberies').setStyle(ButtonStyle.Secondary)
       )
   );
   card.addSeparatorComponents(thinLine());
@@ -7721,12 +7865,13 @@ function buildEconomyMainCard() {
     new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `**Jobs & Paychecks**\n` +
-          `Earn steady income while you roleplay. Civilian pay is tracked live through the ER:LC API, and department payroll runs on Melonly shifts.`
+          `${econEm('moneybag')} **Jobs & Paychecks**\n` +
+          `> Steady income while you roleplay.\n` +
+          `> Civilian pay every 10 minutes, department payroll from real shifts.`
         )
       )
       .setButtonAccessory(
-        new ButtonBuilder().setCustomId('econ_jobs').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('econ_jobs').setLabel('Jobs & Pay').setStyle(ButtonStyle.Secondary)
       )
   );
   card.addSeparatorComponents(thinLine());
@@ -7736,12 +7881,13 @@ function buildEconomyMainCard() {
     new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `**Department Funds**\n` +
-          `Live balances for the Server Treasury and every registered department, plus the transfer desk for authorised department leadership.`
+          `${econEm('newsletter')} **Department Funds**\n` +
+          `> Live Treasury plus every department balance.\n` +
+          `> Watch reserves grow, track spending, move funds as leadership.`
         )
       )
       .setButtonAccessory(
-        new ButtonBuilder().setCustomId('econ_funds').setLabel('Click Here').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId('econ_funds').setLabel('Treasury').setStyle(ButtonStyle.Secondary)
       )
   );
   card.addSeparatorComponents(thinLine());
@@ -7751,8 +7897,9 @@ function buildEconomyMainCard() {
     new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          `**More Features**\n` +
-          `Banking vault, chat commands, civilian pay, daily bonus, and the full list of system mechanics.`
+          `${econEm('config')} **More Features**\n` +
+          `> Vault, daily bonus, taxes and commands.\n` +
+          `> Open the full guide to learn how it all fits together.`
         )
       )
       .setButtonAccessory(
@@ -7763,6 +7910,69 @@ function buildEconomyMainCard() {
   card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • Economy System'));
   applyEconClosedState(card);
   return card;
+}
+
+/** Live-refreshes every economy main panel in a channel, preserving the banner art. */
+async function refreshEconPanelsInChannel(channel) {
+  if (!channel?.messages?.fetch) return;
+  try {
+    const msgs = await channel.messages.fetch({ limit: 25 }).catch(() => null);
+    if (!msgs) return;
+    let keptHubId = null;
+    // First pass: find the newest true hub.
+    const hubs = [];
+    for (const msg of msgs.values()) {
+      try {
+        if (msg.author?.id !== client.user?.id) continue;
+        const dump = JSON.stringify(msg.components ?? []);
+        const isHub = dump.includes('econ_send') && dump.includes('econ_tx') && dump.includes('econ_robbery') && dump.includes('econ_jobs');
+        if (isHub) hubs.push(msg);
+      } catch {}
+    }
+    hubs.sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    if (hubs.length) {
+      keptHubId = hubs[0].id;
+      // Delete older hub doubles, keep only the newest.
+      for (const h of hubs.slice(1)) await h.delete().catch(() => null);
+      // Refresh the surviving hub ONLY if the content genuinely changed
+      // (different card, missing banner, or a close/open state flip).
+      const cardJson = (isEconClosed() ? disableEconCardButtons(buildEconomyMainCard().toJSON()) : buildEconomyMainCard().toJSON());
+      const sameContent = JSON.stringify(hubs[0].components ?? []) === JSON.stringify(cardJson);
+      // Banner is now a MediaGallery inside the card itself — check for it
+      // in the components JSON so the "leave it alone" guard works correctly.
+      const hasBanner = JSON.stringify(hubs[0].components ?? []).includes('economy_banner');
+      if (sameContent && hasBanner) {
+        // Panel already in the correct layout and state -- leave it 100% alone.
+        try {
+          const chanKey = `${channel.guild?.id}:${channel.id}`;
+          lastEconPanelByChannel.set(chanKey, keptHubId);
+          saveEconPanels();
+        } catch {}
+        return;
+      }
+      // Banner lives inside the card as a MediaGallery — no separate embed.
+      await hubs[0].edit({
+        components: [cardJson],
+        allowedMentions: { parse: [] }
+      }).catch(() => null);
+      // Re-point the map at the survivor (a delete above can invalidate the id).
+      try {
+        const reFetched = await channel.messages.fetch(keptHubId).catch(() => null);
+        const chanKey = `${channel.guild?.id}:${channel.id}`;
+        if (reFetched) lastEconPanelByChannel.set(chanKey, reFetched.id);
+        else lastEconPanelByChannel.delete(chanKey);
+        saveEconPanels();
+      } catch {}
+    }
+    // Second pass: delete duplicate hub messages (the survivor is always kept).
+    for (const msg of msgs.values()) {
+      try {
+        if (msg.id === keptHubId || msg.author?.id !== client.user?.id) continue;
+        const dump = JSON.stringify(msg.components ?? []);
+        if (dump.includes('econ_send') && dump.includes('econ_robbery')) await msg.delete().catch(() => null);
+      } catch {}
+    }
+  } catch {}
 }
 
 /** Live count of law-enforcement players from the ER:LC API (null when unavailable). */
@@ -7790,40 +8000,50 @@ async function erlcLiveLeoCount() {
 }
 
 /** Ephemeral Sub-Card: Robbery Operations */
-async function buildEconRobberyCard() {
+async function buildEconRobberyCard(bannerUrl = null) {
   const leoOnline = await erlcLiveLeoCount();
   const card = new ContainerBuilder();
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL(bannerUrl)
+      )
+    );
+  }
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Robbery Guide\n` +
-      `Reserve a robbery to set up. The priority and survival timer start only after the in-game robbery is committed. Payment is issued when the full timer ends.\n\n` +
-      `**Live LEO online:** \`${leoOnline === null ? 'unavailable' : leoOnline}\`` +
-      (leoOnline === null ? '' : ` — robberies needing more LEO than this stay on standby.`) +
-      `\n\n*Setting up a robbery does not start the priority. The timer starts only after the in-game robbery is actually committed. If you are killed, arrested, jailed, disconnect, or leave before it ends, you get no payout.*`
+      `${econEm('shield')} ## Robbery Guide\n` +
+      `Reserve a robbery to set up. The priority and survival timer start only after the in-game robbery is committed. Payment is issued when the full timer ends.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `${econEm('newsletter')} Live LEO online: ${leoOnline === null ? 'unavailable right now' : leoOnline} — robberies needing more LEO than this stay on standby.`
     )
   );
   card.addSeparatorComponents(thinLine());
   for (const r of ECON_ROBBERIES) {
-    const status = leoOnline === null ? 'LIVE STATUS UNAVAILABLE' : (leoOnline >= r.leo ? 'AVAILABLE' : `NEEDS ${r.leo} LEO`);
+    const status = leoOnline === null ? 'STATUS UNKNOWN' : (leoOnline >= r.leo ? 'AVAILABLE' : `NEEDS ${r.leo} LEO`);
     card.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `**${r.name}** • \`${status}\`\n` +
-        `Payout \`${fmtCash(r.payout)}\` • LEO needed \`${r.leo}\`\n` +
+        `**${r.name} • ${status}**\n` +
+        `Payout ${fmtCash(r.payout)} • LEO needed ${r.leo}\n` +
         `Scene: ${r.scene}\n` +
         `Survival: ${r.survival}`
       )
     );
+    card.addSeparatorComponents(thinLine());
   }
-  card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `**Robbery Guidelines**\n` +
+      `${econEm('config')} Robbery Guidelines\n` +
       `Only begin a robbery when you are ready to actively roleplay it.\n` +
       `Do not intentionally reset, respawn, or disconnect to avoid law enforcement.\n` +
       `Payouts are only awarded after the full survival requirement and scene verification.\n` +
       `Starting another robbery while one is already active may result in the new robbery being voided.\n` +
       `All Alabama State Roleplay rules remain in effect during robberies.\n` +
-      `GTA Driving speed is capped at **105 mph** even in pursuits.`
+      `GTA Driving speed is capped at 105 mph even in pursuits.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -7832,27 +8052,34 @@ async function buildEconRobberyCard() {
 }
 
 /** Ephemeral Sub-Card: Jobs & Paychecks */
-function buildEconJobsCard() {
+function buildEconJobsCard(bannerUrl = null) {
   const card = new ContainerBuilder();
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL(bannerUrl)
+      )
+    );
+  }
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Jobs & Paychecks\n` +
-      `*Work a job, earn regular wages, and build your fortune across Alabama State Roleplay.*`
+      `${econEm('moneybag')} ## Jobs & Paychecks\n` +
+      `Work a job, earn regular wages, and build your fortune across Alabama State Roleplay.`
     )
   );
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `### How Jobs Work\n` +
+      `${econEm('newsletter')} How Jobs Work\n` +
       `The ER:LC API exposes the live team, not civilian job titles, so all players on Civilian use the same pay rate.\n` +
-      `Every complete **10-minute interval** on Civilian pays once. Switching teams or leaving starts a new unpaid timer.\n` +
-      `Department payroll uses **Melonly shift start/end**, not the civilian job timer.\n\n` +
-      `### Pay Schedule\n` +
-      `Civilian pay: **${fmtCash(ECON_CIV_PAY_AMOUNT)} per complete 10-minute interval**, tracked live from the ER:LC API while you stay in-game on Civilian.\n` +
-      `Paid automatically — no claim needed. Check \`Transaction\` history anytime to see your earnings.\n\n` +
-      `### Department Shifts\n` +
+      `Every complete 10-minute interval on Civilian pays once. Switching teams or leaving starts a new unpaid timer.\n` +
+      `Department payroll uses Melonly shift start/end, not the civilian job timer.\n\n` +
+      `${econEm('moneybag')} Pay Schedule\n` +
+      `Civilian pay: ${fmtCash(ECON_CIV_PAY_AMOUNT)} per complete 10-minute interval, tracked live from the ER:LC API while you stay in-game on Civilian.\n` +
+      `Paid automatically — no claim needed. Check Transaction history anytime to see your earnings.\n\n` +
+      `${econEm('shield')} Department Shifts\n` +
       `Logged duty shifts are compensated directly from department budgets during weekly payroll runs.\n\n` +
-      `### Whitelisted & Public Careers\n` +
+      `${econEm('config')} Whitelisted & Public Careers\n` +
       `Advanced roles with higher pay multipliers (Heavy Towing, Armored Transit, Private Security) will unlock in upcoming updates.`
     )
   );
@@ -7862,24 +8089,34 @@ function buildEconJobsCard() {
 }
 
 /** Ephemeral Sub-Card: Department Funds */
-function buildEconFundsCard() {
+function buildEconFundsCard(bannerUrl = null) {
   const card = new ContainerBuilder();
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL(bannerUrl)
+      )
+    );
+  }
   const total = ECON_DEPTS.reduce((s, d) => s + Number(econData.funds[d.id] || 0), Number(econData.funds.treasury || 0));
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Department Funds & Treasury\n` +
-      `Every account in this ledger starts at **$0** — balances only change through real transfers and payroll.\n` +
+      `${econEm('newsletter')} ## Department Funds & Treasury\n` +
+      `Every account in this ledger starts at $0 — balances only change through real transfers and payroll.\n` +
       `Only Department Leadership (Department Leader, Department Affairs, Tuscaloosa Fire) or an Administrator may move department funds.\n\n` +
-      `**Server Treasury**\n` +
-      `Available reserves: **${fmtCash(econData.funds.treasury)}**\n` +
+      `${econEm('moneybag')} Server Treasury\n` +
+      `Available reserves: ${fmtCash(econData.funds.treasury)}\n` +
       `Source: 5% tax on all player-to-player transfers\n\n` +
-      `**Total government capital:** **${fmtCash(total)}**\n` +
-      `**Spending this week:** **${fmtCash(econWeekSpent())}**`
+      `${econEm('shield')} Total government capital: ${fmtCash(total)}\n` +
+      `Spending this week: ${fmtCash(econWeekSpent())}`
     )
   );
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
-    new TextDisplayBuilder().setContent(`### Department Financial Overview\nLive balance for each registered department across Alabama:`)
+    new TextDisplayBuilder().setContent(
+      `${econEm('config')} Department Financial Overview\n` +
+      `Live balance for each registered department across Alabama:`
+    )
   );
   for (const d of ECON_DEPTS) {
     card.addTextDisplayComponents(
@@ -7900,37 +8137,43 @@ function buildEconFundsCard() {
 }
 
 /** Ephemeral Sub-Card: More Features */
-function buildEconFeaturesCard() {
+function buildEconFeaturesCard(bannerUrl = null) {
   const card = new ContainerBuilder();
+  if (bannerUrl) {
+    card.addMediaGalleryComponents(
+      new MediaGalleryBuilder().addItems(
+        new MediaGalleryItemBuilder().setURL(bannerUrl)
+      )
+    );
+  }
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Economy Features & System Mechanics\n` +
-      `*Everything you need to know about earning, spending, and protecting your money.*`
+      `${econEm('config')} ## Economy Features and System Mechanics\n` +
+      `> Everything about earning, spending and protecting your money.`
     )
   );
   card.addSeparatorComponents(thinLine());
   card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `**Starting Balance**\n` +
-      `Every account begins at **$0**. Nothing is gifted — all money comes from in-game work and transfers.\n\n` +
-      `**Civilian Team Pay**\n` +
-      `Earn **${fmtCash(ECON_CIV_PAY_AMOUNT)} every 10 minutes** automatically while you remain in-game on the Civilian team (detected live through the ER:LC API).\n` +
+      `${econEm('moneybag')} Civilian Team Pay\n` +
+      `Earn ${fmtCash(ECON_CIV_PAY_AMOUNT)} every 10 minutes automatically while you remain in-game on the Civilian team (detected live through the ER:LC API).\n` +
       `Switching teams or disconnecting resets the timer.\n\n` +
-      `**Department Payroll**\n` +
-      `Department shifts are paid from **Melonly shift start/end records**, never the civilian timer.\n\n` +
-      `**State Bank Vault**\n` +
+      `${econEm('shield')} Department Payroll\n` +
+      `Department shifts are paid from Melonly shift start/end records, never the civilian timer.\n\n` +
+      `${econEm('newsletter')} State Bank Vault\n` +
       `Deposit Cash to protect it from street steals. Withdraw anytime to spend, trade, or send cash.\n\n` +
-      `**Send Transfer Tax**\n` +
-      `A **5% tax** on every player-to-player send goes to the Server Treasury. The recipient receives the remaining **95%**.\n\n` +
-      `**Chat Commands**\n` +
-      `\`;cash\` — DM yourself your live wallet balance.\n` +
-      `\`;daily\` — claim ${fmtCash(ECON_DAILY_BONUS)} once every 24 hours.\n` +
-      `\`;steal\` — attempt to pickpocket cash from a nearby civilian (50% chance, banked cash is safe).`
+      `${econEm('config')} Send Transfer Tax\n` +
+      `A 5% tax on every player-to-player send goes to the Server Treasury. The recipient receives the remaining 95%.\n\n` +
+      `${econEm('moneybag')} Chat Commands\n` +
+      `;cash — DM yourself your live wallet balance.\n` +
+      `;daily — claim ${fmtCash(ECON_DAILY_BONUS)} once every 24 hours.\n` +
+      `;steal — attempt to pickpocket cash from a nearby civilian (50% chance, banked cash is safe).`
     )
   );
   card.addSeparatorComponents(thinLine());
   card.addActionRowComponents(
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_how').setLabel('How It Works').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('econ_wallet').setLabel('My Wallet').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('econ_send').setLabel('Send Cash').setStyle(ButtonStyle.Success)
     )
@@ -7939,18 +8182,50 @@ function buildEconFeaturesCard() {
   return card;
 }
 
+/** Ephemeral Sub-Card: How It Works — plain explainer for More Features. */
+function buildEconHowCard() {
+  const card = new ContainerBuilder();
+    card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `${econEm('config')} ## How It Works\n` +
+      `> A simple walkthrough of the Alabama economy from zero to paid.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      `1. Everyone starts at $0. There are no handouts.\n\n` +
+      `2. Join the game on the Civilian team and stay active. Every full 10 minutes pays ${fmtCash(ECON_CIV_PAY_AMOUNT)} straight to your cash. Leaving or switching teams restarts that timer.\n\n` +
+      `3. Work department shifts to earn payroll. Shifts are tracked from Melonly start and end times and paid from department budgets.\n\n` +
+      `4. Move extra cash into your Bank Vault. Cash on hand can be stolen with ;steal. Banked cash cannot.\n\n` +
+      `5. Send cash to other players any time. A 5 percent tax goes to the Treasury and the other player gets 95 percent.\n\n` +
+      `6. Claim ;daily once every 24 hours for ${fmtCash(ECON_DAILY_BONUS)}. Use ;cash anytime to check your wallet in DMs.\n\n` +
+      `7. Try robberies for bigger payouts if you are ready for the risk. Hold the scene, survive the full timer, and follow every server rule to get paid.`
+    )
+  );
+  card.addSeparatorComponents(thinLine());
+  card.addActionRowComponents(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('econ_features').setLabel('Back').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('econ_wallet').setLabel('My Wallet').setStyle(ButtonStyle.Secondary)
+    )
+  );
+  card.addTextDisplayComponents(new TextDisplayBuilder().setContent('-# Alabama State Roleplay • How It Works'));
+  return card;
+}
+
 /** Ephemeral Sub-Card: User Wallet & Banking */
 function buildEconWalletCard(userId) {
   const user = getEconUser(userId);
   const card = new ContainerBuilder();
-  card.addTextDisplayComponents(
+    card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Citizen Wallet & Banking Vault\n` +
-      `Your personal cash and bank holdings in Alabama State Roleplay.\n\n` +
-      `**Cash on Hand:** \`${fmtCash(user.cash)}\`\n` +
-      `**Bank Vault:** \`${fmtCash(user.bank)}\`\n` +
-      `**Total Net Worth:** \`${fmtCash(user.cash + user.bank)}\`\n\n` +
-      `*Tip: Keep excess money in your Bank Vault — banked cash cannot be stolen with \`;steal\`.*`
+      `${econEm('moneybag')} ## Citizen Wallet and Banking Vault\n` +
+      `> Your personal fortune in Alabama. Cash for the streets, vault for safekeeping.\n\n` +
+      `${econEm('moneybag')} **Cash on Hand:** ${fmtCash(user.cash)}\n` +
+      `${econEm('shield')} **Bank Vault:** ${fmtCash(user.bank)}\n` +
+      `${econEm('newsletter')} **Total Net Worth:** ${fmtCash(user.cash + user.bank)}\n\n` +
+      `> ${econEm('config')} Tip: keep excess money in your Bank Vault. Banked cash cannot be stolen with ;steal.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -7970,14 +8245,14 @@ function buildEconWalletCard(userId) {
 function buildEconSendCard(userId) {
   const user = getEconUser(userId);
   const card = new ContainerBuilder();
-  card.addTextDisplayComponents(
+    card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Send Cash Transfer\n` +
-      `Select the Discord user who should receive cash directly from your personal wallet.\n\n` +
-      `**Available Cash:** \`${fmtCash(user.cash)}\` on hand (bank funds are not sent — withdraw first).\n` +
-      `**State Tax:** a **5% tax** is taken from the amount and sent to the Server Treasury.\n` +
-      `The recipient receives the remaining **95%**.\n\n` +
-      `*Select a recipient below to proceed:*`
+      `${econEm('moneybag')} ## Send Cash Transfer\n` +
+      `> Pick the citizen who receives cash from your wallet.\n\n` +
+      `> **Available Cash:** ${fmtCash(user.cash)} on hand. Bank funds are not sent, withdraw first.\n` +
+      `> **State Tax:** 5 percent of the amount goes to the Treasury.\n` +
+      `> The recipient receives the other 95 percent.\n\n` +
+      `*Select a recipient below to proceed.*`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -7993,9 +8268,10 @@ function buildEconSendCard(userId) {
 /** Ephemeral Sub-Card: Recent Transactions */
 function buildEconTxCard() {
   const card = new ContainerBuilder();
-  card.addTextDisplayComponents(
+    card.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
-      `## Recent Economy Transactions\n*Last 10 financial movements across Alabama State Roleplay.*`
+      `${econEm('newsletter')} ## Recent Economy Transactions\n` +
+      `> Last 10 financial movements across Alabama State Roleplay.`
     )
   );
   card.addSeparatorComponents(thinLine());
@@ -8054,55 +8330,66 @@ async function handleEconomyButton(interaction) {
 
   // Global kill-switch: while closed every economy button is dead.
   // econ_home stays alive so users can still see the CLOSED banner.
+  // NOTE: we NEVER edit the main panel message here — interaction.update()
+  // without the banner attachment would wipe the top banner art. The main
+  // panel already shows the single CLOSED banner from buildEconomyMainCard().
   if (isEconClosed() && id !== 'econ_home') {
-    // If the click came from the main panel message, refresh that card so its
-    // buttons visually lock too — best-effort, never throws.
-    try {
-      if (interaction.message && !interaction.replied && !interaction.deferred) {
-        const closedJson = disableEconCardButtons(applyEconClosedState(buildEconomyMainCard()).toJSON());
-        await interaction.update({ components: [closedJson] }).catch(() => null);
-        await interaction.followUp({ content: econClosedText(), flags: MessageFlags.Ephemeral }).catch(() => null);
-        return true;
-      }
-    } catch {}
     await replyEconClosed(interaction);
     return true;
   }
 
-  // Ephemeral sub-views for economy features:
-  if (id === 'econ_robbery') {
-    await interaction.reply({
-      components: [(await buildEconRobberyCard()).toJSON()],
+  // Ephemeral sub-views for economy features (banner art re-attached per reply):
+  // The banner lives inside each card as a MediaGallery, so we only need the
+  // file attachment — no separate embed that could trigger re-edits.
+  const econSafeReply = async (interaction, card, needsBanner = false) => {
+    const bannerFile = needsBanner && fs.existsSync(ECONOMY_BANNER_PATH) ? econBannerFile() : null;
+    const payload = {
+      components: [card.toJSON()],
+      files: bannerFile ? [bannerFile] : [],
+      allowedMentions: { parse: [] },
       flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    };
+    try {
+      if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
+      else await interaction.reply(payload);
+    } catch (err) {
+      try {
+        await interaction.followUp(payload);
+      } catch {}
+    }
+  };
+  if (id === 'econ_robbery') {
+    await econSafeReply(interaction, await buildEconRobberyCard(econBannerFile() ? 'attachment://economy_banner.png' : null), true);
     return true;
   }
   if (id === 'econ_jobs') {
-    await interaction.reply({
-      components: [buildEconJobsCard().toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconJobsCard(econBannerFile() ? 'attachment://economy_banner.png' : null), true);
     return true;
   }
   if (id === 'econ_funds') {
-    await interaction.reply({
-      components: [buildEconFundsCard().toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconFundsCard(econBannerFile() ? 'attachment://economy_banner.png' : null), true);
     return true;
   }
   if (id === 'econ_features') {
-    await interaction.reply({
-      components: [buildEconFeaturesCard().toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconFeaturesCard(econBannerFile() ? 'attachment://economy_banner.png' : null), true);
+    return true;
+  }
+  if (id === 'econ_how') {
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          components: [buildEconHowCard().toJSON()],
+          allowedMentions: { parse: [] },
+          flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+        });
+      } else {
+        await econSafeReply(interaction, buildEconHowCard());
+      }
+    } catch {}
     return true;
   }
   if (id === 'econ_wallet') {
-    await interaction.reply({
-      components: [buildEconWalletCard(interaction.user.id).toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconWalletCard(interaction.user.id));
     return true;
   }
   if (id === 'econ_wallet_refresh') {
@@ -8112,17 +8399,11 @@ async function handleEconomyButton(interaction) {
     return true;
   }
   if (id === 'econ_send') {
-    await interaction.reply({
-      components: [buildEconSendCard(interaction.user.id).toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconSendCard(interaction.user.id));
     return true;
   }
   if (id === 'econ_tx') {
-    await interaction.reply({
-      components: [buildEconTxCard().toJSON()],
-      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-    });
+    await econSafeReply(interaction, buildEconTxCard());
     return true;
   }
 
@@ -10082,6 +10363,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     loadAppPanels();
     loadVerifyPanels();
     loadInfoPanels();
+    loadEconPanels();
     loadAppGateState();
     loadSafeZoneStrikes();
     loadSuggestions();
@@ -15916,6 +16198,7 @@ async function handleRetriggerCommand(interaction, isSlash = true) {
     loadAppPanels();
     loadVerifyPanels();
     loadInfoPanels();
+    loadEconPanels();
     loadAppGateState();
     loadSafeZoneStrikes();
     loadSuggestions();
@@ -16390,7 +16673,8 @@ async function aiCreateSuggestion({ text, authorId, authorAvatar }) {
 
   const posted = await targetChannel.send({
     components: [buildSuggestionContainer(sug, client).toJSON()],
-    flags: MessageFlags.IsComponentsV2
+    flags: MessageFlags.IsComponentsV2,
+    allowedMentions: { parse: [], users: [authorId].filter(Boolean) }
   });
   sug.messageId = posted.id;
   activeSuggestions.set(sug.id, sug);
@@ -16401,7 +16685,7 @@ async function aiCreateSuggestion({ text, authorId, authorAvatar }) {
     autoArchiveDuration: 1440
   }).catch(() => null);
 
-  return { ok: true, message: `💡 Suggestion **#${sug.id}** posted in <#${targetChannel.id}> with a discussion thread.` };
+  return { ok: true, message: `Suggestion **#${sug.id}** posted in <#${targetChannel.id}> with a discussion thread.` };
 }
 
 /** Shows the highest-rated community suggestion. */
@@ -16419,10 +16703,10 @@ function aiTopSuggestion() {
   return {
     ok: true,
     message:
-      `## 🏆 Top Community Suggestion (#${top.id})\n` +
+      `## Top Community Suggestion (#${top.id})\n` +
       `> **Submitted by:** <@${top.authorId}>\n` +
       `> **Votes:** **${top.upvoters.length}** Upvotes • **${top.downvoters.length}** Downvotes\n\n` +
-      `${top.text}\n` +
+      `${neutralizeMentions(top.text)}\n` +
       (top.messageId && top.channelId && top.guildId
         ? `> [View the original suggestion](https://discord.com/channels/${top.guildId}/${top.channelId}/${top.messageId})`
         : '')
@@ -16647,6 +16931,95 @@ function buildAiHelpCard(tier) {
  * @returns {Promise<boolean>} true when the card went to DMs.
  */
 /**
+ * Runs a payload exactly once across bot instances, keeping the OLDEST of any
+ * twin replies and deleting the rest. The caller's returned message is the
+ * survivor (or null when another instance won and we deleted our own copy).
+ *
+ * This is the single choke-point behind BOTH the instant `-ai` path and the
+ * conversational path, and it is also used to suppress the cross-instance
+ * twin of the shared conversation prompt.
+ *
+ * The gate anchor is normally the command message being answered; `keySuffix`
+ * lets a second gate (e.g. the help-card claim) live alongside the first
+ * without colliding with it.
+ *
+ * @returns {Promise<object|null>} the surviving reply, or null when we lost.
+ */
+async function onceAcrossInstances(commandMessage, makePayload, { settleMs = 900, keySuffix = '' } = {}) {
+  const anchorMessage = commandMessage?.reference?.messageId
+    ? { id: commandMessage.reference.messageId, channel: commandMessage.channel, reply: commandMessage.reply?.bind(commandMessage) }
+    : commandMessage;
+  const anchorId = anchorMessage?.id ?? null;
+  const key = anchorId ? `${anchorId}${keySuffix}` : null;
+  const channel = anchorMessage?.channel ?? null;
+  if (key) {
+    const prior = claimedCommandMessages.get(key);
+    if (prior && Date.now() - prior.at < 12_000) {
+      // Re-entrant delivery of the SAME command on this instance (double event
+      // or our own retry) — never send a second copy.
+      return prior.reply;
+    }
+  }
+
+  // Stagger the instances so their fetch/send windows rarely overlap.
+  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 350) + 150));
+
+  // Every bot reply that answers this specific command message.
+  const findRefs = (msgs) =>
+    !msgs
+      ? []
+      : [...msgs.values()].filter(
+        (m) => m.author?.id === client.user?.id && m.reference?.messageId === anchorId
+      );
+
+  let seen = await channel?.messages?.fetch({ limit: 20 }).catch(() => null);
+  let refs = findRefs(seen);
+  if (refs.length) {
+    // The other instance already answered — adopt its copy and send nothing.
+    const winner = refs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+    if (key) claimedCommandMessages.set(key, { reply: winner, at: Date.now() });
+    return null;
+  }
+
+  let sent;
+  try {
+    sent = await anchorMessage.reply(typeof makePayload === 'function' ? makePayload() : makePayload);
+  } catch (err) {
+    console.warn('onceAcrossInstances reply failed:', err.message);
+    return null;
+  }
+
+  // Settle on exactly ONE reply. Both instances sort the twins the same way
+  // (oldest snowflake wins), so the loser deletes its own copy and stops BEFORE
+  // running the command — the winner carries on and edits its reply with the
+  // result. Without this both copies would stay and both would execute.
+  await new Promise((r) => setTimeout(r, settleMs));
+  const after = await channel?.messages?.fetch({ limit: 20 }).catch(() => null);
+  const twins = findRefs(after).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (twins.length > 1) {
+    if (twins[0].id !== sent.id) {
+      await sent.delete().catch(() => null);
+      if (key) claimedCommandMessages.set(key, { reply: twins[0], at: Date.now() });
+      return null; // the other instance won — let it run the command
+    }
+    for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
+  }
+  if (key) claimedCommandMessages.set(key, { reply: sent, at: Date.now() });
+  return sent;
+}
+
+/** Replies claimed while settling, so re-entrant deliveries never double-send. */
+const claimedCommandMessages = new Map();
+if (typeof setInterval === 'function') {
+  setInterval(() => {
+    const cutoff = Date.now() - 60_000;
+    for (const [k, v] of claimedCommandMessages) {
+      if (!v || v.at < cutoff) claimedCommandMessages.delete(k);
+    }
+  }, 60_000).unref?.();
+}
+
+/**
  * Replies to a command exactly once, even when two bot instances receive the
  * same message event (the usual cause of duplicate replies).
  *
@@ -16658,48 +17031,22 @@ function buildAiHelpCard(tier) {
  *   instance already answered (the caller should stop).
  */
 async function dedupReply(commandMessage, payload) {
-  // Stagger the two instances so their fetch/send windows rarely overlap.
-  await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 350) + 150));
-
-  // Every bot reply that answers this specific command message.
-  const references = (msgs) =>
-    !msgs
-      ? []
-      : [...msgs.values()].filter(
-          (m) => m.author?.id === client.user?.id && m.reference?.messageId === commandMessage.id
-        );
-
-  let seen = await commandMessage.channel?.messages?.fetch({ limit: 20 }).catch(() => null);
-  if (references(seen).length) return null; // the other instance already answered
-
-  let sent;
-  try {
-    sent = await commandMessage.reply(payload);
-  } catch (err) {
-    console.warn('dedupReply failed:', err.message);
-    return null;
-  }
-
-  // Settle on exactly ONE reply. Both instances sort the twins the same way
-  // (oldest snowflake wins), so the loser deletes its own copy and stops BEFORE
-  // running the command — the winner carries on and edits its reply with the
-  // result. Without this both copies would stay and both would execute.
-  await new Promise((r) => setTimeout(r, 1000));
-  const after = await commandMessage.channel?.messages?.fetch({ limit: 20 }).catch(() => null);
-  const twins = references(after).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  if (twins.length > 1) {
-    if (twins[0].id !== sent.id) {
-      await sent.delete().catch(() => null);
-      return null; // the other instance won — let it run the command
-    }
-    for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
-  }
-  return sent;
+  return onceAcrossInstances(commandMessage, payload);
 }
 
 async function sendAiHelp(message, tier) {
+  // Claim-then-fill through the shared single-reply gate: whichever instance
+  // wins sends the card, the loser sends nothing. The gate is anchored on the
+  // `-ai` command message, one DM per command, never twins.
+  const gate = { id: `help:${message.id}`, reference: null, channel: message.channel, reply: message.reply?.bind(message) };
+  const claimed = await onceAcrossInstances(gate, () => ({ content: '🧠 **Fetching the help card…**' }), { keySuffix: ':help-claim' });
+  if (!claimed) return false; // the other instance is sending the card
+
   const payload = { components: [buildAiHelpCard(tier).toJSON()], flags: MessageFlags.IsComponentsV2 };
   const dm = await message.author.send(payload).catch(() => null);
+  // The gate message was only a cross-instance claim — it never carries the
+  // card, so it is always removed once the real card is on its way.
+  await claimed.delete().catch(() => null);
   if (dm) {
     // Remove a twin DM sent a moment ago by another instance.
     try {
@@ -16716,6 +17063,94 @@ async function sendAiHelp(message, tier) {
   }
   await autoDeleteReply(message, payload, 60000);
   return false;
+}
+
+/**
+ * Builds the executor context for one `-ai` request. Shared by the instant
+ * path and the conversational path so a finished chat runs with the same
+ * helpers, datastores and audit trail as a one-shot command.
+ */
+function buildAiContext(message) {
+  return {
+    client,
+    message,
+    securityLogChannelId: AI_SECURITY_LOG_CHANNEL_ID,
+    // Existing bot helpers reused by the executor.
+    executeShutdown,
+    postPanelByType,
+    fetchServerStats,
+    serverStatus,
+    playersText,
+    queueText,
+    sessionCode,
+    joinUrl,
+    handleCommandsGuideCommand,
+    handleRetriggerCommand,
+    getActiveTicket,
+    // Close the ACTIVE ticket in this channel: transcript archive + delete.
+    closeTicket: (channel, ticket, byTag, byId) =>
+      closeTicketChannel(client, channel, ticket, byTag, byId, 6000),
+    // Datastores the AI is allowed to flip.
+    ticketDeskState,
+    saveTicketDeskState,
+    refreshAllTicketPanels,
+    appGateState,
+    saveAppGateState,
+    refreshAllAppPanels,
+    // AI-specific implementations.
+    startSessionVote: aiStartSessionVote,
+    banUser: aiBanUser,
+    kickUser: aiKickUser,
+    timeoutUser: aiTimeoutUser,
+    setChannelLock: aiSetChannelLock,
+    erlcAction: aiErclAction,
+    createSuggestion: aiCreateSuggestion,
+    // Staff records + DMs.
+    listInfractions: aiListInfractions,
+    revokeInfraction: aiRevokeInfraction,
+    revokePromotion: aiRevokePromotion,
+    dmMember: aiDmMember,
+    // Meetings (./meetings.js).
+    scheduleMeeting: meetingSchedule,
+    postponeMeeting: meetingPostpone,
+    cancelMeeting: meetingCancel,
+    listMeetings: meetingList,
+    topSuggestion: aiTopSuggestion,
+    resolvePingRole: (roleId) => (roleId ? String(roleId) : null),
+    resolveUserId: (value) => (value ? String(value).match(/\d{17,20}/)?.[0] ?? null : null),
+    resolveMember: (userId, guild) =>
+      userId ? guild.members.fetch(userId).catch(() => null) : Promise.resolve(null)
+  };
+}
+
+/**
+ * Runs a fully-filled intent and reports the outcome on `replyTarget`.
+ * Extracted from handleAiPrefixCommand so a finished conversation executes
+ * the exact same path (audit log, cleanup timers and all) as a one-shot
+ * command.
+ */
+async function runAiIntent(message, intent, replyTarget) {
+  const ctx = buildAiContext(message);
+  let result;
+  try {
+    result = await executeIntent(intent, ctx);
+  } catch (err) {
+    console.error('[ai] execute failed:', err);
+    result = { ok: false, message: `❌ That failed: ${err.message}`.slice(0, 400) };
+  }
+
+  const notice = intent.gatewayNotice ? `${intent.gatewayNotice}\n\n` : '';
+  await replyTarget?.edit({ content: `${notice}${result.message}`.slice(0, 1900) }).catch(() => null);
+
+  // Only audit real actions — refused or unmapped requests are noise.
+  if (intent.action !== 'unsupported' && intent.action !== 'ai_chat') await logAiAction(ctx, intent, result);
+
+  // Clean up the command message and the reply after a short window.
+  setTimeout(async () => {
+    await message.delete().catch(() => null);
+    await replyTarget?.delete().catch(() => null);
+  }, result.ok ? 45000 : 25000);
+  return result;
 }
 
 /**
@@ -16781,77 +17216,245 @@ async function handleAiPrefixCommand(message, requestText) {
     return;
   }
 
-  const ctx = {
-    client,
-    message,
-    securityLogChannelId: AI_SECURITY_LOG_CHANNEL_ID,
-    // Existing bot helpers reused by the executor.
-    executeShutdown,
-    postPanelByType,
-    fetchServerStats,
-    serverStatus,
-    playersText,
-    queueText,
-    sessionCode,
-    joinUrl,
-    handleCommandsGuideCommand,
-    handleRetriggerCommand,
-    getActiveTicket,
-    // Close the ACTIVE ticket in this channel: transcript archive + delete.
-    closeTicket: (channel, ticket, byTag, byId) =>
-      closeTicketChannel(client, channel, ticket, byTag, byId, 6000),
-    // Datastores the AI is allowed to flip.
-    ticketDeskState,
-    saveTicketDeskState,
-    refreshAllTicketPanels,
-    appGateState,
-    saveAppGateState,
-    refreshAllAppPanels,
-    // AI-specific implementations.
-    startSessionVote: aiStartSessionVote,
-    banUser: aiBanUser,
-    kickUser: aiKickUser,
-    timeoutUser: aiTimeoutUser,
-    setChannelLock: aiSetChannelLock,
-    erlcAction: aiErclAction,
-    createSuggestion: aiCreateSuggestion,
-    // Staff records + DMs.
-    listInfractions: aiListInfractions,
-    revokeInfraction: aiRevokeInfraction,
-    revokePromotion: aiRevokePromotion,
-    dmMember: aiDmMember,
-    // Meetings (./meetings.js).
-    scheduleMeeting: meetingSchedule,
-    postponeMeeting: meetingPostpone,
-    cancelMeeting: meetingCancel,
-    listMeetings: meetingList,
-    topSuggestion: aiTopSuggestion,
-    resolvePingRole: (roleId) => (roleId ? String(roleId) : null),
-    resolveUserId: (value) => (value ? String(value).match(/\d{17,20}/)?.[0] ?? null : null),
-    resolveMember: (userId, guild) =>
-      userId ? guild.members.fetch(userId).catch(() => null) : Promise.resolve(null)
-  };
-
-  const enriched = { ...intent, tier };
-  let result;
-  try {
-    result = await executeIntent(enriched, ctx);
-  } catch (err) {
-    console.error('[ai] execute failed:', err);
-    result = { ok: false, message: `❌ That failed: ${err.message}`.slice(0, 400) };
+  // Nothing mapped to an action: hold a real conversation instead of the
+  // dead-end refusal — the gateway answers in plain words ("chat to me").
+  // Claim-then-fill via onceAcrossInstances keeps exactly ONE thinking reply:
+  // the winner asks the gateway (chatAiAnswer shares one provider call per
+  // command), the loser reuses the winner's text — so you never see two
+  // "Working on it…" messages NOR two different answers.
+  if (intent.action === 'unsupported') {
+    const chatClaim = await onceAcrossInstances(
+      message,
+      () => ({ content: '🧠 **Working on it…**' }),
+      { keySuffix: ':chat', settleMs: 1200 }
+    );
+    if (!chatClaim) {
+      // Lost the race: reuse the winner's finished answer so both instances
+      // converge on the same text instead of posting a second, different one.
+      const shared = sharedAiChatAnswer(`chat:${message.id}`);
+      if (shared) {
+        const mine = await message.channel?.messages?.fetch({ limit: 5 }).catch(() => null);
+        const twin = mine
+          ? [...mine.values()].find(
+            (m) => m.author?.id === client.user?.id && m.reference?.messageId === message.id
+          )
+          : null;
+        if (twin) {
+          await twin.edit({
+            content: `${shared}\n-# Type \`-ai help\` to see everything available to you.`
+          }).catch(() => null);
+        }
+      }
+      return;
+    }
+    const said = await chatAiAnswer(trimmed, { tier, callKey: `chat:${message.id}` });
+    await chatClaim.edit({
+      content:
+        (said ?? '❌ I could not work out what to run for that.') +
+        '\n-# Type `-ai help` to see everything available to you.'
+    }).catch(() => null);
+    // The chat answer is a conversation, not an action: keep it readable.
+    // The command message still cleans up; the answer stays for 3 minutes.
+    setTimeout(async () => {
+      await message.delete().catch(() => null);
+    }, 30000);
+    setTimeout(async () => {
+      await chatClaim.delete().catch(() => null);
+    }, 180000);
+    return;
   }
 
-  const notice = intent.gatewayNotice ? `${intent.gatewayNotice}\n\n` : '';
-  await thinking?.edit({ content: `${notice}${result.message}`.slice(0, 1900) }).catch(() => null);
+  const enriched = { ...intent, tier };
 
-  // Only audit real actions — refused or unmapped requests are noise.
-  if (intent.action !== 'unsupported') await logAiAction(ctx, enriched, result);
+  // ── Conversational follow-up ──────────────────────────────────────────
+  // If the intent is missing details, ask for them one at a time instead of
+  // guessing. The user answers with plain messages; see continueAiConvo.
+  if (aiSupportsConvo(enriched.action)) {
+    const key = aiConvoKey(message.author.id, message.channelId);
+    clearAiConvo(key); // a fresh -ai command replaces any pending chat
+    const convo = startAiConvo(key, enriched, message.channelId, tier);
+    if (convo) {
+      const slot = currentAiSlot(convo);
+      // Remember the deduped root reply so every later question edits THIS
+      // message instead of posting new ones (and so every instance agrees on
+      // which prompt is canonical).
+      convo.rootReplyId = thinking?.id ?? null;
+      convo.promptMessageId = thinking?.id ?? null;
+      convo.promptChannelId = message.channelId;
+      await thinking?.edit({
+        content:
+          `${enriched.reply ? `🧠 ${enriched.reply}\n` : '🧠 '}` +
+          `${slot.question}\n` +
+          `-# Reply here with your answer — no \`-ai\` needed. Say \`cancel\` to stop.`
+      }).catch(() => null);
+      return;
+    }
+  }
 
-  // Clean up the command message and the reply after a short window.
-  setTimeout(async () => {
-    await message.delete().catch(() => null);
-    await thinking?.delete().catch(() => null);
-  }, result.ok ? 45000 : 25000);
+  await runAiIntent(message, enriched, thinking);
+}
+
+/**
+ * Continues a pending `-ai` chat with the user's plain-text answer.
+ *
+ * @returns {Promise<boolean>} true when the message was consumed as an answer.
+ */
+async function continueAiConvo(message) {
+  const key = aiConvoKey(message.author.id, message.channelId);
+  const convo = getAiConvo(key);
+  if (!convo || convo.channelId !== message.channelId) return false;
+
+  const text = String(message.content ?? '').trim();
+  if (!text) return false;
+
+  // A fresh `-ai ...` command always wins over a pending chat.
+  if (/^-ai(\s|$)/i.test(text)) {
+    clearAiConvo(key);
+    return false;
+  }
+
+  // Tier is re-checked live: losing access mid-chat ends the chat.
+  const member =
+    message.member || (await message.guild?.members.fetch(message.author.id).catch(() => null));
+  const roleIds = member?.roles?.cache ? [...member.roles.cache.keys()] : [];
+  const tier = aiAccessTier(message.author.id, roleIds);
+  if (tier === 'none') {
+    clearAiConvo(key);
+    await autoDeleteReply(message, '🛑 That chat is over — you no longer have AI access.', 20000);
+    return true;
+  }
+  // Same tier or higher keeps the chat (owner outranks everything); a
+  // demotion restarts the permission story, so the chat is dropped rather
+  // than executed at the wrong privilege.
+  const rank = { owner: 3, directive: 2, staff: 2 };
+  if ((rank[tier] ?? 0) < (rank[convo.intent.tier] ?? 0)) {
+    clearAiConvo(key);
+    await autoDeleteReply(message, '🛑 That chat is over — your access level changed.', 20000);
+    return true;
+  }
+
+  if (isAiCancelAnswer(text)) {
+    clearAiConvo(key);
+    await autoDeleteReply(message, '🛑 Cancelled — nothing was changed.', 20000);
+    return true;
+  }
+
+  const slot = currentAiSlot(convo);
+  if (!slot) {
+    clearAiConvo(key);
+    return false;
+  }
+
+  const outcome = applyAiAnswer(convo, slot, text, message);
+
+  if (outcome.status === 'giveup') {
+    clearAiConvo(key);
+    await autoDeleteReply(
+      message,
+      '🛑 I could not get what I needed, so I stopped. Try the command again with more detail.',
+      30000
+    );
+    return true;
+  }
+
+  if (outcome.status === 'retry') {
+    touchAiConvo(convo);
+    await autoDeleteReply(message, outcome.invalid, 30000);
+    return true;
+  }
+
+  if (outcome.status === 'next') {
+    touchAiConvo(convo);
+    // Claim-then-fill: the convo asks through ONE shared prompt message per
+    // user, so two bot instances settle on the same message instead of each
+    // posting their own follow-up question.
+    const prompt = await convoPromptMessage(message, convo);
+    if (prompt) {
+      await prompt.edit({
+        content:
+          `${outcome.slot.question}\n` +
+          `-# Reply here with your answer, or say \`cancel\` to stop.`
+      }).catch(() => null);
+    } else {
+      await autoDeleteReply(
+        message,
+        `${outcome.slot.question}\n-# Say \`cancel\` to stop.`,
+        AI_CONVERSATION_TTL_MS
+      );
+    }
+    return true;
+  }
+
+  // done — the intent is fully filled, run it on the original command message.
+  clearAiConvo(key);
+  const thinking = await dedupReply(message, { content: '🧠 **Got it — running it now…**' });
+  if (!thinking) return true;
+  await runAiIntent(message, { ...convo.intent, tier }, thinking);
+  return true;
+}
+
+/**
+ * The ONE shared prompt message for a pending chat. Every instance resolves
+ * the same message id (stored on the session), so follow-up questions edit
+ * one message instead of each instance posting its own.
+ *
+ * The very first question reuses the `-ai` command's own "Working on it…"
+ * reply; later questions reuse the same message, so the channel shows one
+ * evolving prompt per chat rather than a trail of question messages.
+ */
+async function convoPromptMessage(answerMessage, convo) {
+  try {
+    if (convo.promptMessageId && convo.promptChannelId === answerMessage.channelId) {
+      const existing = await answerMessage.channel?.messages
+        ?.fetch(convo.promptMessageId)
+        .catch(() => null);
+      if (existing && existing.author?.id === client.user?.id) return existing;
+    }
+    // First follow-up: adopt the "-ai" command's deduped reply when it is
+    // ours — then advance it in place for every later question.
+    if (convo.rootReplyId) {
+      const root = await answerMessage.channel?.messages
+        ?.fetch(convo.rootReplyId)
+        .catch(() => null);
+      if (root && root.author?.id === client.user?.id) {
+        convo.promptMessageId = root.id;
+        convo.promptChannelId = answerMessage.channelId;
+        return root;
+      }
+    }
+    const sent = await answerMessage.reply({
+      content: '🧠 **One moment…**',
+      allowedMentions: { parse: [] }
+    }).catch(() => null);
+    if (sent) {
+      // Another instance may have posted its own twin in the same window —
+      // keep the OLDEST and delete the rest, exactly like dedupReply.
+      const recent = await answerMessage.channel?.messages?.fetch({ limit: 10 }).catch(() => null);
+      if (recent) {
+        const twins = [...recent.values()]
+          .filter(
+            (m) =>
+              m.author?.id === client.user?.id &&
+              m.createdTimestamp > Date.now() - 15_000 &&
+              m.content?.startsWith('🧠')
+          )
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        if (twins.length > 1) {
+          for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
+        }
+        const winner = twins[0] ?? sent;
+        convo.promptMessageId = winner.id;
+        convo.promptChannelId = answerMessage.channelId;
+        return winner;
+      }
+      convo.promptMessageId = sent.id;
+      convo.promptChannelId = answerMessage.channelId;
+      return sent;
+    }
+  } catch (err) {
+    console.warn('[ai] convo prompt failed:', err.message);
+  }
+  return null;
 }
 
 /** Bans a user, optionally for a fixed number of days (null = permanent). */
@@ -17621,7 +18224,17 @@ client.on(Events.MessageCreate, async (message) => {
       }
     }
 
-    if (!message.content?.startsWith('-')) return;
+    if (!message.content?.startsWith('-')) {
+      // ── 0. Pending `-ai` chat: a plain message answers the bot's question ──
+      // Placed on the no-prefix path (before the `-` gate below) so answers
+      // need no `-ai` prefix. consume=true ends handling for this message.
+      try {
+        if (await continueAiConvo(message)) return;
+      } catch (err) {
+        console.error('[ai] conversation continuation failed:', err);
+      }
+      return;
+    }
 
     const raw = message.content.slice(1).trim().toLowerCase();
 
@@ -17670,12 +18283,12 @@ client.on(Events.MessageCreate, async (message) => {
       if (isEconGateCmd) {
         if (raw === 'close economy' || raw.startsWith('close economy ')) {
           if (!econGateRoleOk(message.member)) {
-            await autoDeleteReply(message, '❌ You do not have permission to close the economy.', 30000);
+            await autoDeleteReply(message, 'You do not have permission to close the economy.', 30000);
             return;
           }
           const reason = message.content.slice(1).trim().slice('close economy'.length).trim();
           if (isEconClosed()) {
-            await autoDeleteReply(message, '🔒 The economy is already **CLOSED** (buttons are disabled).', 30000);
+            await autoDeleteReply(message, `${econEm('shield')} The economy is already **CLOSED** (buttons are disabled).`, 30000);
             return;
           }
           econData.closed = true;
@@ -17683,10 +18296,11 @@ client.on(Events.MessageCreate, async (message) => {
           econData.closedBy = message.author?.id || null;
           econData.closedReason = reason || null;
           saveEcon();
+          await refreshEconPanelsInChannel(message.channel).catch(() => null);
           await autoDeleteReply(
             message,
-            `🔒 **Alabama Economy is now CLOSED.**\n` +
-            `> All economy buttons and money actions are disabled until you run \`-open economy\`.` +
+            `${econEm('shield')} **Alabama Economy is now CLOSED.**\n` +
+            `> All economy buttons and money actions are disabled until you run -open economy.` +
             (reason ? `\n> **Reason:** ${reason}` : ''),
             30000
           );
@@ -17694,11 +18308,11 @@ client.on(Events.MessageCreate, async (message) => {
         }
         if (raw === 'open economy' || raw.startsWith('open economy ')) {
           if (!econGateRoleOk(message.member)) {
-            await autoDeleteReply(message, '❌ You do not have permission to open the economy.', 30000);
+            await autoDeleteReply(message, 'You do not have permission to open the economy.', 30000);
             return;
           }
           if (!isEconClosed()) {
-            await autoDeleteReply(message, '🔓 The economy is already **OPEN**.', 30000);
+            await autoDeleteReply(message, `${econEm('shield')} The economy is already **OPEN**.`, 30000);
             return;
           }
           econData.closed = false;
@@ -17706,9 +18320,10 @@ client.on(Events.MessageCreate, async (message) => {
           econData.closedBy = null;
           econData.closedReason = null;
           saveEcon();
+          await refreshEconPanelsInChannel(message.channel).catch(() => null);
           await autoDeleteReply(
             message,
-            '🔓 **Alabama Economy is now OPEN.**\n> All economy buttons and money actions are enabled again.',
+            `${econEm('shield')} **Alabama Economy is now OPEN.**\n> All economy buttons and money actions are enabled again.`,
             30000
           );
           return;
@@ -17716,8 +18331,8 @@ client.on(Events.MessageCreate, async (message) => {
         await autoDeleteReply(
           message,
           isEconClosed()
-            ? `🔒 Economy status: **CLOSED**${econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : ''}\n> Run \`-open economy\` to re-enable it.`
-            : '🔓 Economy status: **OPEN**\n> Run `-close economy [reason]` to freeze it.',
+            ? `${econEm('shield')} Economy status: **CLOSED**${econData?.closedReason ? `\n> **Reason:** ${econData.closedReason}` : ''}\n> Run -open economy to re-enable it.`
+            : `${econEm('shield')} Economy status: **OPEN**\n> Run -close economy [reason] to freeze it.`,
           30000
         );
         return;

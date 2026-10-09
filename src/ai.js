@@ -69,6 +69,12 @@ const FTA_KEY = (process.env.AI_API_KEY || '').trim();
 const OR_KEY = (process.env.OPENROUTER_API_KEY || '').trim();
 const HF_KEY = (process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN || '').trim();
 
+// ── Ollama (primary AI backend) ─────────────────────────────────────────────────
+// Uses the OpenAI-compatible endpoint that Ollama exposes at
+// /v1/chat/completions (self-hosted or a hosted Ollama gateway).
+const OLLAMA_BASE = (process.env.OLLAMA_API_URL || 'http://localhost:11434/v1').replace(/\/+$/, '');
+const OLLAMA_KEY = (process.env.OLLAMA_API_KEY || '').trim();
+
 /** Splits a comma-separated env override into a clean model list. */
 function modelList(raw, fallback) {
   const value = (raw || '').trim();
@@ -81,6 +87,20 @@ function modelList(raw, fallback) {
  * configured is dropped automatically.
  */
 export const AI_PROVIDERS = [
+  {
+    name: 'Ollama',
+    baseUrl: `${OLLAMA_BASE}/v1/chat/completions`,
+    key: OLLAMA_KEY,
+    keyPrefix: 'ollama_',
+    models: modelList(process.env.OLLAMA_MODEL, [
+      'llama3.2',
+      'llama3.1:8b',
+      'mistral:latest'
+    ]),
+    // Ollama has no built-in daily cap; the gateway surface can still rate-limit.
+    extraHeaders: () => ({}),
+    dailyReset: false
+  },
   {
     name: 'FreeTheAI',
     baseUrl: `${FTA_BASE}/v1/chat/completions`,
@@ -126,7 +146,7 @@ export const AI_PROVIDERS = [
     extraHeaders: () => ({}),
     dailyReset: false
   }
-].filter((p) => p.key.startsWith(p.keyPrefix));
+].filter((p) => p.key && p.key.trim().length > 0);
 
 /** True when at least one provider has a usable key. */
 export const aiConfigured = () => AI_PROVIDERS.length > 0;
@@ -865,13 +885,17 @@ export function parseLocally(request) {
     const attendees = [...raw.matchAll(/<@!?(\d{17,20})>/g)].map((m) => m[1]);
     if (!attendees.length && /\bstaff\b/.test(t)) attendees.push('staff');
     const start = durationFromText(t) || (/tomorrow/.test(t) ? 'tomorrow' : /tonight/.test(t) ? 'tonight' : null);
+    const title = extractMeetingTitle(raw);
     return {
       action: 'meeting_schedule',
       args: {
-        title: extractMeetingTitle(raw),
-        start: start || 'in 1 hour',
+        // Nulls — never guesses — so the conversational layer asks the human
+        // for whatever is genuinely missing. The executor still falls back to
+        // 'Staff Meeting' / the Staff Team when a slot stays empty.
+        title: title === 'Staff Meeting' ? null : title,
+        start: start || null,
         location: extractChannelId(raw),
-        attendees: attendees.length ? attendees : ['staff'],
+        attendees,
         agenda: null,
         reminders: true
       },
@@ -915,7 +939,12 @@ export function parseLocally(request) {
   }
 
   // ── Direct message ──────────────────────────────────────────────────────────
-  if (/^(?:please\s+)?(dm|message|pm)\b/.test(t) && ticketUser && !/erlc|in ?game|roblox/.test(t)) {
+  if (/^(?:please\s+)?(dm|message|pm)\b/.test(t) && !/erlc|in ?game|roblox/.test(t)) {
+    // Bare "-ai dm" becomes a chat ("who should I DM?") instead of an
+    // instant refusal when nobody was mentioned.
+    if (!ticketUser) {
+      return { action: 'dm_user', args: { user_id: null, text: null }, reply: 'Sending that DM.' };
+    }
     const text = raw
       .replace(/^.*?\b(dm|message|pm)\b\s*/i, '')
       .replace(/<@!?\d{17,20}>/g, ' ')
@@ -1008,6 +1037,11 @@ export function parseLocally(request) {
     const open = /\bopen\b/.test(t);
     return { action: 'desk_status', args: { status: open ? 'online' : 'closed' }, reply: open ? 'Opening the ticket desk.' : 'Closing the ticket desk.' };
   }
+  // Bare "-ai desk" becomes a chat ("what should the desk be?") rather than
+  // an instant refusal. "status/info" reads stay on desk_info above.
+  if (/^(desk|ticket desk|set the desk|make the desk .+|change the desk .+)$/.test(t)) {
+    return { action: 'desk_status', args: { status: null }, reply: 'Updating the ticket desk.' };
+  }
 
   // ── Suggestions ────────────────────────────────────────────────────────────
   if (/\btop suggestion|best suggestion|highest rated suggestion\b/.test(t)) {
@@ -1016,6 +1050,9 @@ export function parseLocally(request) {
   if (/\bsuggestion\b/.test(t)) {
     const text = extractSuggestionBody(raw);
     if (text) return { action: 'suggestion_create', args: { text }, reply: 'Posting your suggestion.' };
+    // Bare "-ai suggestion" becomes a chat ("what is the suggestion?")
+    // instead of an instant refusal for missing text.
+    return { action: 'suggestion_create', args: { text: null }, reply: 'Posting your suggestion.' };
   }
 
   // ── Nicknames & roles (owner) ──────────────────────────────────────────────
@@ -1083,6 +1120,19 @@ export function parseLocally(request) {
     if (question) {
       return { action: 'poll', args: { question, options: pollOptions.slice(0, 10) }, reply: 'Posting a poll.' };
     }
+    // Bare "-ai poll" — turn it into a chat ("what is the question?").
+    return { action: 'poll', args: { question: null, options: [] }, reply: 'Setting up a poll.' };
+  }
+
+  // ── Bare session-vote verbs ("-ai vote", "-ai start a vote") ──────────────
+  // The main vote branch above needs the word "vote"/"session"; a bare verb
+  // like "-ai vote" still becomes a chat ("how many votes?").
+  if (/^(vote|votes|voting|start (a |the )?(vote|session)|open (a |the )?(vote|session)|launch (a |the )?(vote|session))$/.test(t)) {
+    return {
+      action: 'session_vote',
+      args: { needed: 5, duration: null, ping_role_id: ticketUser },
+      reply: 'Opening a session vote.'
+    };
   }
 
   // ── Member lookups (whois / avatar) ────────────────────────────────────────
@@ -1121,10 +1171,52 @@ export function parseLocally(request) {
 
   // ── In-game ER:LC ───────────────────────────────────────────────────────────
   // Checked BEFORE Discord moderation so "kick the player in game" is not read
-  // as a Discord kick.
-  if (/erlc|in ?game|roblox/.test(t) || /\b(jail|unjail|yeet)\b/.test(t) || (!ticketUser && /\b(kick|ban|hint|announce|broadcast)\b/.test(t))) {
+  // as a Discord kick. Bare single verbs WITHOUT a player name ("-ai ban",
+  // "-ai kick him") skip this branch: those become Discord chats ("who?") via
+  // the bare-moderation branches below. A Roblox name ("-ai jail Name") or an
+  // explicit "in game"/"erlc"/"roblox" still routes in-game.
+  if (/erlc|in ?game|roblox/.test(t) || /\b(jail|unjail|yeet)\b/.test(t)) {
     const erlc = parseErclLocally(raw, t);
     if (erlc) return erlc;
+  } else if (!ticketUser && /\b(kick|ban|hint|announce|broadcast)\b/.test(t) && !/^(kick|ban|mute|timeout|hint|announce|broadcast)\b[\s.,!]*$/.test(t)) {
+    const erlc = parseErclLocally(raw, t);
+    // Only accept the in-game read when it found a REAL player name — not a
+    // pronoun/filler like "him" — or a message body for a broadcast.
+    const nonName = /\b(him|her|them|they|that|this|guy|dude|user|member|person|someone|somebody|please|the|a|an|for|from|server|discord)\b/;
+    if (erlc && ((erlc.args.player && !nonName.test(erlc.args.player.toLowerCase())) || erlc.args.text)) return erlc;
+  }
+
+  // ── Bare moderation verbs (no mention yet) ────────────────────────────────
+  // These sit BEFORE the in-game branch below so a detail-less request
+  // ("-ai ban", "-ai timeout") becomes a chat — the conversational layer
+  // asks "who?" — instead of an in-game misfire or an instant refusal.
+  // (The ER:LC branch runs first for real in-game phrasings: "ban him in
+  // game", "jail RobloxName", mentions of roblox/erlc.)
+  if (/\b(lift|remove|undo|revoke|unban)\b/.test(t) && /\bban\b/.test(t) && !ticketUser) {
+    return { action: 'unban', args: { user_id: null, reason: 'Ban lifted by staff' }, reply: 'Unbanning that user.' };
+  }
+  if (/^unban\b/.test(t) && !ticketUser) {
+    return { action: 'unban', args: { user_id: null, reason: 'Ban lifted by staff' }, reply: 'Unbanning that user.' };
+  }
+  if (/\b(untimeout|untime ?out|clear (the )?timeout|remove timeout|unmute)\b/.test(t) && !ticketUser) {
+    return { action: 'untimeout', args: { user_id: null, reason: 'Timeout cleared' }, reply: 'Clearing that timeout.' };
+  }
+  if (/\b(ban|permaban|perm ban)\b/.test(t) && !ticketUser) {
+    const dur = parseDuration(durationFromText(t), { unit: 'day' });
+    return {
+      action: 'ban',
+      args: { user_id: null, reason: null, delete_days: 0, duration_days: dur?.durationDays ?? null },
+      reply: 'Banning that user.'
+    };
+  }
+  if (/\b(kick|yeet|remove from server)\b/.test(t) && !ticketUser) {
+    return { action: 'kick', args: { user_id: null, reason: null }, reply: 'Kicking that member.' };
+  }
+  if (/\b(timeout|mute|silence)\b/.test(t) && !ticketUser) {
+    const durTxt = durationFromText(t);
+    const parsed = durTxt ? parseDuration(durTxt, { unit: 'minute' }) : null;
+    const mins = parsed?.ms ? clampNumber(parsed.ms / 60_000, 1, 40320, 10) : null;
+    return { action: 'timeout', args: { user_id: null, minutes: mins, reason: null }, reply: 'Timing that member out.' };
   }
 
   // ── Discord moderation ──────────────────────────────────────────────────────
@@ -1151,8 +1243,10 @@ export function parseLocally(request) {
   }
   if (/\b(timeout|mute|silence)\b/.test(t) && ticketUser) {
     const parsed = parseDuration(durationFromText(t), { unit: 'minute' });
-    const mins = clampNumber(parsed?.ms ? parsed.ms / 60_000 : 10, 1, 40320, 10);
-    return { action: 'timeout', args: { user_id: ticketUser, minutes: mins, reason: reasonFromText(raw, ['timeout', 'mute', 'silence', ticketUser]) }, reply: `Timing out <@${ticketUser}> for ${mins} minute(s).` };
+    // No duration typed -> null, so the chat asks "for how long?" instead of
+    // silently picking 10 minutes.
+    const mins = parsed?.ms ? clampNumber(parsed.ms / 60_000, 1, 40320, 10) : null;
+    return { action: 'timeout', args: { user_id: ticketUser, minutes: mins, reason: reasonFromText(raw, ['timeout', 'mute', 'silence', ticketUser]) }, reply: `Timing out <@${ticketUser}>${mins ? ` for ${mins} minute(s)` : ''}.` };
   }
   if (/\b(purge|bulk ?delete|prune)\b/.test(t)) {
     const amount = Number(t.match(/(\d{1,3})/)?.[1]) || 10;
@@ -1193,9 +1287,15 @@ export function parseLocally(request) {
   }
 
   // ── Announcements ───────────────────────────────────────────────────────────
+  // Bare "-ai say"/"-ai announce" becomes a chat ("what should I announce?")
+  // instead of an instant refusal for missing text.
+  if (/^\s*(say|announce|announcement)\s*$/.test(t)) {
+    return { action: 'say', args: { channel_id: extractChannelId(raw), text: null }, reply: 'Posting your announcement.' };
+  }
   if (/\b(say|announce|announcement)\b/.test(t)) {
     const text = raw.replace(/^.*?\b(say|announce|announcement)\b\s*/i, '').trim();
     if (text) return { action: 'say', args: { channel_id: extractChannelId(raw), text }, reply: 'Posting your announcement.' };
+    return { action: 'say', args: { channel_id: extractChannelId(raw), text: null }, reply: 'Posting your announcement.' };
   }
 
   return { action: 'unsupported', args: {}, reply: 'I could not map that to a command.' };
@@ -2026,6 +2126,97 @@ export async function executeIntent(intent, ctx) {
   } catch (err) {
     console.error(`[ai] action ${intent.action} failed:`, err);
     return { ok: false, message: `❌ That failed: ${err.message}`.slice(0, 500) };
+  }
+}
+
+/** In-flight chat answers, keyed by callKey — twin instances share one call. */
+const aiChatInFlight = new Map();
+/** Finished chat answers, keyed by callKey (60s) — the loser reuses the text. */
+const aiChatCache = new Map();
+
+/**
+ * Reuses a finished twin's chat answer without a second provider call.
+ * @returns {string|null} the cached answer text, or null when there is none.
+ */
+export function sharedAiChatAnswer(callKey) {
+  if (!callKey) return null;
+  const hit = aiChatCache.get(callKey);
+  if (!hit) return null;
+  if (Date.now() - hit.at > 60_000) {
+    aiChatCache.delete(callKey);
+    return null;
+  }
+  return hit.text || null;
+}
+
+/**
+ * Asks the gateway to answer a staff member in plain words (no action).
+ *
+ * This is the safety net behind `-ai <anything>`: when the request maps to no
+ * action and fills no conversational slot, the bot still talks back like an
+ * assistant — explaining what it CAN do — instead of the dead-end refusal.
+ * Returns null when no provider is reachable, so the caller falls back to the
+ * standard refusal text.
+ *
+ * Each call is tagged with `callKey` so the two bot instances never BOTH pay
+ * for (and post) an answer: the loser of the claim below simply reuses the
+ * winner's text via sharedAiChatAnswer().
+ */
+export async function chatAiAnswer(request, { tier = 'owner', callKey = null } = {}) {
+  const question = String(request ?? '').trim().slice(0, 600);
+  if (!question || !aiConfigured()) return null;
+  if (callKey) {
+    // A finished twin already answered — reuse it, never re-ask.
+    const cached = sharedAiChatAnswer(callKey);
+    if (cached) return cached;
+    const prior = aiChatInFlight.get(callKey);
+    if (prior) {
+      // The twin instance is mid-ask — wait for ITS answer instead of a
+      // second provider call.
+      try {
+        const shared = await prior;
+        if (shared) return shared;
+      } catch { /* fall through and ask ourselves */ }
+    }
+    const asked = (async () => {
+      const text = await chatAiAnswer(request, { tier });
+      if (text) aiChatCache.set(callKey, { text, at: Date.now() });
+      return text;
+    })();
+    aiChatInFlight.set(callKey, asked);
+    try {
+      return await asked;
+    } finally {
+      if (aiChatInFlight.get(callKey) === asked) aiChatInFlight.delete(callKey);
+    }
+  }
+  const { groups, ownerGroups, examples, examplesOwner, note } = aiHelpSections(tier);
+  const abilities = [
+    ...groups.map((g) => `${g.title}: ${g.items.join(', ')}`),
+    ...(tier === 'owner' ? ownerGroups.map((g) => `${g.title}: ${g.items.join(', ')}`) : [])
+  ].join('\n');
+  try {
+    const { text } = await callAIProvider(
+      [
+        {
+          role: 'system',
+          content:
+            'You are the helpful assistant inside "Alabama Bot PRC", a Discord staff bot. ' +
+            'Answer the staff member in 1-3 short sentences, plain Discord markdown, no code fences. ' +
+            'You CANNOT run actions yourself; when they want something done, point them at the exact `-ai` phrasing. ' +
+            'Never invent capabilities outside this list:\n' + abilities +
+            `\nExamples they can copy: ${(tier === 'owner' ? examplesOwner : examples).map((e) => `-ai ${e}`).join(' · ')}` +
+            `\nNote: ${note}`
+        },
+        { role: 'user', content: question }
+      ],
+      { timeout: 12_000, maxTokens: 220 }
+    );
+    const clean = String(text ?? '').trim().slice(0, 1200);
+    return clean || null;
+  } catch (err) {
+    console.warn(`[ai] chat answer unavailable: ${err.message}`);
+    return null;
   }
 }
 

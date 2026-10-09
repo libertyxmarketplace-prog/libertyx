@@ -84,6 +84,17 @@ nobody is pinged a second time; `-ai cancel the meeting` does the same. State
 lives in `meetings.json` and reminders are re-armed on boot. Times are read in
 the `MEETING_TZ_OFFSET` offset (default `-6`, US Central).
 
+**Conversational follow-ups.** When a request is missing something the action
+genuinely needs, the bot asks for it one question at a time instead of guessing
+— e.g. `-ai schedule a meeting` chats you through *when → what → who → where → agenda*,
+`-ai ban` asks *who → how long → why*. Answers are plain messages in the same
+channel (no `-ai` prefix needed); anything already typed up front is never
+asked about, so `-ai ban @user for 3 days spamming` still runs instantly with
+no chatter. Say `skip` to keep an optional detail's default, `cancel` to stop,
+or fire a fresh `-ai ...` command to replace a pending chat. Chats expire after
+5 minutes of silence, and access is re-checked on every answer. Question tables
+live in `src/ai_converse.js`.
+
 **Duplicate replies.** When two bot instances receive the same message event,
 `dedupReply()` makes them agree on a single winner (oldest reply id): the loser
 deletes its own copy and stops **before** running the command, so a command
@@ -126,9 +137,10 @@ answer wins, so you only need one working key:
 
 | # | Provider | Key | Notes |
 |---|----------|-----|-------|
-| 1 | FreeTheAI | `AI_API_KEY` | Free. Needs a daily check-in at <https://freetheai.org/checkin> **and** has a daily request cap that resets at 00:00 UTC. |
-| 2 | OpenRouter | `OPENROUTER_API_KEY` | Credit-based, very reliable. |
-| 3 | HuggingFace | `HUGGINGFACE_API_KEY` | Free inference router. |
+| 1 | Ollama | `OLLAMA_API_KEY` | Free and fully local (uses the OpenAI-compatible endpoint at http://localhost:11434/v1). No daily cap and no check-in needed — but you must pull the model into Ollama first. |
+| 2 | FreeTheAI | `AI_API_KEY` | Free. Needs a daily check-in at <https://freetheai.org/checkin> **and** has a daily request cap that resets at 00:00 UTC. |
+| 3 | OpenRouter | `OPENROUTER_API_KEY` | Credit-based, very reliable. |
+| 4 | HuggingFace | `HUGGINGFACE_API_KEY` | Free inference router. |
 
 Each provider has its **own circuit breaker**, so one that is rate limited, out
 of credit or offline is skipped with no network call at all rather than retried

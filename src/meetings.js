@@ -244,9 +244,13 @@ async function sendDm(userId, payload) {
 async function editDm(userId, messageId, payload) {
   if (!messageId) return false;
   try {
-    const user = await cfg.client.users.fetch(userId);
-    const channel = await user.createDM();
-    const msg = await channel.messages.fetch(messageId);
+    // In discord.js v14 a DM channel's id is the recipient user id, so we
+    // target it directly instead of calling createDM(), which can hand back a
+    // fresh channel and make this edit fail and fall through to a duplicate DM.
+    const dm = await cfg.client.channels.fetch(userId, { force: true }).catch(() => null);
+    if (!dm || !dm.isDMBased?.()) return false;
+    const msg = await dm.messages.fetch(messageId).catch(() => null);
+    if (!msg) return false;
     await msg.edit(payload);
     return true;
   } catch {
@@ -354,11 +358,22 @@ async function fireReminder(id, kind) {
     meeting.status = 'started';
     meeting.sentStart = true;
     saveMeetings();
-    // Everyone gets a fresh "starting now" DM — this one is meant to notify.
-    await editAnnouncement(meeting, cardPayload(meeting, 'start')).catch(() => null);
+    // Everyone gets a "starting now" card. Edit any start DM the user already
+    // has (e.g. after a restart or a double-fire) so a double-fire rewrites one
+    // message instead of pinging the same person twice.
+    const startCard = cardPayload(meeting, 'start');
+    await editAnnouncement(meeting, startCard).catch(() => null);
     for (const uid of meeting.attendees || []) {
-      const msg = await sendDm(uid, cardPayload(meeting, 'start')).catch(() => null);
-      if (msg && meeting.rsvp?.[uid]) meeting.rsvp[uid].dmMessageId = msg.id;
+      const entry = meeting.rsvp?.[uid] || { status: null, dmMessageId: null };
+      if (!entry.dmMessageId) {
+        const msg = await sendDm(uid, startCard).catch(() => null);
+        if (msg) {
+          entry.dmMessageId = msg.id;
+          meeting.rsvp[uid] = entry;
+        }
+      } else {
+        await editDm(uid, entry.dmMessageId, startCard).catch(() => null);
+      }
     }
     saveMeetings();
     return;
@@ -367,13 +382,11 @@ async function fireReminder(id, kind) {
   const variant = 'reminder';
   for (const uid of meeting.attendees || []) {
     const mine = meeting.rsvp?.[uid];
-    // Always edit in place so the person is not pinged twice; only a first-time
-    // reminder falls back to a fresh DM.
-    const edited = await editDm(uid, mine?.dmMessageId, cardPayload(meeting, variant, uid));
-    if (!edited) {
-      const msg = await sendDm(uid, cardPayload(meeting, variant, uid));
-      if (msg && mine) mine.dmMessageId = msg.id;
-    }
+    // Always edit in place so the person is not pinged twice. If the stored DM
+    // is gone or closed, do NOT fall back to sending a fresh DM — that fallback
+    // is exactly what produced the duplicate "Meeting Starting Now" / "Meeting
+    // Invitation" texts elsewhere.
+    await editDm(uid, mine?.dmMessageId, cardPayload(meeting, variant, uid)).catch(() => null);
   }
   if (kind === 'week') meeting.sentWeek = true;
   if (kind === 'morning') meeting.sentMorning = true;
