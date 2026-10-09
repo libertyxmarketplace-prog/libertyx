@@ -5684,7 +5684,15 @@ function saveAppGateState() {
 function loadApplications() {
   try {
     if (!fs.existsSync(APPLICATIONS_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(APPLICATIONS_FILE, 'utf8'));
+    // The file is sometimes written with a UTF-8 BOM and occasionally gains a
+    // stray leading quote on OneDrive/Windows sync. Strip both before parsing so
+    // a cosmetic byte never wipes the whole in-memory application map.
+    let text = fs.readFileSync(APPLICATIONS_FILE, 'utf8');
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // UTF-8 BOM
+    text = text.trim();
+    if (text.startsWith('"')) text = text.replace(/^"+/, ''); // stray leading quote(s)
+    const raw = JSON.parse(text);
+    if (!raw || typeof raw !== 'object') return;
     for (const [k, v] of Object.entries(raw)) activeApplications.set(k, v);
     console.log(`Restored ${activeApplications.size} staff application(s) from applications.json.`);
   } catch (err) {
@@ -5700,6 +5708,119 @@ function saveApplications() {
   } catch (err) {
     console.error('Failed to save applications.json:', err.message);
   }
+}
+
+/**
+ * Robustly resolve a staff application from a button/modal customId suffix.
+ * Mirrors the "Claim & Review" lookup so that verdict / paging / decline handlers
+ * can never spuriously report "Application record not found": it reloads from
+ * disk, matches on either `id` or `applicantId`, and finally falls back to an
+ * <@userId> mention embedded in the interaction message components.
+ */
+/**
+ * Depth-first extract every text/string payload from a discord.js message's
+ * component tree. Component containers (`components`) are often a `Collection`
+ * (Map), and `JSON.stringify(map)` yields `{}` — so we MUST walk it manually and
+ * descend into `.components` as well as `.data.content`.
+ */
+function collectComponentText(node, out) {
+  if (node == null) return;
+  if (typeof node === 'string') { out.push(node); return; }
+  if (Array.isArray(node)) { for (const n of node) collectComponentText(n, out); return; }
+  if (typeof node !== 'object') return;
+
+  // Map / Collection / any iterable of values (discord.js Collection).
+  const iterableKids =
+    (typeof node.values === 'function' && typeof node.get === 'function') ||
+    (typeof node[Symbol.iterator] === 'function' && typeof node !== 'string');
+  try {
+    if (iterableKids) {
+      const vals = typeof node.values === 'function' ? node.values() : node;
+      for (const v of vals) collectComponentText(v, out);
+    }
+  } catch {}
+
+  const data = node.data;
+  if (data && typeof data === 'object') {
+    for (const key of ['content', 'label', 'placeholder', 'value', 'description']) {
+      if (typeof data[key] === 'string') out.push(data[key]);
+    }
+    // Modal/input builders nest components inside data too.
+    if (data.components) collectComponentText(data.components, out);
+  }
+  // A plain nested components array/collection (ContainerBuilder, etc.).
+  if (node.components) collectComponentText(node.components, out);
+}
+
+function reconstructApplicationFromMessage(appId, message) {
+  // Last-resort recovery: the backing record was deleted (post-verdict) or wiped
+  // (ephemeral Railway disk -> applications.json = {}). Rebuild a minimal record
+  // from the review card, which still embeds the applicant mention, tag and position,
+  // so a reviewer can still record accept/deny and the applicant still gets notified.
+  if (!message) return null;
+  const texts = [];
+  collectComponentText(message.components || [], texts);
+  const raw = texts.join('\n');
+  if (!raw) return null;
+
+  const uidMatch = raw.match(/<@(\d{17,20})>/);
+  if (!uidMatch || !uidMatch[1]) return null;
+  const applicantId = uidMatch[1];
+
+  let applicantTag = 'Applicant';
+  const tagMatch = raw.match(/<@\d{17,20}>\s*\(`([^`]+)`/);
+  if (tagMatch && tagMatch[1]) applicantTag = tagMatch[1];
+
+  let appType = 'In-Game Staff';
+  const posMatch = raw.match(/\*\*Position:\*\*\s*\*\*([^*]+)\*\*/);
+  const typeMatch = raw.match(/\*\*Application Type:\*\*\s*\*\*([^*]+)\*\*/);
+  if (posMatch && posMatch[1]) appType = posMatch[1].trim();
+  else if (typeMatch && typeMatch[1]) appType = typeMatch[1].trim();
+
+  return {
+    id: appId,
+    applicantId,
+    applicantTag,
+    appType,
+    createdAt: Date.now(),
+    status: 'pending_review',
+    step1Done: true,
+    step2Done: true,
+    step3Done: true,
+    step4Done: true,
+    generalInfo: {},
+    knowledgeAnswers: {},
+    scenarioAnswers: {},
+    reconstructed: true
+  };
+}
+
+function resolveApplicationById(appId, interaction) {
+  loadApplications();
+  let appData = [...activeApplications.values()].find((a) => a.id === appId || a.applicantId === appId);
+
+  if (!appData && interaction?.message) {
+    // Fallback: some other record in the map already belongs to this applicant
+    // (matched via the <@id> mention embedded in the card).
+    const texts = [];
+    collectComponentText(interaction.message.components || [], texts);
+    const uidMatch = texts.join('\n').match(/<@(\d{17,20})>/);
+    if (uidMatch && uidMatch[1]) {
+      appData = activeApplications.get(uidMatch[1]);
+    }
+  }
+
+  if (!appData && interaction?.message) {
+    const rebuilt = reconstructApplicationFromMessage(appId, interaction.message);
+    if (rebuilt) {
+      // Keep it in the in-memory map (keyed by applicant) so downstream
+      // activeApplications.get(...) / .delete(...) behave normally.
+      activeApplications.set(rebuilt.applicantId, rebuilt);
+      appData = rebuilt;
+    }
+  }
+
+  return appData || null;
 }
 
 function getOrCreateApplication(user, appId = null, customIdHint = '') {
@@ -12043,14 +12164,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const prefix = interaction.customId.startsWith('app_modal_verdict_accept_') ? 'app_modal_verdict_accept_' : 'app_modal_verdict_deny_';
       const appId = interaction.customId.replace(prefix, '');
       const reason = interaction.fields.getTextInputValue('verdict_reason')?.trim() || 'No specific notes provided.';
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = resolveApplicationById(appId, interaction);
 
       if (!appData) {
         await interaction.reply({ content: 'Application record not found or already processed.', flags: MessageFlags.Ephemeral });
         return;
       }
 
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      // Guard against a two-instance race: another instance may have already
+      // acknowledged this modal submit, in which case deferReply throws 40060.
+      try {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      } catch (e) {
+        if (e && (e.code === 40060 || /already been acknowledged/i.test(e.message || ''))) {
+          // Another instance is handling this verdict. Abort here to avoid a
+          // duplicate decision being published.
+          return;
+        }
+        throw e;
+      }
       const isPassed = action === 'accept';
       appData.status = isPassed ? 'accepted' : 'denied';
       appData.verdictBy = {
@@ -14865,16 +14997,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ─────────────── Staff Application: Review Claim / Decline / Paging / Verdict ───────────────
     if (interaction.isButton() && interaction.customId.startsWith('app_rev_claim_')) {
       const appId = interaction.customId.replace('app_rev_claim_', '');
-      loadApplications();
-      let appData = [...activeApplications.values()].find((a) => a.id === appId || a.applicantId === appId);
-
-      if (!appData && interaction.message) {
-        const msgStr = JSON.stringify(interaction.message.components || []);
-        const uidMatch = msgStr.match(/<@(\d{17,20})>/);
-        if (uidMatch && uidMatch[1]) {
-          appData = activeApplications.get(uidMatch[1]);
-        }
-      }
+      const appData = resolveApplicationById(appId, interaction);
 
       if (!appData) {
         const expiredCard = new ContainerBuilder();
@@ -14986,7 +15109,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isButton() && interaction.customId.startsWith('app_rev_decline_')) {
       const appId = interaction.customId.replace('app_rev_decline_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = resolveApplicationById(appId, interaction);
       if (!appData) {
         const expiredCard = new ContainerBuilder();
         expiredCard.addTextDisplayComponents(
@@ -15018,7 +15141,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const parts = interaction.customId.split('_');
       const pageIndex = Math.max(0, Math.min(3, parseInt(parts.pop(), 10) || 0));
       const appId = parts.slice(3).join('_');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = resolveApplicationById(appId, interaction);
       if (!appData) {
         await interaction.reply({ content: 'Application not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -15037,7 +15160,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton() && (interaction.customId.startsWith('app_verdict_accept_') || interaction.customId.startsWith('app_verdict_deny_'))) {
       const isAccept = interaction.customId.startsWith('app_verdict_accept_');
       const appId = interaction.customId.replace(isAccept ? 'app_verdict_accept_' : 'app_verdict_deny_', '');
-      const appData = [...activeApplications.values()].find((a) => a.id === appId);
+      const appData = resolveApplicationById(appId, interaction);
       if (!appData) {
         await interaction.reply({ content: 'Application record not found.', flags: MessageFlags.Ephemeral });
         return;
@@ -15059,7 +15182,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
           )
         );
 
-      await interaction.showModal(modal);
+      // Two bot instances can race the same click. If another instance already
+      // acknowledged this token, showModal throws 40060 — swallow it so we never
+      // crash; the winning instance is already showing the modal.
+      try {
+        await interaction.showModal(modal);
+      } catch (e) {
+        if (e && (e.code === 40060 || /already been acknowledged/i.test(e.message || ''))) {
+          // Another instance handled this click. Nothing more to do.
+        } else {
+          throw e;
+        }
+      }
       return;
     }
 
