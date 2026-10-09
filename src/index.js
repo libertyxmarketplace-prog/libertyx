@@ -16993,19 +16993,30 @@ async function onceAcrossInstances(commandMessage, makePayload, { settleMs = 900
   // (oldest snowflake wins), so the loser deletes its own copy and stops BEFORE
   // running the command — the winner carries on and edits its reply with the
   // result. Without this both copies would stay and both would execute.
-  await new Promise((r) => setTimeout(r, settleMs));
-  const after = await channel?.messages?.fetch({ limit: 20 }).catch(() => null);
-  const twins = findRefs(after).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  if (twins.length > 1) {
-    if (twins[0].id !== sent.id) {
-      await sent.delete().catch(() => null);
-      if (key) claimedCommandMessages.set(key, { reply: twins[0], at: Date.now() });
-      return null; // the other instance won — let it run the command
+  // We re-fetch a few times over the settle window because Discord's gateway
+  // does not guarantee a twin is visible the instant the other instance POSTed
+  // it — a single check 900ms later routinely missed the twin and left TWO
+  // "Working on it…" messages standing.
+  const winner = async () => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await new Promise((r) => setTimeout(r, settleMs / 4));
+      const after = await channel?.messages?.fetch({ limit: 20 }).catch(() => null);
+      const twins = findRefs(after).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      if (twins.length > 1) {
+        if (twins[0].id !== sent.id) {
+          await sent.delete().catch(() => null);
+          if (key) claimedCommandMessages.set(key, { reply: twins[0], at: Date.now() });
+          return null; // the other instance won — let it run the command
+        }
+        for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
+      }
     }
-    for (const twin of twins.slice(1)) await twin.delete().catch(() => null);
-  }
-  if (key) claimedCommandMessages.set(key, { reply: sent, at: Date.now() });
-  return sent;
+    return sent;
+  };
+  const survivor = await winner();
+  if (!survivor) return null;
+  if (key) claimedCommandMessages.set(key, { reply: survivor, at: Date.now() });
+  return survivor;
 }
 
 /** Replies claimed while settling, so re-entrant deliveries never double-send. */
@@ -17218,48 +17229,24 @@ async function handleAiPrefixCommand(message, requestText) {
 
   // Nothing mapped to an action: hold a real conversation instead of the
   // dead-end refusal — the gateway answers in plain words ("chat to me").
-  // Claim-then-fill via onceAcrossInstances keeps exactly ONE thinking reply:
-  // the winner asks the gateway (chatAiAnswer shares one provider call per
-  // command), the loser reuses the winner's text — so you never see two
-  // "Working on it…" messages NOR two different answers.
+  // `thinking` is ALREADY the single deduped reply (dedupReply/onceAcrossInstances
+  // won above), so we edit IT in place. Creating a second claim here is what
+  // caused a duplicate "Working on it…" plus a stuck one that never updated.
   if (intent.action === 'unsupported') {
-    const chatClaim = await onceAcrossInstances(
-      message,
-      () => ({ content: '🧠 **Working on it…**' }),
-      { keySuffix: ':chat', settleMs: 1200 }
-    );
-    if (!chatClaim) {
-      // Lost the race: reuse the winner's finished answer so both instances
-      // converge on the same text instead of posting a second, different one.
-      const shared = sharedAiChatAnswer(`chat:${message.id}`);
-      if (shared) {
-        const mine = await message.channel?.messages?.fetch({ limit: 5 }).catch(() => null);
-        const twin = mine
-          ? [...mine.values()].find(
-            (m) => m.author?.id === client.user?.id && m.reference?.messageId === message.id
-          )
-          : null;
-        if (twin) {
-          await twin.edit({
-            content: `${shared}\n-# Type \`-ai help\` to see everything available to you.`
-          }).catch(() => null);
-        }
-      }
-      return;
-    }
     const said = await chatAiAnswer(trimmed, { tier, callKey: `chat:${message.id}` });
-    await chatClaim.edit({
-      content:
-        (said ?? '❌ I could not work out what to run for that.') +
-        '\n-# Type `-ai help` to see everything available to you.'
-    }).catch(() => null);
+    const answer =
+      (said ?? '❌ I could not work out what to run for that.') +
+      '\n-# Type `-ai help` to see everything available to you.';
+    // Edit in place; if this instance lost the dedup race and owns no reply,
+    // thinking is null and the winner's edit already shows the answer.
+    await thinking?.edit({ content: answer.slice(0, 1900) }).catch(() => null);
     // The chat answer is a conversation, not an action: keep it readable.
-    // The command message still cleans up; the answer stays for 3 minutes.
+    // The command message cleans up after 30s; the answer lingers 3 minutes.
     setTimeout(async () => {
       await message.delete().catch(() => null);
     }, 30000);
     setTimeout(async () => {
-      await chatClaim.delete().catch(() => null);
+      await thinking?.delete().catch(() => null);
     }, 180000);
     return;
   }
